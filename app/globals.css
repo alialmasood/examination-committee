@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 :root {
@@ -22,5 +23,228 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Cairo', 'Geist Sans', Arial, Helvetica, sans-serif;
+  direction: rtl;
+}
+
+/* تحسينات إضافية للخطوط العربية */
+* {
+  font-family: 'Cairo', 'Geist Sans', Arial, Helvetica, sans-serif;
+}
+
+/* تحسينات للانتقالات */
+.transition-smooth {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* تحسينات للظلال */
+.shadow-soft {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.shadow-glow {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+}
+
+/* تنسيقات الطباعة لاستمارة الطالب */
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm 20mm;
+  }
+  
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    color-adjust: exact;
+  }
+  
+  html, body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+  }
+  
+  /* إخفاء كل شيء ما عدا .print-container */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* إظهار فقط .print-container وكل ما بداخله */
+  .print-container,
+  .print-container * {
+    visibility: visible !important;
+  }
+  
+  /* إخفاء العناصر غير المرغوبة في الطباعة */
+  button,
+  .no-print,
+  header,
+  nav,
+  aside,
+  footer:not(.print-footer) {
+    display: none !important;
+    visibility: hidden !important;
+  }
+  
+  /* إظهار فقط محتوى الاستمارة */
+  .print-container {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    display: block !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    box-shadow: none !important;
+    font-size: 11pt;
+    line-height: 1.5;
+    page-break-after: auto;
+  }
+  
+  /* الحفاظ على display types الصحيحة */
+  .print-container table {
+    display: table !important;
+    width: 100% !important;
+  }
+  
+  .print-container tr {
+    display: table-row !important;
+  }
+  
+  .print-container td,
+  .print-container th {
+    display: table-cell !important;
+  }
+  
+  .print-container div {
+    display: block !important;
+  }
+  
+  .print-container span {
+    display: inline !important;
+  }
+  
+  .print-container p {
+    display: block !important;
+  }
+  
+  .print-container h1,
+  .print-container h2,
+  .print-container h3 {
+    display: block !important;
+  }
+  
+  /* تحسين المسافات للطباعة */
+  .print-container h1,
+  .print-container h2 {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  
+  .print-container h3 {
+    page-break-after: avoid;
+    break-after: avoid;
+    page-break-before: auto;
+  }
+  
+  /* السماح بتقسيم الجداول إذا كانت طويلة */
+  .print-container table {
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+  
+  .print-container tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  
+  /* منع تقسيم الصف الواحد */
+  .print-container td {
+    page-break-inside: avoid;
+  }
+  
+  /* تحسين الجداول */
+  .print-container table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 12pt;
+  }
+  
+  .print-container table td {
+    padding: 6pt 8pt;
+    border: 1pt solid #e5e7eb;
+  }
+  
+  .print-container table td:first-child {
+    background-color: #f9fafb !important;
+    font-weight: 600;
+    width: 35%;
+  }
+  
+  /* تحسين العناوين */
+  .print-container h1 {
+    font-size: 18pt;
+    margin-bottom: 8pt;
+  }
+  
+  .print-container h2 {
+    font-size: 16pt;
+    margin-bottom: 6pt;
+  }
+  
+  .print-container h3 {
+    font-size: 13pt;
+    margin-bottom: 8pt;
+    padding: 4pt 8pt;
+  }
+  
+  /* تحسين المسافات بين الأقسام */
+  .print-container > div {
+    margin-bottom: 16pt;
+  }
+  
+  /* السماح بالتقسيم الطبيعي بين الأقسام */
+  .print-container > div.mb-8,
+  .print-container > div.mb-6 {
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+  
+  /* منع تكرار المحتوى */
+  .print-container {
+    page-break-before: auto;
+    orphans: 3;
+    widows: 3;
+  }
+  
+  /* إزالة الألوان الزائدة في الطباعة */
+  .print-container .bg-blue-600 {
+    background-color: #2563eb !important;
+    color: white !important;
+  }
+  
+  .print-container .bg-gray-50 {
+    background-color: #f9fafb !important;
+  }
+  
+  /* إخفاء الـ modal wrapper */
+  body > div:not(.print-container) {
+    display: none !important;
+  }
+}
+
+/* إزالة مثلثات التعداد من حقول number */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
 }
