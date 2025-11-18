@@ -65,9 +65,36 @@ export default function GradesPage() {
         params.append('page', currentPage.toString());
         if (searchTerm) params.append('search', searchTerm);
         if (selectedDepartment) params.append('department', selectedDepartment);
-        if (selectedLevel) params.append('level', selectedLevel);
-        if (selectedStudyType) params.append('study_type', selectedStudyType);
-        if (selectedSemester) params.append('semester', selectedSemester);
+        
+        // تحويل المرحلة من العربية إلى الإنجليزية
+        if (selectedLevel) {
+          const levelMap: { [key: string]: string } = {
+            'الأولى': 'first',
+            'الثانية': 'second',
+            'الثالثة': 'third',
+            'الرابعة': 'fourth'
+          };
+          params.append('level', levelMap[selectedLevel] || selectedLevel);
+        }
+        
+        // تحويل نوع الدراسة من العربية إلى الإنجليزية
+        if (selectedStudyType) {
+          const studyTypeMap: { [key: string]: string } = {
+            'صباحي': 'morning',
+            'مسائي': 'evening'
+          };
+          params.append('study_type', studyTypeMap[selectedStudyType] || selectedStudyType);
+        }
+        
+        // تحويل الفصل الدراسي من العربية إلى الإنجليزية
+        if (selectedSemester) {
+          const semesterMap: { [key: string]: string } = {
+            'الأول': 'first',
+            'الثاني': 'second'
+          };
+          params.append('semester', semesterMap[selectedSemester] || selectedSemester);
+        }
+        
         if (selectedAcademicYear) params.append('academic_year', selectedAcademicYear);
         
         const response = await fetch(`/api/students?${params.toString()}`);
