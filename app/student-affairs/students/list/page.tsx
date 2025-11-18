@@ -90,6 +90,9 @@ export default function StudentsListPage() {
   const [selectedAdmissionType, setSelectedAdmissionType] = useState('');
   const [selectedStudyType, setSelectedStudyType] = useState('');
   const [selectedSemester, setSelectedSemester] = useState('');
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('all');
+  const [academicYears, setAcademicYears] = useState<string[]>(['all']);
+  const [yearsLoading, setYearsLoading] = useState(true);
   const [showExportModal, setShowExportModal] = useState(false);
   const [selectedColumns, setSelectedColumns] = useState(exportableColumns);
   const [columnSearchTerm, setColumnSearchTerm] = useState('');
@@ -117,7 +120,8 @@ export default function StudentsListPage() {
         ...(selectedLevel && { level: selectedLevel }),
         ...(selectedAdmissionType && { admission_type: selectedAdmissionType }),
         ...(selectedStudyType && { study_type: selectedStudyType }),
-        ...(selectedSemester && { semester: selectedSemester })
+        ...(selectedSemester && { semester: selectedSemester }),
+        ...(selectedAcademicYear && selectedAcademicYear !== 'all' && { academic_year: selectedAcademicYear })
       });
 
       console.log('URL المطلوب:', `/api/students?${params}`);
@@ -148,11 +152,40 @@ export default function StudentsListPage() {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchTerm, selectedDepartment, selectedLevel, selectedAdmissionType, selectedStudyType, selectedSemester]);
+  }, [currentPage, searchTerm, selectedDepartment, selectedLevel, selectedAdmissionType, selectedStudyType, selectedSemester, selectedAcademicYear]);
+
+  // جلب قائمة الأعوام الدراسية المتاحة
+  useEffect(() => {
+    const fetchAcademicYears = async () => {
+      try {
+        const response = await fetch('/api/academic-years');
+        const data = await response.json();
+        if (data.success && data.data && data.data.length > 0) {
+          // إضافة خيار "جميع السنوات" في البداية
+          setAcademicYears(['all', ...data.data]);
+          // القيمة الافتراضية هي "جميع السنوات"
+          setSelectedAcademicYear('all');
+        } else {
+          // إذا لم تكن هناك أعوام، نضيف فقط "جميع السنوات"
+          setAcademicYears(['all']);
+          setSelectedAcademicYear('all');
+        }
+      } catch (error) {
+        console.error('خطأ في جلب الأعوام الدراسية:', error);
+        // في حالة الخطأ، نضيف فقط "جميع السنوات"
+        setAcademicYears(['all']);
+        setSelectedAcademicYear('all');
+      } finally {
+        setYearsLoading(false);
+      }
+    };
+
+    fetchAcademicYears();
+  }, []);
 
   useEffect(() => {
     console.log('🚀 تحميل صفحة قائمة الطلاب');
-    console.log('الحالة الحالية:', { currentPage, searchTerm, selectedDepartment, selectedLevel, selectedAdmissionType, selectedStudyType, selectedSemester });
+    console.log('الحالة الحالية:', { currentPage, searchTerm, selectedDepartment, selectedLevel, selectedAdmissionType, selectedStudyType, selectedSemester, selectedAcademicYear });
     console.log('fetchStudents function:', typeof fetchStudents);
     fetchStudents();
     // بث فوري لتحديث القائمة عند تغيير حالات الدفع
@@ -168,7 +201,7 @@ export default function StudentsListPage() {
     return () => {
       try { ch?.close(); } catch {}
     };
-  }, [currentPage, searchTerm, selectedDepartment, selectedLevel, selectedAdmissionType, selectedStudyType, selectedSemester, fetchStudents]);
+  }, [currentPage, searchTerm, selectedDepartment, selectedLevel, selectedAdmissionType, selectedStudyType, selectedSemester, selectedAcademicYear, fetchStudents]);
 
   // معالجة البحث
   const handleSearch = (e: React.FormEvent) => {
@@ -204,6 +237,12 @@ export default function StudentsListPage() {
   // معالجة تغيير فلتر الفصل الدراسي
   const handleSemesterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedSemester(e.target.value);
+    setCurrentPage(1);
+  };
+
+  // معالجة تغيير فلتر العام الدراسي
+  const handleAcademicYearChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedAcademicYear(e.target.value);
     setCurrentPage(1);
   };
 
@@ -804,6 +843,20 @@ export default function StudentsListPage() {
                 <option value="first">الأول</option>
                 <option value="second">الثاني</option>
               </select>
+
+              {/* Academic Year Filter */}
+              <select
+                value={selectedAcademicYear}
+                onChange={handleAcademicYearChange}
+                disabled={yearsLoading}
+                className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white h-10 disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                {academicYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year === 'all' ? 'جميع السنوات' : year}
+                  </option>
+                ))}
+              </select>
               
                              {/* Export Button */}
                <button
@@ -1065,7 +1118,7 @@ export default function StudentsListPage() {
                </svg>
                <h3 className="text-lg font-medium text-gray-900 mb-2">لا توجد بيانات</h3>
                <p className="text-gray-600">لم يتم العثور على أي طلاب</p>
-               {(selectedDepartment || selectedLevel || selectedAdmissionType || selectedStudyType || selectedSemester) && (
+               {(selectedDepartment || selectedLevel || selectedAdmissionType || selectedStudyType || selectedSemester || (selectedAcademicYear && selectedAcademicYear !== 'all')) && (
                  <p className="text-sm text-gray-500 mt-2">
                    لا يوجد طلاب يطابقون المعايير المحددة
                  </p>

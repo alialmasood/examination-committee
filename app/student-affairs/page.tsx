@@ -54,13 +54,44 @@ export default function StudentAffairsPage() {
   const [statusLoading, setStatusLoading] = useState(true);
   const [admissionChannelStats, setAdmissionChannelStats] = useState<Record<string, number>>({});
   const [channelsLoading, setChannelsLoading] = useState(true);
+  const [academicYear, setAcademicYear] = useState<string>('2025-2026');
+  const [academicYears, setAcademicYears] = useState<string[]>(['2025-2026']);
+  const [yearsLoading, setYearsLoading] = useState(true);
+
+  // جلب قائمة الأعوام الدراسية المتاحة
+  useEffect(() => {
+    const fetchAcademicYears = async () => {
+      try {
+        const response = await fetch('/api/academic-years');
+        const data = await response.json();
+        if (data.success && data.data && data.data.length > 0) {
+          setAcademicYears(data.data);
+          // تعيين العام الدراسي الأول كقيمة افتراضية
+          setAcademicYear(data.data[0]);
+        }
+      } catch (error) {
+        console.error('خطأ في جلب الأعوام الدراسية:', error);
+      } finally {
+        setYearsLoading(false);
+      }
+    };
+
+    fetchAcademicYears();
+  }, []);
 
   useEffect(() => {
     const fetchStats = async () => {
+      if (!academicYear) return;
+      
+      setLoading(true);
+      setDepartmentsLoading(true);
+      setStatusLoading(true);
+      setChannelsLoading(true);
+      
       try {
         const [studentsResponse, departmentsResponse] = await Promise.all([
-          fetch('/api/students/stats'),
-          fetch('/api/departments/stats')
+          fetch(`/api/students/stats?academic_year=${encodeURIComponent(academicYear)}`),
+          fetch(`/api/departments/stats?academic_year=${encodeURIComponent(academicYear)}`)
         ]);
         
         const studentsData = await studentsResponse.json();
@@ -96,10 +127,44 @@ export default function StudentAffairsPage() {
     };
 
     fetchStats();
-  }, []);
+  }, [academicYear]);
 
   return (
     <div className="space-y-8">
+      {/* اختيار العام الدراسي */}
+      <div className="bg-white/90 backdrop-blur-lg rounded-xl shadow-lg border border-white/40 p-3">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <div className="flex items-center gap-2">
+              <label htmlFor="academic-year" className="text-sm font-semibold text-gray-700 whitespace-nowrap">
+                العام الدراسي:
+              </label>
+              <select
+                id="academic-year"
+                value={academicYear}
+                onChange={(e) => setAcademicYear(e.target.value)}
+                disabled={yearsLoading}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                {academicYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="text-right hidden sm:block">
+            <p className="text-xs text-gray-500">إحصائيات للعام الدراسي المحدد</p>
+          </div>
+        </div>
+      </div>
+
       {/* إحصائيات الطلبة */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {/* إجمالي الطلبة */}

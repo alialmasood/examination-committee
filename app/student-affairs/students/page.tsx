@@ -125,6 +125,9 @@ export default function StudentsPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('all');
+  const [academicYears, setAcademicYears] = useState<string[]>(['all']);
+  const [yearsLoading, setYearsLoading] = useState(true);
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 10,
@@ -306,7 +309,8 @@ export default function StudentsPage() {
         page: pagination.page.toString(),
         limit: pagination.limit.toString(),
         ...(searchTerm && { search: searchTerm }),
-        ...(selectedDepartment && { department: selectedDepartment })
+        ...(selectedDepartment && { department: selectedDepartment }),
+        ...(selectedAcademicYear && selectedAcademicYear !== 'all' && { academic_year: selectedAcademicYear })
       });
 
       console.log('URL المطلوب:', `/api/students?${params}`);
@@ -395,8 +399,11 @@ export default function StudentsPage() {
         'القانون': 'القانون'
       };
 
-      // جلب إحصائيات الأقسام من API
-      const response = await fetch('/api/departments/stats');
+      // جلب إحصائيات الأقسام من API مع فلترة حسب العام الدراسي
+      const url = selectedAcademicYear && selectedAcademicYear !== 'all'
+        ? `/api/departments/stats?academic_year=${encodeURIComponent(selectedAcademicYear)}`
+        : '/api/departments/stats';
+      const response = await fetch(url);
       const data = await response.json();
 
       if (data.success && data.data) {
@@ -440,11 +447,40 @@ export default function StudentsPage() {
     }
   };
 
+  // جلب قائمة الأعوام الدراسية المتاحة
+  useEffect(() => {
+    const fetchAcademicYears = async () => {
+      try {
+        const response = await fetch('/api/academic-years');
+        const data = await response.json();
+        if (data.success && data.data && data.data.length > 0) {
+          // إضافة خيار "جميع السنوات" في البداية
+          setAcademicYears(['all', ...data.data]);
+          // القيمة الافتراضية هي "جميع السنوات"
+          setSelectedAcademicYear('all');
+        } else {
+          // إذا لم تكن هناك أعوام، نضيف فقط "جميع السنوات"
+          setAcademicYears(['all']);
+          setSelectedAcademicYear('all');
+        }
+      } catch (error) {
+        console.error('خطأ في جلب الأعوام الدراسية:', error);
+        // في حالة الخطأ، نضيف فقط "جميع السنوات"
+        setAcademicYears(['all']);
+        setSelectedAcademicYear('all');
+      } finally {
+        setYearsLoading(false);
+      }
+    };
+
+    fetchAcademicYears();
+  }, []);
+
   // جلب بيانات الطلاب من قاعدة البيانات
   useEffect(() => {
     fetchStudents();
     fetchDepartmentCounts();
-  }, [pagination.page, searchTerm, selectedDepartment]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pagination.page, searchTerm, selectedDepartment, selectedAcademicYear]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // البث الفوري لتحديث القائمة عند تغيير حالات الدفع من نظام الحسابات
   useEffect(() => {
@@ -3226,6 +3262,18 @@ export default function StudentsPage() {
                 </svg>
               </div>
             </div>
+            <select 
+              value={selectedAcademicYear}
+              onChange={(e) => setSelectedAcademicYear(e.target.value)}
+              disabled={yearsLoading}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
+            >
+              {academicYears.map((year) => (
+                <option key={year} value={year}>
+                  {year === 'all' ? 'جميع السنوات' : year}
+                </option>
+              ))}
+            </select>
             <select 
               value={selectedDepartment}
               onChange={(e) => setSelectedDepartment(e.target.value)}

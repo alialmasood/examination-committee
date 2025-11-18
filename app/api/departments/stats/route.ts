@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/src/lib/db';
 
 // قائمة الأقسام الأكاديمية
@@ -18,49 +18,81 @@ const DEPARTMENTS = [
 ];
 
 // GET /api/departments/stats - جلب إحصائيات الأقسام الأكاديمية
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url);
+    const academicYear = searchParams.get('academic_year') || '2025-2026';
+
     const statsPromises = DEPARTMENTS.map(async (dept) => {
       // جلب إجمالي عدد الطلاب في القسم - استخدام دالة تطبيع النص العربي
-      const totalResult = await query(
-        `SELECT COUNT(*) as total FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1)`,
-        [dept.arabicName]
-      );
+      const totalQuery = academicYear
+        ? `SELECT COUNT(*) as total FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND academic_year = $2`
+        : `SELECT COUNT(*) as total FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1)`;
+      const totalParams = academicYear ? [dept.arabicName, academicYear] : [dept.arabicName];
+      const totalResult = await query(totalQuery, totalParams);
       const total = parseInt(totalResult.rows[0].total);
 
       // دالة مساعدة لجلب إحصائيات حسب نوع الدراسة والمرحلة
       const getStatsByStudyType = async (studyType: string) => {
-        const firstYear = await query(
-          `SELECT COUNT(*) as count FROM student_affairs.students 
-           WHERE normalize_arabic(major) = normalize_arabic($1) 
-           AND admission_type = $2 
-           AND COALESCE(study_type, 'morning') = $3`,
-          [dept.arabicName, 'first', studyType]
-        );
+        const firstYearQuery = academicYear
+          ? `SELECT COUNT(*) as count FROM student_affairs.students 
+             WHERE normalize_arabic(major) = normalize_arabic($1) 
+             AND admission_type = $2 
+             AND COALESCE(study_type, 'morning') = $3
+             AND academic_year = $4`
+          : `SELECT COUNT(*) as count FROM student_affairs.students 
+             WHERE normalize_arabic(major) = normalize_arabic($1) 
+             AND admission_type = $2 
+             AND COALESCE(study_type, 'morning') = $3`;
+        const firstYearParams = academicYear 
+          ? [dept.arabicName, 'first', studyType, academicYear]
+          : [dept.arabicName, 'first', studyType];
+        const firstYear = await query(firstYearQuery, firstYearParams);
         
-        const secondYear = await query(
-          `SELECT COUNT(*) as count FROM student_affairs.students 
-           WHERE normalize_arabic(major) = normalize_arabic($1) 
-           AND admission_type = $2 
-           AND COALESCE(study_type, 'morning') = $3`,
-          [dept.arabicName, 'second', studyType]
-        );
+        const secondYearQuery = academicYear
+          ? `SELECT COUNT(*) as count FROM student_affairs.students 
+             WHERE normalize_arabic(major) = normalize_arabic($1) 
+             AND admission_type = $2 
+             AND COALESCE(study_type, 'morning') = $3
+             AND academic_year = $4`
+          : `SELECT COUNT(*) as count FROM student_affairs.students 
+             WHERE normalize_arabic(major) = normalize_arabic($1) 
+             AND admission_type = $2 
+             AND COALESCE(study_type, 'morning') = $3`;
+        const secondYearParams = academicYear 
+          ? [dept.arabicName, 'second', studyType, academicYear]
+          : [dept.arabicName, 'second', studyType];
+        const secondYear = await query(secondYearQuery, secondYearParams);
         
-        const thirdYear = await query(
-          `SELECT COUNT(*) as count FROM student_affairs.students 
-           WHERE normalize_arabic(major) = normalize_arabic($1) 
-           AND admission_type = $2 
-           AND COALESCE(study_type, 'morning') = $3`,
-          [dept.arabicName, 'third', studyType]
-        );
+        const thirdYearQuery = academicYear
+          ? `SELECT COUNT(*) as count FROM student_affairs.students 
+             WHERE normalize_arabic(major) = normalize_arabic($1) 
+             AND admission_type = $2 
+             AND COALESCE(study_type, 'morning') = $3
+             AND academic_year = $4`
+          : `SELECT COUNT(*) as count FROM student_affairs.students 
+             WHERE normalize_arabic(major) = normalize_arabic($1) 
+             AND admission_type = $2 
+             AND COALESCE(study_type, 'morning') = $3`;
+        const thirdYearParams = academicYear 
+          ? [dept.arabicName, 'third', studyType, academicYear]
+          : [dept.arabicName, 'third', studyType];
+        const thirdYear = await query(thirdYearQuery, thirdYearParams);
         
-        const fourthYear = await query(
-          `SELECT COUNT(*) as count FROM student_affairs.students 
-           WHERE normalize_arabic(major) = normalize_arabic($1) 
-           AND admission_type = $2 
-           AND COALESCE(study_type, 'morning') = $3`,
-          [dept.arabicName, 'fourth', studyType]
-        );
+        const fourthYearQuery = academicYear
+          ? `SELECT COUNT(*) as count FROM student_affairs.students 
+             WHERE normalize_arabic(major) = normalize_arabic($1) 
+             AND admission_type = $2 
+             AND COALESCE(study_type, 'morning') = $3
+             AND academic_year = $4`
+          : `SELECT COUNT(*) as count FROM student_affairs.students 
+             WHERE normalize_arabic(major) = normalize_arabic($1) 
+             AND admission_type = $2 
+             AND COALESCE(study_type, 'morning') = $3`;
+        const fourthYearParams = academicYear 
+          ? [dept.arabicName, 'fourth', studyType, academicYear]
+          : [dept.arabicName, 'fourth', studyType];
+        const fourthYear = await query(fourthYearQuery, fourthYearParams);
 
         return {
           first: parseInt(firstYear.rows[0].count),
@@ -77,10 +109,13 @@ export async function GET() {
       ]);
 
       // جلب إجمالي المبالغ المدفوعة للقسم
-      const totalAmountResult = await query(
-        `SELECT COALESCE(SUM(payment_amount), 0) as total_amount FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND payment_status = $2`,
-        [dept.arabicName, 'paid']
-      );
+      const totalAmountQuery = academicYear
+        ? `SELECT COALESCE(SUM(payment_amount), 0) as total_amount FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND payment_status = $2 AND academic_year = $3`
+        : `SELECT COALESCE(SUM(payment_amount), 0) as total_amount FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND payment_status = $2`;
+      const totalAmountParams = academicYear 
+        ? [dept.arabicName, 'paid', academicYear]
+        : [dept.arabicName, 'paid'];
+      const totalAmountResult = await query(totalAmountQuery, totalAmountParams);
       const totalAmount = parseFloat(totalAmountResult.rows[0].total_amount);
 
       return {
