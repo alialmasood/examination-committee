@@ -6,6 +6,13 @@ import { Student } from '@/src/lib/types';
 export default function GradesPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState({
+    total: 0,
+    total_pages: 0,
+    page: 1,
+    limit: 10
+  });
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [selectedLevel, setSelectedLevel] = useState('');
@@ -54,6 +61,8 @@ export default function GradesPage() {
       try {
         setLoading(true);
         const params = new URLSearchParams();
+        params.append('limit', '10'); // 10 طلاب في كل صفحة
+        params.append('page', currentPage.toString());
         if (searchTerm) params.append('search', searchTerm);
         if (selectedDepartment) params.append('department', selectedDepartment);
         if (selectedLevel) params.append('level', selectedLevel);
@@ -66,6 +75,9 @@ export default function GradesPage() {
         console.log('API Response:', data);
         console.log('Search params:', params.toString());
         setStudents(data.students || []);
+        if (data.pagination) {
+          setPagination(data.pagination);
+        }
       } catch (error) {
         console.error('Error fetching students:', error);
       } finally {
@@ -74,6 +86,11 @@ export default function GradesPage() {
     };
 
     fetchStudents();
+  }, [currentPage, searchTerm, selectedDepartment, selectedLevel, selectedStudyType, selectedSemester, selectedAcademicYear]);
+
+  // إعادة تعيين الصفحة عند تغيير الفلاتر
+  useEffect(() => {
+    setCurrentPage(1);
   }, [searchTerm, selectedDepartment, selectedLevel, selectedStudyType, selectedSemester, selectedAcademicYear]);
 
   return (
@@ -207,7 +224,7 @@ export default function GradesPage() {
             </div>
             <div className="mr-3">
               <p className="text-sm font-medium text-blue-600">إجمالي الطلبة</p>
-              <p className="text-2xl font-bold text-blue-800">{students.length}</p>
+              <p className="text-2xl font-bold text-blue-800">{pagination.total || students.length}</p>
             </div>
           </div>
         </div>
@@ -287,7 +304,7 @@ export default function GradesPage() {
                 {students.map((student, index) => (
                   <tr key={student.id} className="hover:bg-gray-50">
                     <td className="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12">
-                      {index + 1}
+                      {(currentPage - 1) * 10 + index + 1}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap min-w-48">
                       <div className="text-sm font-medium text-gray-900">
@@ -354,6 +371,69 @@ export default function GradesPage() {
                 <p className="mt-1 text-sm text-gray-500">لم يتم العثور على طلبة مطابقين لمعايير البحث.</p>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Pagination */}
+        {!loading && students.length > 0 && (
+          <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+            <div className="text-sm text-gray-700">
+              عرض {((currentPage - 1) * 10) + 1} إلى {Math.min(currentPage * 10, pagination.total)} من {pagination.total} طالب
+            </div>
+            <div className="flex items-center space-x-2 space-x-reverse">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                  currentPage === 1
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                السابق
+              </button>
+              
+              <div className="flex items-center space-x-1 space-x-reverse">
+                {Array.from({ length: Math.min(5, pagination.total_pages) }, (_, i) => {
+                  let pageNum;
+                  if (pagination.total_pages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= pagination.total_pages - 2) {
+                    pageNum = pagination.total_pages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                        currentPage === pageNum
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+              
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(pagination.total_pages, prev + 1))}
+                disabled={currentPage === pagination.total_pages}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                  currentPage === pagination.total_pages
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                التالي
+              </button>
+            </div>
           </div>
         )}
       </div>
