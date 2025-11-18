@@ -28,26 +28,53 @@ export async function GET() {
       );
       const total = parseInt(totalResult.rows[0].total);
 
-      // جلب عدد الطلاب حسب المرحلة الدراسية (admission_type)
-      const firstYear = await query(
-        `SELECT COUNT(*) as count FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND admission_type = $2`,
-        [dept.arabicName, 'first']
-      );
-      
-      const secondYear = await query(
-        `SELECT COUNT(*) as count FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND admission_type = $2`,
-        [dept.arabicName, 'second']
-      );
-      
-      const thirdYear = await query(
-        `SELECT COUNT(*) as count FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND admission_type = $2`,
-        [dept.arabicName, 'third']
-      );
-      
-      const fourthYear = await query(
-        `SELECT COUNT(*) as count FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND admission_type = $2`,
-        [dept.arabicName, 'fourth']
-      );
+      // دالة مساعدة لجلب إحصائيات حسب نوع الدراسة والمرحلة
+      const getStatsByStudyType = async (studyType: string) => {
+        const firstYear = await query(
+          `SELECT COUNT(*) as count FROM student_affairs.students 
+           WHERE normalize_arabic(major) = normalize_arabic($1) 
+           AND admission_type = $2 
+           AND COALESCE(study_type, 'morning') = $3`,
+          [dept.arabicName, 'first', studyType]
+        );
+        
+        const secondYear = await query(
+          `SELECT COUNT(*) as count FROM student_affairs.students 
+           WHERE normalize_arabic(major) = normalize_arabic($1) 
+           AND admission_type = $2 
+           AND COALESCE(study_type, 'morning') = $3`,
+          [dept.arabicName, 'second', studyType]
+        );
+        
+        const thirdYear = await query(
+          `SELECT COUNT(*) as count FROM student_affairs.students 
+           WHERE normalize_arabic(major) = normalize_arabic($1) 
+           AND admission_type = $2 
+           AND COALESCE(study_type, 'morning') = $3`,
+          [dept.arabicName, 'third', studyType]
+        );
+        
+        const fourthYear = await query(
+          `SELECT COUNT(*) as count FROM student_affairs.students 
+           WHERE normalize_arabic(major) = normalize_arabic($1) 
+           AND admission_type = $2 
+           AND COALESCE(study_type, 'morning') = $3`,
+          [dept.arabicName, 'fourth', studyType]
+        );
+
+        return {
+          first: parseInt(firstYear.rows[0].count),
+          second: parseInt(secondYear.rows[0].count),
+          third: parseInt(thirdYear.rows[0].count),
+          fourth: parseInt(fourthYear.rows[0].count)
+        };
+      };
+
+      // جلب إحصائيات الصباحي والمسائي
+      const [morningStats, eveningStats] = await Promise.all([
+        getStatsByStudyType('morning'),
+        getStatsByStudyType('evening')
+      ]);
 
       // جلب إجمالي المبالغ المدفوعة للقسم
       const totalAmountResult = await query(
@@ -62,10 +89,14 @@ export async function GET() {
         total: total,
         totalAmount: totalAmount,
         years: {
-          first: parseInt(firstYear.rows[0].count),
-          second: parseInt(secondYear.rows[0].count),
-          third: parseInt(thirdYear.rows[0].count),
-          fourth: parseInt(fourthYear.rows[0].count)
+          first: morningStats.first + eveningStats.first,
+          second: morningStats.second + eveningStats.second,
+          third: morningStats.third + eveningStats.third,
+          fourth: morningStats.fourth + eveningStats.fourth
+        },
+        studyTypes: {
+          morning: morningStats,
+          evening: eveningStats
         }
       };
     });

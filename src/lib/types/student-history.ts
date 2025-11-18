@@ -63,6 +63,8 @@ export type StudentDetails = {
   phone?: string;
   email?: string;
   photo?: string;
+  username?: string | null;
+  password?: string | null;
 };
 
 export type StudentHistoryMeta = {

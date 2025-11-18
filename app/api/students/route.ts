@@ -100,6 +100,7 @@ export async function GET(request: NextRequest) {
         s.national_id,
         s.birth_date,
         s.birth_place,
+        s.province,
         s.mother_name,
         s.area,
         s.gender,
@@ -157,6 +158,28 @@ export async function GET(request: NextRequest) {
     queryParams.push(limit, offset);
     const studentsResult = await query(studentsQuery, queryParams);
     
+    // التحقق من القيم المسترجعة
+    console.log('🔍 عينة من بيانات الطلاب من قاعدة البيانات:', studentsResult.rows.slice(0, 2).map((row: any) => ({
+      name: row.full_name,
+      province: row.province,
+      province_type: typeof row.province,
+      admission_type: row.admission_type,
+      study_type: row.study_type,
+      level: row.level,
+      academic_year: row.academic_year,
+      semester: row.semester
+    })));
+    
+    // التحقق من أن province موجود في النتيجة
+    if (studentsResult.rows.length > 0) {
+      console.log('🔍 التحقق من province في أول طالب:', {
+        has_province: 'province' in studentsResult.rows[0],
+        province_value: studentsResult.rows[0].province,
+        province_type: typeof studentsResult.rows[0].province,
+        all_keys: Object.keys(studentsResult.rows[0])
+      });
+    }
+    
     // جلب academic_status لكل طالب بشكل منفصل (إذا كان العمود موجوداً)
     const academicStatusMap: Record<string, string> = {};
     try {
@@ -198,12 +221,17 @@ export async function GET(request: NextRequest) {
         secondary_gpa: row.secondary_gpa,
         study_type: row.study_type,
         semester: row.semester,
+        province: row.province,
+        province_type: typeof row.province,
+        province_is_null: row.province === null,
+        province_is_undefined: row.province === undefined,
         mother_name: row.mother_name,
         area: row.area,
         exam_attempt: row.exam_attempt,
         exam_number: row.exam_number,
         exam_password: row.exam_password,
         branch: row.branch,
+        has_province: 'province' in row,
         has_mother_name: 'mother_name' in row,
         has_area: 'area' in row,
         has_exam_attempt: 'exam_attempt' in row,
@@ -224,6 +252,7 @@ export async function GET(request: NextRequest) {
         national_id: row.national_id,
         birth_date: row.birth_date,
         birth_place: row.birth_place,
+        province: row.province,
         mother_name: row.mother_name,
         area: row.area,
         gender: row.gender,
@@ -316,6 +345,52 @@ export async function POST(request: NextRequest) {
       console.log('عمود admission_channel موجود بالفعل أو حدث خطأ في التحقق:', error);
     }
     
+    // التحقق من وجود عمود username وإنشاؤه إذا لم يكن موجوداً
+    try {
+      await query(`
+        ALTER TABLE student_affairs.students
+        ADD COLUMN IF NOT EXISTS username VARCHAR(100)
+      `);
+    } catch (error) {
+      console.log('عمود username موجود بالفعل أو حدث خطأ في التحقق:', error);
+    }
+    
+    // التحقق من وجود عمود password وإنشاؤه إذا لم يكن موجوداً
+    try {
+      await query(`
+        ALTER TABLE student_affairs.students
+        ADD COLUMN IF NOT EXISTS password VARCHAR(255)
+      `);
+    } catch (error) {
+      console.log('عمود password موجود بالفعل أو حدث خطأ في التحقق:', error);
+    }
+    
+    // التحقق من طول عمود secondary_graduation_year وتعديله إذا لزم الأمر
+    try {
+      const columnInfo = await query(`
+        SELECT character_maximum_length 
+        FROM information_schema.columns 
+        WHERE table_schema = 'student_affairs' 
+          AND table_name = 'students' 
+          AND column_name = 'secondary_graduation_year'
+      `);
+      
+      if (columnInfo.rows.length > 0) {
+        const currentLength = columnInfo.rows[0].character_maximum_length;
+        if (currentLength && parseInt(currentLength) < 10) {
+          console.log('🔧 تعديل طول عمود secondary_graduation_year من', currentLength, 'إلى 10');
+          await query(`
+            ALTER TABLE student_affairs.students 
+            ALTER COLUMN secondary_graduation_year TYPE VARCHAR(10)
+          `);
+          console.log('✅ تم تعديل طول العمود بنجاح');
+        }
+      }
+    } catch (error) {
+      console.log('⚠️ خطأ في التحقق من طول عمود secondary_graduation_year:', error);
+      // لا نوقف العملية إذا فشل التحقق
+    }
+    
     console.log('🚀 === بدء API حفظ الطالب ===');
     const body = await request.json() as Record<string, unknown>;
     console.log('📥 البيانات المستلمة من الفورم:', body);
@@ -377,9 +452,9 @@ export async function POST(request: NextRequest) {
     // إدراج الطالب الجديد مع جميع الحقول
     const insertQuery = `
       INSERT INTO student_affairs.students (
-        university_id, student_number, first_name, last_name, full_name_ar, full_name, nickname, national_id, birth_date, birth_place, mother_name, area, gender, religion, marital_status, phone, email, address, emergency_contact_name, emergency_contact_relationship, emergency_contact_phone, secondary_school_name, secondary_school_type, secondary_graduation_year, secondary_total_score, exam_attempt, exam_number, exam_password, branch, major, academic_year, secondary_gpa, study_type, level, semester, special_requirements, admission_type, admission_channel, national_id_copy, birth_certificate, secondary_certificate, photo, medical_certificate, medical_examination, other_documents, status, payment_status
+        university_id, student_number, first_name, last_name, full_name_ar, full_name, nickname, national_id, birth_date, birth_place, mother_name, area, gender, religion, marital_status, phone, email, address, emergency_contact_name, emergency_contact_relationship, emergency_contact_phone, secondary_school_name, secondary_school_type, secondary_graduation_year, secondary_total_score, exam_attempt, exam_number, exam_password, branch, major, academic_year, secondary_gpa, study_type, level, semester, special_requirements, admission_type, admission_channel, username, password, national_id_copy, birth_certificate, secondary_certificate, photo, medical_certificate, medical_examination, other_documents, status, payment_status
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49
       ) RETURNING id, university_id, created_at
     `;
     
@@ -485,15 +560,17 @@ export async function POST(request: NextRequest) {
       body.special_requirements || '', // متطلبات خاصة - $36
       body.admission_type && body.admission_type !== '' ? body.admission_type : 'first', // نوع القبول (المرحلة) - $37
       (body as Record<string, unknown>).admission_channel || '', // قناة القبول - $38
-      body.national_id_copy || '', // صورة الهوية الوطنية - $39
-      body.birth_certificate || '', // شهادة الميلاد - $40
-      body.secondary_certificate || '', // شهادة الثانوية - $41
-      body.photo || '', // الصورة الشخصية - $42
-      body.medical_certificate || '', // الشهادة الطبية - $43
-      body.medical_examination || '', // الفحص الطبي - $44
-      body.other_documents || '', // وثائق أخرى - $45
-      'active', // status - $46
-      paymentStatus // payment_status - $47
+      (body as Record<string, unknown>).username || '', // الاسم المستخدم - $39
+      (body as Record<string, unknown>).password || '', // كلمة المرور - $40
+      body.national_id_copy || '', // صورة الهوية الوطنية - $41
+      body.birth_certificate || '', // شهادة الميلاد - $42
+      body.secondary_certificate || '', // شهادة الثانوية - $43
+      body.photo || '', // الصورة الشخصية - $44
+      body.medical_certificate || '', // الشهادة الطبية - $45
+      body.medical_examination || '', // الفحص الطبي - $46
+      body.other_documents || '', // وثائق أخرى - $47
+      'active', // status - $48
+      paymentStatus // payment_status - $49
     ]);
     
     const newStudent = result.rows[0];

@@ -10,6 +10,26 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // التحقق من وجود عمود username وإنشاؤه إذا لم يكن موجوداً
+    try {
+      await query(`
+        ALTER TABLE student_affairs.students
+        ADD COLUMN IF NOT EXISTS username VARCHAR(100)
+      `);
+    } catch (error) {
+      console.log('عمود username موجود بالفعل أو حدث خطأ في التحقق:', error);
+    }
+    
+    // التحقق من وجود عمود password وإنشاؤه إذا لم يكن موجوداً
+    try {
+      await query(`
+        ALTER TABLE student_affairs.students
+        ADD COLUMN IF NOT EXISTS password VARCHAR(255)
+      `);
+    } catch (error) {
+      console.log('عمود password موجود بالفعل أو حدث خطأ في التحقق:', error);
+    }
+    
     const { id: studentId } = await params;
     console.log('🔍 جلب بيانات الطالب:', studentId);
     
@@ -26,6 +46,7 @@ export async function GET(
         s.national_id,
         s.birth_date,
         s.birth_place,
+        s.province,
         s.mother_name,
         s.area,
         s.gender,
@@ -59,6 +80,8 @@ export async function GET(
         s.semester,
         s.academic_year,
         s.special_requirements,
+        s.username,
+        s.password,
         s.admission_score,
         s.english_level,
         s.math_level,
@@ -114,6 +137,7 @@ export async function GET(
       national_id: row.national_id,
       birth_date: row.birth_date,
       birth_place: row.birth_place,
+      province: row.province || '',
       mother_name: row.mother_name || '',
       area: row.area || '',
       gender: row.gender,
@@ -146,6 +170,8 @@ export async function GET(
       level: row.level,
       semester: row.semester,
       academic_year: row.academic_year,
+      username: row.username || '',
+      password: row.password || '',
       admission_score: row.admission_score,
       english_level: row.english_level,
       math_level: row.math_level,
@@ -199,6 +225,52 @@ export async function PUT(
       console.log('عمود admission_channel موجود بالفعل أو حدث خطأ في التحقق:', error);
     }
     
+    // التحقق من وجود عمود username وإنشاؤه إذا لم يكن موجوداً
+    try {
+      await query(`
+        ALTER TABLE student_affairs.students
+        ADD COLUMN IF NOT EXISTS username VARCHAR(100)
+      `);
+    } catch (error) {
+      console.log('عمود username موجود بالفعل أو حدث خطأ في التحقق:', error);
+    }
+    
+    // التحقق من وجود عمود password وإنشاؤه إذا لم يكن موجوداً
+    try {
+      await query(`
+        ALTER TABLE student_affairs.students
+        ADD COLUMN IF NOT EXISTS password VARCHAR(255)
+      `);
+    } catch (error) {
+      console.log('عمود password موجود بالفعل أو حدث خطأ في التحقق:', error);
+    }
+    
+    // التحقق من طول عمود secondary_graduation_year وتعديله إذا لزم الأمر
+    try {
+      const columnInfo = await query(`
+        SELECT character_maximum_length 
+        FROM information_schema.columns 
+        WHERE table_schema = 'student_affairs' 
+          AND table_name = 'students' 
+          AND column_name = 'secondary_graduation_year'
+      `);
+      
+      if (columnInfo.rows.length > 0) {
+        const currentLength = columnInfo.rows[0].character_maximum_length;
+        if (currentLength && parseInt(currentLength) < 10) {
+          console.log('🔧 تعديل طول عمود secondary_graduation_year من', currentLength, 'إلى 10');
+          await query(`
+            ALTER TABLE student_affairs.students 
+            ALTER COLUMN secondary_graduation_year TYPE VARCHAR(10)
+          `);
+          console.log('✅ تم تعديل طول العمود بنجاح');
+        }
+      }
+    } catch (error) {
+      console.log('⚠️ خطأ في التحقق من طول عمود secondary_graduation_year:', error);
+      // لا نوقف العملية إذا فشل التحقق
+    }
+    
     const { id: studentId } = await params;
     const body = await request.json();
     const bodyRecord = body as Record<string, unknown>;
@@ -212,6 +284,11 @@ export async function PUT(
       study_type: body.study_type,
       department: bodyRecord.department,
       major: bodyRecord.major
+    });
+    console.log('🔍 حقل سنة التخرج:', {
+      secondary_graduation_year: body.secondary_graduation_year,
+      type: typeof body.secondary_graduation_year,
+      length: body.secondary_graduation_year ? String(body.secondary_graduation_year).length : 0
     });
     console.log('💰 الحقول الرقمية المرسلة:', {
       secondary_gpa: body.secondary_gpa,
@@ -250,6 +327,7 @@ export async function PUT(
         national_id = COALESCE(NULLIF($8, ''), national_id),
         birth_date = COALESCE($9, birth_date),
         birth_place = COALESCE(NULLIF($10, ''), birth_place),
+        province = COALESCE(NULLIF($57, ''), province),
         mother_name = COALESCE(NULLIF($11, ''), mother_name),
         area = COALESCE(NULLIF($12, ''), area),
         gender = COALESCE($13, gender),
@@ -282,18 +360,20 @@ export async function PUT(
         semester = COALESCE(NULLIF($40, ''), semester),
         academic_year = COALESCE(NULLIF($41, ''), academic_year),
         special_requirements = COALESCE(NULLIF($42, ''), special_requirements),
-        admission_score = COALESCE($43, admission_score),
-        english_level = COALESCE(NULLIF($44, ''), english_level),
-        math_level = COALESCE(NULLIF($45, ''), math_level),
-        science_level = COALESCE(NULLIF($46, ''), science_level),
-        national_id_copy = COALESCE(NULLIF($47, ''), national_id_copy),
-        birth_certificate = COALESCE(NULLIF($48, ''), birth_certificate),
-        secondary_certificate = COALESCE(NULLIF($49, ''), secondary_certificate),
-        photo = COALESCE(NULLIF($50, ''), photo),
-        medical_certificate = COALESCE(NULLIF($51, ''), medical_certificate),
-        medical_examination = COALESCE(NULLIF($52, ''), medical_examination),
-        other_documents = COALESCE(NULLIF($53, ''), other_documents),
-        status = COALESCE($54, status),
+        username = COALESCE(NULLIF($43, ''), username),
+        password = COALESCE(NULLIF($44, ''), password),
+        admission_score = COALESCE($45, admission_score),
+        english_level = COALESCE(NULLIF($46, ''), english_level),
+        math_level = COALESCE(NULLIF($47, ''), math_level),
+        science_level = COALESCE(NULLIF($48, ''), science_level),
+        national_id_copy = COALESCE(NULLIF($49, ''), national_id_copy),
+        birth_certificate = COALESCE(NULLIF($50, ''), birth_certificate),
+        secondary_certificate = COALESCE(NULLIF($51, ''), secondary_certificate),
+        photo = COALESCE(NULLIF($52, ''), photo),
+        medical_certificate = COALESCE(NULLIF($53, ''), medical_certificate),
+        medical_examination = COALESCE(NULLIF($54, ''), medical_examination),
+        other_documents = COALESCE(NULLIF($55, ''), other_documents),
+        status = COALESCE($56, status),
         updated_at = NOW()
       WHERE id = $1
       RETURNING id, university_id, updated_at
@@ -359,6 +439,8 @@ export async function PUT(
       body.semester || '',
       body.academic_year || '',
       body.special_requirements || '',
+      (bodyRecord.username || '') as string,
+      (bodyRecord.password || '') as string,
       admissionScoreValue,
       body.english_level || '',
       body.math_level || '',
@@ -370,7 +452,8 @@ export async function PUT(
       body.medical_certificate || '',
       body.medical_examination || '',
       body.other_documents || '',
-      body.status || null
+      body.status || null,
+      body.province || body.birth_place || ''
     ]);
 
     // تحديث academic_status إذا كان موجوداً في قاعدة البيانات
@@ -507,10 +590,23 @@ export async function PUT(
     console.error('❌ تفاصيل الخطأ:', {
       message: error instanceof Error ? error.message : 'خطأ غير معروف',
       code: (error as { code?: string })?.code,
-      detail: (error as { detail?: string })?.detail
+      detail: (error as { detail?: string })?.detail,
+      stack: error instanceof Error ? error.stack : undefined
     });
+    
+    // إرجاع رسالة خطأ أكثر تفصيلاً للمطورين
+    const errorMessage = error instanceof Error 
+      ? error.message 
+      : 'خطأ غير معروف';
+    const errorDetail = (error as { detail?: string })?.detail || '';
+    
     return NextResponse.json(
-      { success: false, error: 'خطأ في تحديث بيانات الطالب' },
+      { 
+        success: false, 
+        error: 'خطأ في تحديث بيانات الطالب',
+        details: process.env.NODE_ENV === 'development' ? errorMessage : undefined,
+        detail: process.env.NODE_ENV === 'development' ? errorDetail : undefined
+      },
       { status: 500 }
     );
   }

@@ -12,6 +12,20 @@ interface DepartmentStats {
     third: number;
     fourth: number;
   };
+  studyTypes?: {
+    morning: {
+      first: number;
+      second: number;
+      third: number;
+      fourth: number;
+    };
+    evening: {
+      first: number;
+      second: number;
+      third: number;
+      fourth: number;
+    };
+  };
 }
 
 const DEPARTMENTS = [
@@ -227,26 +241,64 @@ export default function StudentAffairsPage() {
             const colors = colorClasses[dept.color as keyof typeof colorClasses].split(' ');
             
             return (
-              <div key={dept.id} className={`bg-gradient-to-br ${colors[0]} ${colors[1]} rounded-2xl shadow-lg border ${colors[2]} p-6 hover:shadow-xl transition-all duration-300 cursor-pointer group`}>
+              <div key={dept.id} className={`bg-gradient-to-br ${colors[0]} ${colors[1]} rounded-2xl shadow-lg border ${colors[2]} p-5 hover:shadow-xl transition-all duration-300 cursor-pointer group`}>
                 <div className="text-center">
-                  <div className={`w-16 h-16 ${colors[3]} rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300`}>
-                    <svg className={`w-8 h-8 ${colors[4]}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className={`w-12 h-12 ${colors[3]} rounded-xl flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform duration-300`}>
+                    <svg className={`w-6 h-6 ${colors[4]}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                     </svg>
                   </div>
-                  <h3 className={`text-lg font-bold ${colors[5]} mb-2`}>{dept.name}</h3>
-                  <div className="space-y-1">
-                    <div className={`text-2xl font-bold ${colors[6]}`}>
+                  <h3 className={`text-base font-bold ${colors[5]} mb-2`}>{dept.name}</h3>
+                  <div className={`flex items-center justify-center gap-2 mb-3`}>
+                    <span className={`text-xl font-bold ${colors[6]}`}>
                       {departmentsLoading ? '...' : (stats?.total || 0)}
+                    </span>
+                    <span className={`${colors[4]} text-xs`}>إجمالي الطلبة</span>
+                  </div>
+                  
+                  {/* إحصائيات الصباحي */}
+                  <div className={`bg-white/50 rounded-lg p-2 mb-2 border ${colors[2]}`}>
+                    <p className={`text-xs font-semibold ${colors[5]} mb-1`}>صباحي</p>
+                    <div className="grid grid-cols-4 gap-1 text-xs">
+                      <div className={`${colors[4]}`}>
+                        <div className="font-bold">{stats?.studyTypes?.morning?.first || 0}</div>
+                        <div className="text-[10px]">أولى</div>
+                      </div>
+                      <div className={`${colors[4]}`}>
+                        <div className="font-bold">{stats?.studyTypes?.morning?.second || 0}</div>
+                        <div className="text-[10px]">ثانية</div>
+                      </div>
+                      <div className={`${colors[4]}`}>
+                        <div className="font-bold">{stats?.studyTypes?.morning?.third || 0}</div>
+                        <div className="text-[10px]">ثالثة</div>
+                      </div>
+                      <div className={`${colors[4]}`}>
+                        <div className="font-bold">{stats?.studyTypes?.morning?.fourth || 0}</div>
+                        <div className="text-[10px]">رابعة</div>
+                      </div>
                     </div>
-                    <p className={`${colors[4]} text-xs`}>إجمالي الطلبة</p>
-                    <div className={`flex justify-between text-xs ${colors[4]}`}>
-                      <span>المرحلة الأولى: {stats?.years.first || 0}</span>
-                      <span>المرحلة الثانية: {stats?.years.second || 0}</span>
-                    </div>
-                    <div className={`flex justify-between text-xs ${colors[4]}`}>
-                      <span>المرحلة الثالثة: {stats?.years.third || 0}</span>
-                      <span>المرحلة الرابعة: {stats?.years.fourth || 0}</span>
+                  </div>
+
+                  {/* إحصائيات المسائي */}
+                  <div className={`bg-white/50 rounded-lg p-2 border ${colors[2]}`}>
+                    <p className={`text-xs font-semibold ${colors[5]} mb-1`}>مسائي</p>
+                    <div className="grid grid-cols-4 gap-1 text-xs">
+                      <div className={`${colors[4]}`}>
+                        <div className="font-bold">{stats?.studyTypes?.evening?.first || 0}</div>
+                        <div className="text-[10px]">أولى</div>
+                      </div>
+                      <div className={`${colors[4]}`}>
+                        <div className="font-bold">{stats?.studyTypes?.evening?.second || 0}</div>
+                        <div className="text-[10px]">ثانية</div>
+                      </div>
+                      <div className={`${colors[4]}`}>
+                        <div className="font-bold">{stats?.studyTypes?.evening?.third || 0}</div>
+                        <div className="text-[10px]">ثالثة</div>
+                      </div>
+                      <div className={`${colors[4]}`}>
+                        <div className="font-bold">{stats?.studyTypes?.evening?.fourth || 0}</div>
+                        <div className="text-[10px]">رابعة</div>
+                      </div>
                     </div>
                   </div>
                 </div>

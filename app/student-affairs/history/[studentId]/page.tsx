@@ -388,6 +388,18 @@ export default function StudentHistoryDetailPage() {
               <span class="info-value">${new Date(studentDetails.registrationDate).toLocaleDateString('ar-EG')}</span>
             </div>
             ` : ''}
+            ${studentDetails?.username ? `
+            <div class="info-row">
+              <span class="info-label">الاسم المستخدم:</span>
+              <span class="info-value" style="font-family: monospace;">${studentDetails.username}</span>
+            </div>
+            ` : ''}
+            ${studentDetails?.password ? `
+            <div class="info-row">
+              <span class="info-label">كلمة المرور:</span>
+              <span class="info-value" style="font-family: monospace;">${studentDetails.password}</span>
+            </div>
+            ` : ''}
             <div class="info-row">
               <span class="info-label">المعدل التراكمي:</span>
               <span class="info-value" style="font-weight: bold; font-size: 12pt; color: #2563eb;">
@@ -767,6 +779,18 @@ export default function StudentHistoryDetailPage() {
                               <span className="font-medium">
                                 {new Date(studentDetails.registrationDate).toLocaleDateString('ar-EG')}
                               </span>
+                            </div>
+                          )}
+                          {studentDetails.username && (
+                            <div>
+                              <span className="text-gray-600">الاسم المستخدم: </span>
+                              <span className="font-medium font-mono">{studentDetails.username}</span>
+                            </div>
+                          )}
+                          {studentDetails.password && (
+                            <div>
+                              <span className="text-gray-600">كلمة المرور: </span>
+                              <span className="font-medium font-mono">{studentDetails.password}</span>
                             </div>
                           )}
                         </div>

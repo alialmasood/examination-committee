@@ -95,6 +95,7 @@ export interface Student {
   national_id: string;
   birth_date: string;
   birth_place?: string;
+  province?: string;
   mother_name?: string;
   area?: string;
   gender: 'male' | 'female';
@@ -136,6 +137,8 @@ export interface Student {
   english_level?: string;
   math_level?: string;
   science_level?: string;
+  username?: string; // الاسم المستخدم
+  password?: string; // كلمة المرور
   
   // المستمسكات والوثائق
   national_id_copy?: boolean;
@@ -240,6 +243,8 @@ export interface CreateStudentRequest {
   english_level?: string;
   math_level?: string;
   science_level?: string;
+  username?: string; // الاسم المستخدم
+  password?: string; // كلمة المرور
   
   // المستمسكات والوثائق
   national_id_copy?: boolean;

@@ -48,6 +48,8 @@ interface UniversityAdmission {
   specialRequirements: string;
   scholarship: boolean;
   scholarshipType?: string;
+  username: string; // الاسم المستخدم
+  password: string; // كلمة المرور
 }
 
 interface Documents {
@@ -71,6 +73,51 @@ export default function StudentsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
+  const [showBulkImportModal, setShowBulkImportModal] = useState(false);
+  const [bulkImportMode, setBulkImportMode] = useState<'table' | 'file'>('table');
+  const [bulkImportStudents, setBulkImportStudents] = useState<Array<{
+    full_name: string;
+    nickname: string;
+    mother_name: string;
+    birth_date: string;
+    national_id: string;
+    phone: string;
+    school_name: string;
+    gpa: string;
+    graduation_year: string;
+    exam_number: string;
+    exam_password: string;
+    department: string;
+    username: string;
+    password: string;
+    stage: string;
+    study_type: string;
+    level: string;
+    academic_year: string;
+    semester: string;
+  }>>([{
+    full_name: '',
+    nickname: '',
+    mother_name: '',
+    birth_date: '',
+    national_id: '',
+    phone: '',
+    school_name: '',
+    gpa: '',
+    graduation_year: '',
+    exam_number: '',
+    exam_password: '',
+    department: '',
+    username: '',
+    password: '',
+    stage: '',
+    study_type: '',
+    level: '',
+    academic_year: '',
+    semester: ''
+  }]);
+  const [excelFile, setExcelFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
   
   // بيانات الطلاب الحقيقية
@@ -131,7 +178,9 @@ export default function StudentsPage() {
       academicYear: '',
       specialRequirements: '',
       scholarship: false,
-      scholarshipType: ''
+      scholarshipType: '',
+      username: '', // الاسم المستخدم
+      password: '' // كلمة المرور
     },
     documents: {
       nationalIdFront: null,
@@ -150,7 +199,6 @@ export default function StudentsPage() {
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [openStatusDropdown, setOpenStatusDropdown] = useState<string | null>(null);
   const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number } | null>(null);
-  const [printStudentId, setPrintStudentId] = useState<string | null>(null);
   const [printStudent, setPrintStudent] = useState<Student | null>(null);
 
   // قائمة حالات الطالب
@@ -214,7 +262,7 @@ export default function StudentsPage() {
         setStudents(prevStudents =>
           prevStudents.map(s =>
             s.id === studentId
-              ? { ...s, academic_status: newStatus } as any
+              ? { ...s, academic_status: newStatus }
               : s
           )
         );
@@ -265,11 +313,46 @@ export default function StudentsPage() {
       console.log('النتيجة الكاملة:', data);
 
           if (data.success && data.students) {
-            console.log('✅ بيانات الطلاب المستلمة في الصفحة الرئيسية:', data.students);
-            console.log('عدد الطلاب:', data.students.length);
-            console.log('تفاصيل الطالب الأول:', data.students[0]);
-            console.log('الاسم الكامل:', data.students[0]?.full_name);
-            console.log('اللقب:', data.students[0]?.nickname);
+        console.log('✅ بيانات الطلاب المستلمة في الصفحة الرئيسية:', data.students);
+        console.log('عدد الطلاب:', data.students.length);
+        console.log('تفاصيل الطالب الأول:', data.students[0]);
+        console.log('الاسم الكامل:', data.students[0]?.full_name);
+        console.log('اللقب:', data.students[0]?.nickname);
+        const provinceInfo = data.students.map((s: Student) => ({
+          name: s.full_name,
+          province: s.province,
+          province_type: typeof s.province,
+          province_is_null: s.province === null,
+          province_is_undefined: s.province === undefined,
+          has_province: 'province' in s
+        }));
+        console.log('🔍 المحافظة للطلاب:', provinceInfo);
+        console.log('🔍 تفاصيل المحافظة للطالب الأول:', {
+          student: data.students[0]?.full_name,
+          province: data.students[0]?.province,
+          province_in_object: 'province' in (data.students[0] || {}),
+          all_keys: data.students[0] ? Object.keys(data.students[0]) : []
+        });
+            const stageInfo = data.students.map((s: Student) => ({
+              name: s.full_name,
+              admission_type: s.admission_type,
+              study_type: s.study_type,
+              level: s.level,
+              academic_year: s.academic_year,
+              semester: s.semester
+            }));
+            console.log('🔍 المرحلة للطلاب:', stageInfo);
+            console.log('🔍 تفاصيل المرحلة للطالب الأول:', {
+              name: data.students[0]?.full_name,
+              admission_type: data.students[0]?.admission_type,
+              admission_type_type: typeof data.students[0]?.admission_type,
+              admission_type_null: data.students[0]?.admission_type === null,
+              admission_type_undefined: data.students[0]?.admission_type === undefined,
+              study_type: data.students[0]?.study_type,
+              level: data.students[0]?.level,
+              academic_year: data.students[0]?.academic_year,
+              semester: data.students[0]?.semester
+            });
         setStudents(data.students);
         setPagination(prev => ({
           ...prev,
@@ -422,12 +505,6 @@ export default function StudentsPage() {
     // السماح بالأرقام فقط و 10 أرقام بالضبط
     const phonePattern = /^[0-9]{0,10}$/;
     return phonePattern.test(value);
-  };
-  
-  const validatePhoneNumberLength = (value: string): boolean => {
-    // التحقق من أن الرقم يتكون من 10 أرقام بالضبط
-    if (!value) return false; // الحقل مطلوب
-    return value.length === 10;
   };
 
   const validateEmail = (value: string): boolean => {
@@ -939,6 +1016,7 @@ export default function StudentsPage() {
         national_id: formData.personalData.nationalId,
         birth_date: formData.personalData.birthDate,
         birth_place: formData.personalData.birthPlace,
+        province: formData.personalData.birthPlace,
         area: formData.personalData.area,
         gender: formData.personalData.gender,
         religion: formData.personalData.religion,
@@ -983,6 +1061,8 @@ export default function StudentsPage() {
         semester: formData.universityAdmission.semester || 'first',
         academic_year: formData.universityAdmission.academicYear || '2025-2026',
         special_requirements: formData.universityAdmission.specialRequirements,
+        username: formData.universityAdmission.username,
+        password: formData.universityAdmission.password,
         national_id_copy: nationalIdFrontFilename || formData.documents.nationalIdFront?.name || '',
         birth_certificate: nationalIdBackFilename || formData.documents.nationalIdBack?.name || '',
         secondary_certificate: secondaryCertificateFilename || formData.documents.secondaryCertificate?.name || '',
@@ -1053,6 +1133,8 @@ export default function StudentsPage() {
         semester: studentData.semester || '',
         academic_year: studentData.academic_year || '',
         special_requirements: studentData.special_requirements,
+        username: formData.universityAdmission.username || '',
+        password: formData.universityAdmission.password || '',
         national_id_copy: studentData.national_id_copy,
         birth_certificate: studentData.birth_certificate,
         secondary_certificate: studentData.secondary_certificate,
@@ -1129,6 +1211,7 @@ export default function StudentsPage() {
       } else {
         // عرض رسالة خطأ واضحة للمستخدم
         const errorMessage = result.error || 'خطأ في حفظ الطالب';
+        const errorDetails = result.details || result.detail || '';
         
         // في حالة خطأ التحقق (400) - فقط عرض الرسالة ولا نرمي خطأ
         if (response.status === 400) {
@@ -1139,7 +1222,13 @@ export default function StudentsPage() {
         
         // في حالة أخطاء أخرى (500, إلخ) - نرمي الخطأ
         console.error('❌ خطأ من API:', errorMessage);
-        alert('⚠️ خطأ: ' + errorMessage);
+        console.error('❌ تفاصيل الخطأ:', errorDetails);
+        console.error('❌ استجابة API كاملة:', result);
+        
+        const fullErrorMessage = errorDetails 
+          ? `${errorMessage}\n\nالتفاصيل: ${errorDetails}` 
+          : errorMessage;
+        alert('⚠️ خطأ: ' + fullErrorMessage);
         throw new Error(errorMessage);
       }
     } catch (error) {
@@ -1262,6 +1351,7 @@ export default function StudentsPage() {
         national_id: formData.personalData.nationalId,
         birth_date: formData.personalData.birthDate,
         birth_place: formData.personalData.birthPlace,
+        province: formData.personalData.birthPlace,
         area: formData.personalData.area,
         gender: formData.personalData.gender,
         religion: formData.personalData.religion,
@@ -1299,6 +1389,8 @@ export default function StudentsPage() {
         semester: formData.universityAdmission.semester || 'first',
         academic_year: formData.universityAdmission.academicYear || '2025-2026',
         special_requirements: formData.universityAdmission.specialRequirements,
+        username: formData.universityAdmission.username,
+        password: formData.universityAdmission.password,
         national_id_copy: nationalIdFrontFilename || formData.documents.nationalIdFront?.name || '',
         birth_certificate: nationalIdBackFilename || formData.documents.nationalIdBack?.name || '',
         secondary_certificate: secondaryCertificateFilename || formData.documents.secondaryCertificate?.name || '',
@@ -1386,6 +1478,14 @@ export default function StudentsPage() {
           area: student.area
         });
 
+        console.log('🔍 بيانات الطالب المستلمة من API:', {
+          secondary_school_type: student.secondary_school_type,
+          secondary_total_score: student.secondary_total_score,
+          exam_attempt: student.exam_attempt,
+          branch: student.branch,
+          admission_channel: student.admission_channel
+        });
+
         const formData = {
           personalData: {
             fullName: student.full_name_ar && student.full_name_ar !== 'غير محدد' ? student.full_name_ar : 
@@ -1395,7 +1495,7 @@ export default function StudentsPage() {
             motherName: student.mother_name || '',
             nationalId: student.national_id || '',
             birthDate: student.birth_date ? student.birth_date.split('T')[0] : '',
-            birthPlace: student.birth_place || '',
+            birthPlace: student.province || student.birth_place || '',
             area: student.area || '',
             gender: student.gender || 'male',
             religion: student.religion || 'مسلم',
@@ -1430,7 +1530,9 @@ export default function StudentsPage() {
             academicYear: student.academic_year || '',
             specialRequirements: student.special_requirements || '',
             scholarship: false,
-            scholarshipType: ''
+            scholarshipType: '',
+            username: student.username || '',
+            password: student.password || ''
           },
           documents: {
             nationalIdFront: student.national_id_copy ? { 
@@ -1533,7 +1635,7 @@ export default function StudentsPage() {
       </div>
 
       {/* الأقسام الرئيسية */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
         {/* إضافة طالب جديد */}
         <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl shadow-lg border border-blue-200/50 p-5 hover:shadow-xl transition-all duration-300 cursor-pointer group">
           <div className="text-center">
@@ -1554,6 +1656,50 @@ export default function StudentsPage() {
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-300 text-sm"
             >
               إضافة طالب
+            </button>
+          </div>
+        </div>
+
+        {/* استيراد جماعي */}
+        <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl shadow-lg border border-purple-200/50 p-5 hover:shadow-xl transition-all duration-300 cursor-pointer group">
+          <div className="text-center">
+            <div className="w-14 h-14 bg-purple-500/20 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300">
+              <svg className="w-7 h-7 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+            </div>
+            <h2 className="text-lg font-bold text-purple-800 mb-2">استيراد جماعي</h2>
+            <p className="text-purple-600 text-sm mb-3">إدخال عدة طلاب دفعة واحدة من ملف اكسل</p>
+            <button
+              onClick={() => {
+                setBulkImportMode('table');
+                setBulkImportStudents([{
+                  full_name: '',
+                  nickname: '',
+                  mother_name: '',
+                  birth_date: '',
+                  national_id: '',
+                  phone: '',
+                  school_name: '',
+                  gpa: '',
+                  graduation_year: '',
+                  exam_number: '',
+                  exam_password: '',
+                  department: '',
+                  username: '',
+                  password: '',
+                  stage: '',
+                  study_type: '',
+                  level: '',
+                  academic_year: '',
+                  semester: ''
+                }]);
+                setExcelFile(null);
+                setShowBulkImportModal(true);
+              }}
+              className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-300 text-sm"
+            >
+              استيراد طلاب
             </button>
           </div>
         </div>
@@ -1796,26 +1942,34 @@ export default function StudentsPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden">
             {/* Header */}
-            <div className="bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-4">
+            <div className="bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-2">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-white">
-                  {editingStudentId ? 'تعديل بيانات الطالب' : 'إضافة طالب جديد'}
-                </h2>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg font-bold text-white">
+                    {editingStudentId ? 'تعديل بيانات الطالب' : 'إضافة طالب جديد'}
+                  </h2>
+                  <span className="text-xs text-blue-100">
+                    {currentStep === 1 && 'البيانات الشخصية'}
+                    {currentStep === 2 && 'الدراسة الإعدادية'}
+                    {currentStep === 3 && 'القبول الجامعي'}
+                    {currentStep === 4 && 'المستمسكات والوثائق'}
+                  </span>
+                </div>
                 <button
                   onClick={closeModal}
                   className="text-white hover:text-blue-200 transition-colors duration-200"
                 >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               </div>
               
               {/* Progress Steps */}
-              <div className="flex items-center justify-center mt-4 space-x-4 space-x-reverse">
+              <div className="flex items-center justify-center mt-2 space-x-3 space-x-reverse">
                 {[1, 2, 3, 4].map((step) => (
                   <div key={step} className="flex items-center">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
                       currentStep >= step 
                         ? 'bg-white text-blue-600' 
                         : 'bg-blue-400 text-white'
@@ -1823,7 +1977,7 @@ export default function StudentsPage() {
                       {step}
                     </div>
                     {step < 4 && (
-                      <div className={`w-8 h-1 mx-2 ${
+                      <div className={`w-6 h-0.5 mx-1.5 ${
                         currentStep > step ? 'bg-white' : 'bg-blue-400'
                       }`}></div>
                     )}
@@ -1833,21 +1987,12 @@ export default function StudentsPage() {
               
               {/* رسالة التحديث السريع */}
               {editingStudentId && (
-                <div className="mt-3 text-center">
-                  <p className="text-blue-100 text-sm">
+                <div className="mt-1.5 text-center">
+                  <p className="text-blue-100 text-xs">
                     💡 يمكنك تحديث البيانات في أي خطوة باستخدام زر &quot;تحديث&quot;
                   </p>
                 </div>
               )}
-              
-              <div className="flex justify-center mt-2">
-                <span className="text-sm text-blue-100">
-                  {currentStep === 1 && 'البيانات الشخصية'}
-                  {currentStep === 2 && 'الدراسة الإعدادية'}
-                  {currentStep === 3 && 'القبول الجامعي'}
-                  {currentStep === 4 && 'المستمسكات والوثائق'}
-                </span>
-              </div>
             </div>
 
             {/* Content */}
@@ -2204,7 +2349,8 @@ export default function StudentsPage() {
                 <div className="space-y-6">
                   <h3 className="text-lg font-semibold text-gray-800 mb-4">الدراسة الإعدادية</h3>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* السطر الأول: اسم المدرسة، نوع المدرسة، سنة التخرج */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         اسم المدرسة *
@@ -2252,15 +2398,41 @@ export default function StudentsPage() {
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         سنة التخرج *
                       </label>
-                      <input
-                        type="text"
+                      <select
                         value={formData.secondaryEducation.graduationYear}
-                        onChange={(e) => handleInputChange('secondaryEducation', 'graduationYear', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          handleSelectChange('secondaryEducation', 'graduationYear', value);
+                        }}
+                        onInput={(e) => handleSelectInput('secondaryEducation', 'graduationYear', e)}
+                        onBlur={(e) => handleSelectBlur('secondaryEducation', 'graduationYear', e)}
+                        onKeyDown={(e) => handleSelectKeyDown('secondaryEducation', 'graduationYear', e)}
+                        onKeyUp={(e) => {
+                          const value = (e.target as HTMLSelectElement).value;
+                          if (value !== formData.secondaryEducation.graduationYear) {
+                            handleSelectValueChange('secondaryEducation', 'graduationYear', value);
+                          }
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                         required
-                      />
+                      >
+                        <option value="">اختر سنة التخرج</option>
+                        {Array.from({ length: 26 }, (_, i) => {
+                          const startYear = 2000 + i;
+                          const endYear = startYear + 1;
+                          const yearValue = `${startYear}-${endYear}`;
+                          return (
+                            <option key={yearValue} value={yearValue}>
+                              {yearValue}
+                            </option>
+                          );
+                        })}
+                      </select>
                     </div>
+                  </div>
 
+                  {/* السطر الثاني: المعدل التراكمي، إجمالي الدرجات، الدور */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         المعدل التراكمي *
@@ -2330,6 +2502,10 @@ export default function StudentsPage() {
                         <option value="third">الثالث</option>
                       </select>
                     </div>
+                  </div>
+
+                  {/* باقي الحقول */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -2404,7 +2580,8 @@ export default function StudentsPage() {
                 <div className="space-y-6">
                   <h3 className="text-lg font-semibold text-gray-800 mb-4">القبول الجامعي</h3>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* السطر الأول: المرحلة، قناة القبول، الفصل الدراسي */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         المرحلة *
@@ -2462,6 +2639,28 @@ export default function StudentsPage() {
                         <option value="health_ministry">تخفيض موظفي وزارة الصحة</option>
                       </select>
                     </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        الفصل الدراسي *
+                      </label>
+                      <select
+                        value={formData.universityAdmission.semester}
+                        onChange={(e) => handleSelectChange('universityAdmission', 'semester', e.target.value)}
+                        onBlur={(e) => handleSelectBlur('universityAdmission', 'semester', e)}
+                        onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'semester', e)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        required
+                      >
+                        <option value="">اختر الفصل الدراسي</option>
+                        <option value="first">الأول</option>
+                        <option value="second">الثاني</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* باقي الحقول */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -2524,24 +2723,6 @@ export default function StudentsPage() {
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        الفصل الدراسي *
-                      </label>
-                      <select
-                        value={formData.universityAdmission.semester}
-                        onChange={(e) => handleSelectChange('universityAdmission', 'semester', e.target.value)}
-                        onBlur={(e) => handleSelectBlur('universityAdmission', 'semester', e)}
-                        onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'semester', e)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                        required
-                      >
-                        <option value="">اختر الفصل الدراسي</option>
-                        <option value="first">الأول</option>
-                        <option value="second">الثاني</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
                         السنة الأكاديمية *
                       </label>
                       <select
@@ -2559,6 +2740,32 @@ export default function StudentsPage() {
                         <option value="2027-2028">2027-2028</option>
                         <option value="2028-2029">2028-2029</option>
                       </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        الاسم المستخدم
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.universityAdmission.username || ''}
+                        onChange={(e) => handleInputChange('universityAdmission', 'username', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        placeholder="أدخل الاسم المستخدم"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        كلمة المرور
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.universityAdmission.password || ''}
+                        onChange={(e) => handleInputChange('universityAdmission', 'password', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        placeholder="أدخل كلمة المرور"
+                      />
                     </div>
 
                   </div>
@@ -2781,11 +2988,11 @@ export default function StudentsPage() {
               </div>
 
             {/* Footer */}
-            <div className="bg-gray-50 px-6 py-4 flex justify-between items-center">
+            <div className="bg-gray-50 px-6 py-2 flex justify-between items-center">
               <button
                 onClick={prevStep}
                 disabled={currentStep === 1}
-                className={`px-4 py-2 rounded-lg transition-colors duration-200 ${
+                className={`px-3 py-1.5 text-sm rounded-lg transition-colors duration-200 ${
                   currentStep === 1
                     ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                     : 'bg-gray-600 hover:bg-gray-700 text-white'
@@ -2800,9 +3007,9 @@ export default function StudentsPage() {
                   <button
                     onClick={handleQuickUpdate}
                     disabled={loading}
-                    className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-4 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
                     {loading ? 'جاري التحديث...' : 'تحديث'}
@@ -2812,7 +3019,7 @@ export default function StudentsPage() {
                 {currentStep < 4 ? (
                   <button
                     onClick={nextStep}
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors duration-200"
+                    className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors duration-200"
                   >
                     التالي
                   </button>
@@ -2820,7 +3027,7 @@ export default function StudentsPage() {
                   !editingStudentId && (
                     <button
                       onClick={handleSave}
-                      className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors duration-200"
+                      className="px-4 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors duration-200"
                     >
                       حفظ
                     </button>
@@ -3054,7 +3261,7 @@ export default function StudentsPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
                     <div className="flex items-center justify-center">
                       <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -3066,7 +3273,7 @@ export default function StudentsPage() {
                 </tr>
               ) : students.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
                     لا توجد بيانات طلاب
                     <br />
                     <span className="text-xs text-gray-400">
@@ -3094,10 +3301,22 @@ export default function StudentsPage() {
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600">{student.department || 'غير محدد'}</td>
                     <td className="px-4 py-3 text-sm text-gray-600">
-                      {student.admission_type === 'first' ? 'الأولى' : 
-                       student.admission_type === 'second' ? 'الثانية' : 
-                       student.admission_type === 'third' ? 'الثالثة' : 
-                       student.admission_type === 'fourth' ? 'الرابعة' : 'غير محدد'}
+                      {(() => {
+                        const admissionType = student.admission_type;
+                        console.log(`🔍 عرض المرحلة للطالب ${student.full_name}:`, {
+                          admission_type: admissionType,
+                          type: typeof admissionType,
+                          isNull: admissionType === null,
+                          isUndefined: admissionType === undefined,
+                          isString: typeof admissionType === 'string',
+                          value: admissionType
+                        });
+                        if (admissionType === 'first' || admissionType === 'regular' || admissionType === 'conditional') return 'الأولى';
+                        if (admissionType === 'second') return 'الثانية';
+                        if (admissionType === 'third') return 'الثالثة';
+                        if (admissionType === 'fourth') return 'الرابعة';
+                        return 'غير محدد';
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600">{formatRegistrationDate(student.registration_date)}</td>
                   <td className="px-4 py-3 w-[200px]">
@@ -3139,9 +3358,9 @@ export default function StudentsPage() {
                             setDropdownPosition({ top, left });
                             setOpenStatusDropdown(openStatusDropdown === student.id ? null : student.id);
                           }}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] leading-tight font-medium border w-[180px] h-[32px] overflow-hidden ${getStatusColor((student as any).academic_status || 'مستمر')}`}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] leading-tight font-medium border w-[180px] h-[32px] overflow-hidden ${getStatusColor(student.academic_status || 'مستمر')}`}
                         >
-                          <span className="line-clamp-2 text-right break-words flex-1 min-w-0 overflow-hidden text-ellipsis">{(student as any).academic_status || 'مستمر'}</span>
+                          <span className="line-clamp-2 text-right break-words flex-1 min-w-0 overflow-hidden text-ellipsis">{student.academic_status || 'مستمر'}</span>
                           <svg className="w-2.5 h-2.5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                           </svg>
@@ -3156,37 +3375,43 @@ export default function StudentsPage() {
                     )}
                   </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center space-x-2 space-x-reverse">
+                      <div className="flex flex-col items-center space-y-2">
                         {student.payment_status === 'registration_pending' && (
-                          <button 
-                            onClick={async () => {
-                              if (confirm('هل أنت متأكد من إتمام التسجيل؟ سيتم ترحيل الطالب إلى صفحة الحسابات.')) {
-                                try {
-                                  const response = await fetch(`/api/students/${student.id}/complete-registration`, {
-                                    method: 'POST'
-                                  });
-                                  const result = await response.json();
-                                  if (result.success) {
-                                    alert('تم إتمام التسجيل بنجاح! سيتم ترحيل الطالب إلى صفحة الحسابات.');
-                                    await fetchStudents();
-                                    await fetchDepartmentCounts();
-                                  } else {
-                                    alert('خطأ: ' + (result.error || 'فشل إتمام التسجيل'));
-                                  }
-                                } catch (error) {
-                                  alert('حدث خطأ في إتمام التسجيل');
-                                  console.error(error);
-                                }
-                              }
-                            }}
-                            className="text-blue-600 hover:text-blue-800 text-sm"
-                            title="إتمام التسجيل"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                          </button>
+                          <div className="w-full py-1.5 rounded text-blue-700 bg-blue-100 border-2 border-blue-300 font-medium text-[10px] text-center mb-2">
+                            قيد التسجيل
+                          </div>
                         )}
+                        <div className="flex items-center space-x-2 space-x-reverse">
+                          {student.payment_status === 'registration_pending' && (
+                            <button 
+                              onClick={async () => {
+                                if (confirm('هل أنت متأكد من إتمام التسجيل؟ سيتم ترحيل الطالب إلى صفحة الحسابات.')) {
+                                  try {
+                                    const response = await fetch(`/api/students/${student.id}/complete-registration`, {
+                                      method: 'POST'
+                                    });
+                                    const result = await response.json();
+                                    if (result.success) {
+                                      alert('تم إتمام التسجيل بنجاح! سيتم ترحيل الطالب إلى صفحة الحسابات.');
+                                      await fetchStudents();
+                                      await fetchDepartmentCounts();
+                                    } else {
+                                      alert('خطأ: ' + (result.error || 'فشل إتمام التسجيل'));
+                                    }
+                                  } catch (error) {
+                                    alert('حدث خطأ في إتمام التسجيل');
+                                    console.error(error);
+                                  }
+                                }
+                              }}
+                              className="text-blue-600 hover:text-blue-800 text-sm"
+                              title="إتمام التسجيل"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            </button>
+                          )}
                         <button 
                           onClick={async () => {
                             try {
@@ -3200,7 +3425,6 @@ export default function StudentsPage() {
                                 const studentData = result.student || result.data || result;
                                 console.log('✅ بيانات الطالب:', studentData);
                                 setPrintStudent(studentData);
-                                setPrintStudentId(student.id);
                               } else {
                                 console.error('❌ خطأ في API:', result.error);
                                 alert('خطأ في جلب بيانات الطالب للطباعة: ' + (result.error || 'خطأ غير معروف'));
@@ -3235,6 +3459,7 @@ export default function StudentsPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                           </svg>
                         </button>
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -3310,7 +3535,7 @@ export default function StudentsPage() {
               <div className="py-2">
                 {studentStatuses.map((status) => {
                   const currentStudent = students.find(s => s.id === openStatusDropdown);
-                  const isActive = ((currentStudent as any)?.academic_status || 'مستمر') === status;
+                  const isActive = (currentStudent?.academic_status || 'مستمر') === status;
                   
                   return (
                     <button
@@ -3620,7 +3845,6 @@ export default function StudentsPage() {
                 <button
                   onClick={() => {
                     setPrintStudent(null);
-                    setPrintStudentId(null);
                   }}
                   className="text-white hover:text-blue-200 transition-colors"
                 >
@@ -3904,6 +4128,18 @@ export default function StudentsPage() {
                           <td className="py-2 px-3 text-gray-800 font-semibold">{printStudent.academic_year}</td>
                         </tr>
                       )}
+                      {printStudent.username && (
+                        <tr className="border-b border-gray-200">
+                          <td className="py-2 px-3 font-semibold text-gray-700 bg-gray-50 border-r border-gray-200">الاسم المستخدم</td>
+                          <td className="py-2 px-3 text-gray-800 font-mono">{printStudent.username}</td>
+                        </tr>
+                      )}
+                      {printStudent.password && (
+                        <tr className="border-b border-gray-200">
+                          <td className="py-2 px-3 font-semibold text-gray-700 bg-gray-50 border-r border-gray-200">كلمة المرور</td>
+                          <td className="py-2 px-3 text-gray-800 font-mono">{printStudent.password}</td>
+                        </tr>
+                      )}
                       {printStudent.admission_score !== undefined && printStudent.admission_score !== null && (
                         <tr className="border-b border-gray-200">
                           <td className="py-2 px-3 font-semibold text-gray-700 bg-gray-50 border-r border-gray-200">درجة القبول</td>
@@ -3916,6 +4152,798 @@ export default function StudentsPage() {
 
                 {/* Footer للطباعة - سيتم إضافته في صفحة الطباعة فقط */}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal الاستيراد الجماعي */}
+      {showBulkImportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-[95vw] max-h-[95vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-purple-600 to-purple-500 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-white">استيراد طلاب جماعي</h2>
+                <button
+                  onClick={() => {
+                    setShowBulkImportModal(false);
+                    setBulkImportMode('table');
+                    setBulkImportStudents([{
+                      full_name: '',
+                      nickname: '',
+                      mother_name: '',
+                      birth_date: '',
+                      national_id: '',
+                      phone: '',
+                      school_name: '',
+                      gpa: '',
+                      graduation_year: '',
+                      exam_number: '',
+                      exam_password: '',
+                      department: '',
+                      username: '',
+                      password: '',
+                      stage: '',
+                      study_type: '',
+                      level: '',
+                      academic_year: '',
+                      semester: ''
+                    }]);
+                    setExcelFile(null);
+                  }}
+                  className="text-white hover:text-purple-200 transition-colors duration-200"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              
+              {/* Tabs */}
+              <div className="flex items-center justify-center mt-4 gap-2">
+                <button
+                  onClick={() => setBulkImportMode('table')}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    bulkImportMode === 'table'
+                      ? 'bg-white text-purple-600'
+                      : 'bg-purple-400 text-white hover:bg-purple-300'
+                  }`}
+                >
+                  إدخال يدوي (جدول)
+                </button>
+                <button
+                  onClick={() => setBulkImportMode('file')}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    bulkImportMode === 'file'
+                      ? 'bg-white text-purple-600'
+                      : 'bg-purple-400 text-white hover:bg-purple-300'
+                  }`}
+                >
+                  استيراد من ملف Excel/CSV
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 flex-1 overflow-y-auto">
+              {bulkImportMode === 'file' ? (
+                <div className="space-y-6">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold text-blue-900 mb-3">📋 إرشادات ترتيب الأعمدة في ملف Excel/CSV</h3>
+                    <div className="text-sm text-blue-800 space-y-2">
+                      <p className="font-semibold">يجب أن يكون ترتيب الأعمدة في الملف كالتالي (من اليمين إلى اليسار):</p>
+                      <ol className="list-decimal list-inside space-y-1 mr-4">
+                        <li><strong>الاسم الرباعي</strong> (مطلوب)</li>
+                        <li><strong>اللقب</strong> (اختياري)</li>
+                        <li><strong>اسم الأم الثلاثي</strong> (اختياري)</li>
+                        <li><strong>تاريخ الميلاد</strong> (اختياري - صيغة: YYYY-MM-DD)</li>
+                        <li><strong>رقم الهوية الوطنية</strong> (اختياري)</li>
+                        <li><strong>رقم هاتف الطالب</strong> (اختياري - بدون +964)</li>
+                        <li><strong>اسم المدرسة</strong> (اختياري)</li>
+                        <li><strong>المعدل التراكمي</strong> (اختياري)</li>
+                        <li><strong>سنة التخرج</strong> (اختياري)</li>
+                        <li><strong>الرقم الامتحاني</strong> (اختياري)</li>
+                        <li><strong>الرقم السري</strong> (اختياري)</li>
+                        <li><strong>القسم</strong> (اختياري)</li>
+                        <li><strong>الاسم المستخدم</strong> (اختياري)</li>
+                        <li><strong>كلمة المرور</strong> (اختياري)</li>
+                        <li><strong>المرحلة</strong> (اختياري - first/second/third/fourth)</li>
+                        <li><strong>نوع الدراسة</strong> (اختياري - morning/evening)</li>
+                        <li><strong>المرحلة الدراسية</strong> (اختياري - bachelor/master/phd/diploma)</li>
+                        <li><strong>السنة الأكاديمية</strong> (اختياري - مثل: 2025-2026)</li>
+                        <li><strong>الفصل الدراسي</strong> (اختياري - first/second)</li>
+                      </ol>
+                      <p className="mt-3 text-xs text-blue-600">
+                        💡 يمكنك ترك الأعمدة الفارغة. الحقول الفارغة يمكن ملؤها لاحقاً يدوياً.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      اختر ملف Excel أو CSV
+                    </label>
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setExcelFile(file);
+                        }
+                      }}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    />
+                    {excelFile && (
+                      <p className="mt-2 text-sm text-gray-600">
+                        ✅ الملف المحدد: <strong>{excelFile.name}</strong>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-gray-800">جدول بيانات الطلاب</h3>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setBulkImportStudents([...bulkImportStudents, {
+                            full_name: '',
+                            nickname: '',
+                            mother_name: '',
+                            birth_date: '',
+                            national_id: '',
+                            phone: '',
+                            school_name: '',
+                            gpa: '',
+                            graduation_year: '',
+                            exam_number: '',
+                            exam_password: '',
+                            department: '',
+                            username: '',
+                            password: '',
+                            stage: '',
+                            study_type: '',
+                            level: '',
+                            academic_year: '',
+                            semester: ''
+                          }]);
+                        }}
+                        className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
+                      >
+                        + إضافة صف
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (bulkImportStudents.length > 1) {
+                            setBulkImportStudents(bulkImportStudents.slice(0, -1));
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
+                        disabled={bulkImportStudents.length <= 1}
+                      >
+                        - حذف صف
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto border border-gray-300 rounded-lg">
+                    <table 
+                      className="min-w-full divide-y divide-gray-200 bg-white"
+                      onPaste={(e) => {
+                        e.preventDefault();
+                        const pastedData = e.clipboardData.getData('text');
+                        const rows = pastedData.split('\n').filter(row => row.trim());
+                        
+                        if (rows.length === 0) return;
+                        
+                        const newStudents = [...bulkImportStudents];
+                        
+                        rows.forEach((row, rowIndex) => {
+                          const cells = row.split('\t').map(cell => cell.trim());
+                          
+                          if (rowIndex >= newStudents.length) {
+                            newStudents.push({
+                              full_name: '',
+                              nickname: '',
+                              mother_name: '',
+                              birth_date: '',
+                              national_id: '',
+                              phone: '',
+                              school_name: '',
+                              gpa: '',
+                              graduation_year: '',
+                              exam_number: '',
+                              exam_password: '',
+                              department: '',
+                              username: '',
+                              password: '',
+                              stage: '',
+                              study_type: '',
+                              level: '',
+                              academic_year: '',
+                              semester: ''
+                            });
+                          }
+                          
+                          if (cells[0]) newStudents[rowIndex].full_name = cells[0] || '';
+                          if (cells[1]) newStudents[rowIndex].nickname = cells[1] || '';
+                          if (cells[2]) newStudents[rowIndex].mother_name = cells[2] || '';
+                          if (cells[3]) newStudents[rowIndex].birth_date = cells[3] || '';
+                          if (cells[4]) newStudents[rowIndex].national_id = cells[4] || '';
+                          if (cells[5]) newStudents[rowIndex].phone = cells[5] || '';
+                          if (cells[6]) newStudents[rowIndex].school_name = cells[6] || '';
+                          if (cells[7]) newStudents[rowIndex].gpa = cells[7] || '';
+                          if (cells[8]) newStudents[rowIndex].graduation_year = cells[8] || '';
+                          if (cells[9]) newStudents[rowIndex].exam_number = cells[9] || '';
+                          if (cells[10]) newStudents[rowIndex].exam_password = cells[10] || '';
+                          if (cells[11]) newStudents[rowIndex].department = cells[11] || '';
+                          if (cells[12]) newStudents[rowIndex].username = cells[12] || '';
+                          if (cells[13]) newStudents[rowIndex].password = cells[13] || '';
+                          if (cells[14]) newStudents[rowIndex].stage = cells[14] || '';
+                          if (cells[15]) newStudents[rowIndex].study_type = cells[15] || '';
+                          if (cells[16]) newStudents[rowIndex].level = cells[16] || '';
+                          if (cells[17]) newStudents[rowIndex].academic_year = cells[17] || '';
+                          if (cells[18]) newStudents[rowIndex].semester = cells[18] || '';
+                        });
+                        
+                        setBulkImportStudents(newStudents);
+                      }}
+                    >
+                      <thead className="bg-purple-50 sticky top-0 z-10">
+                        <tr>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 sticky right-0 bg-purple-50 z-20 min-w-[60px]">
+                            #
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[180px]">
+                            الاسم الرباعي *
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[120px]">
+                            اللقب
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[150px]">
+                            اسم الأم الثلاثي
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[120px]">
+                            تاريخ الميلاد
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[130px]">
+                            رقم الهوية
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[120px]">
+                            رقم الهاتف
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[150px]">
+                            اسم المدرسة
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[100px]">
+                            المعدل
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[100px]">
+                            سنة التخرج
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[110px]">
+                            الرقم الامتحاني
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[100px]">
+                            الرقم السري
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[130px]">
+                            القسم
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[120px]">
+                            الاسم المستخدم
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[120px]">
+                            كلمة المرور
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[100px]">
+                            المرحلة
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[110px]">
+                            نوع الدراسة
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[130px]">
+                            المرحلة الدراسية
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase border-l border-gray-300 min-w-[120px]">
+                            السنة الأكاديمية
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase min-w-[110px]">
+                            الفصل الدراسي
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {bulkImportStudents.map((student, index) => (
+                          <tr key={index} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 text-sm text-gray-600 border-l border-gray-200 sticky right-0 bg-white z-10 font-semibold">
+                              {index + 1}
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.full_name}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].full_name = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="rtl"
+                                placeholder="الاسم الرباعي"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.nickname}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].nickname = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="rtl"
+                                placeholder="اللقب"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.mother_name}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].mother_name = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="rtl"
+                                placeholder="اسم الأم"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="date"
+                                value={student.birth_date}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].birth_date = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="ltr"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.national_id}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].national_id = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                                dir="ltr"
+                                placeholder="1234567890"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.phone}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].phone = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                                dir="ltr"
+                                placeholder="07501234567"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.school_name}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].school_name = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="rtl"
+                                placeholder="اسم المدرسة"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={student.gpa}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].gpa = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                                dir="ltr"
+                                placeholder="95.5"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.graduation_year}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].graduation_year = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                                dir="ltr"
+                                placeholder="2020"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.exam_number}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].exam_number = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                                dir="ltr"
+                                placeholder="123456"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.exam_password}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].exam_password = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                                dir="ltr"
+                                placeholder="ABC123"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.department}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].department = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="rtl"
+                                placeholder="القسم"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <input
+                                type="text"
+                                value={student.username}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].username = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                                dir="ltr"
+                                placeholder="username"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="text"
+                                value={student.password}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].password = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                                dir="ltr"
+                                placeholder="password"
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <select
+                                value={student.stage}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].stage = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="rtl"
+                              >
+                                <option value="">اختر المرحلة</option>
+                                <option value="first">الأولى</option>
+                                <option value="second">الثانية</option>
+                                <option value="third">الثالثة</option>
+                                <option value="fourth">الرابعة</option>
+                              </select>
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <select
+                                value={student.study_type}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].study_type = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="rtl"
+                              >
+                                <option value="">اختر نوع الدراسة</option>
+                                <option value="morning">صباحي</option>
+                                <option value="evening">مسائي</option>
+                              </select>
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <select
+                                value={student.level}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].level = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="rtl"
+                              >
+                                <option value="">اختر المرحلة الدراسية</option>
+                                <option value="bachelor">بكالوريوس</option>
+                                <option value="master">ماجستير</option>
+                                <option value="phd">دكتوراه</option>
+                                <option value="diploma">دبلوم</option>
+                              </select>
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <select
+                                value={student.academic_year}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].academic_year = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="ltr"
+                              >
+                                <option value="">اختر السنة الأكاديمية</option>
+                                <option value="2024-2025">2024-2025</option>
+                                <option value="2025-2026">2025-2026</option>
+                                <option value="2026-2027">2026-2027</option>
+                                <option value="2027-2028">2027-2028</option>
+                                <option value="2028-2029">2028-2029</option>
+                              </select>
+                            </td>
+                            <td className="px-3 py-2 border-l border-gray-200">
+                              <select
+                                value={student.semester}
+                                onChange={(e) => {
+                                  const newStudents = [...bulkImportStudents];
+                                  newStudents[index].semester = e.target.value;
+                                  setBulkImportStudents(newStudents);
+                                }}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                dir="rtl"
+                              >
+                                <option value="">اختر الفصل الدراسي</option>
+                                <option value="first">الأول</option>
+                                <option value="second">الثاني</option>
+                              </select>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-sm text-gray-700">
+                      📊 عدد الطلاب: <strong>{bulkImportStudents.length}</strong>
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      💡 يمكنك نسخ البيانات من Excel ولصقها مباشرة في الجدول. الحقول الفارغة يمكن ملؤها لاحقاً يدوياً.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="bg-gray-50 px-6 py-4 flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowBulkImportModal(false);
+                  setBulkImportMode('table');
+                  setBulkImportStudents([{
+                    full_name: '',
+                    nickname: '',
+                    mother_name: '',
+                    birth_date: '',
+                    national_id: '',
+                    phone: '',
+                    school_name: '',
+                    gpa: '',
+                    graduation_year: '',
+                    exam_number: '',
+                    exam_password: '',
+                    department: '',
+                    username: '',
+                    password: '',
+                    stage: '',
+                    study_type: '',
+                    level: '',
+                    academic_year: '',
+                    semester: ''
+                  }]);
+                  setExcelFile(null);
+                }}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+                disabled={isImporting}
+              >
+                إلغاء
+              </button>
+              {bulkImportMode === 'file' ? (
+                <button
+                  onClick={async () => {
+                    if (!excelFile) {
+                      alert('يرجى اختيار ملف Excel أو CSV');
+                      return;
+                    }
+
+                    setIsImporting(true);
+                    try {
+                      const formData = new FormData();
+                      formData.append('file', excelFile);
+
+                      const response = await fetch('/api/students/bulk-import-excel', {
+                        method: 'POST',
+                        body: formData,
+                      });
+
+                      const result = await response.json();
+
+                      if (result.success) {
+                        alert(`تم إضافة ${result.data.added} طالب بنجاح!${result.data.failed > 0 ? `\nفشل إضافة ${result.data.failed} طالب` : ''}`);
+                        setShowBulkImportModal(false);
+                        setExcelFile(null);
+                        await fetchStudents();
+                        await fetchDepartmentCounts();
+                      } else {
+                        alert('خطأ في الاستيراد: ' + (result.error || 'خطأ غير معروف'));
+                      }
+                    } catch (error) {
+                      console.error('خطأ في الاستيراد من Excel:', error);
+                      alert('حدث خطأ أثناء الاستيراد');
+                    } finally {
+                      setIsImporting(false);
+                    }
+                  }}
+                  className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors font-medium"
+                  disabled={isImporting || !excelFile}
+                >
+                  {isImporting ? 'جاري الاستيراد...' : 'استيراد من الملف'}
+                </button>
+              ) : (
+                <button
+                  onClick={async () => {
+                    const validStudents = bulkImportStudents.filter(s => s.full_name.trim());
+                    
+                    if (validStudents.length === 0) {
+                      alert('يرجى إدخال الأسماء الرباعية على الأقل');
+                      return;
+                    }
+
+                    setIsImporting(true);
+                    try {
+                      const studentsData = validStudents.map((student) => {
+                        const stageRaw = student.stage.trim().toLowerCase();
+                        const stage = (stageRaw === 'first' || stageRaw === 'second' || stageRaw === 'third' || stageRaw === 'fourth') 
+                          ? stageRaw : undefined;
+                        
+                        const studyTypeRaw = student.study_type.trim().toLowerCase();
+                        const studyType = (studyTypeRaw === 'morning' || studyTypeRaw === 'evening') 
+                          ? studyTypeRaw : undefined;
+                        
+                        const levelRaw = student.level.trim().toLowerCase();
+                        const level = (levelRaw === 'bachelor' || levelRaw === 'master' || levelRaw === 'phd' || levelRaw === 'diploma') 
+                          ? levelRaw : undefined;
+                        
+                        const semesterRaw = student.semester.trim().toLowerCase();
+                        const semester = (semesterRaw === 'first' || semesterRaw === 'second') 
+                          ? semesterRaw : undefined;
+
+                        return {
+                          full_name: student.full_name.trim(),
+                          nickname: student.nickname.trim() || undefined,
+                          mother_name: student.mother_name.trim() || undefined,
+                          birth_date: student.birth_date.trim() || null,
+                          national_id: student.national_id.trim() || null,
+                          phone: student.phone.trim() ? `+964${student.phone.trim().replace(/^\+964/, '')}` : null,
+                          secondary_school_name: student.school_name.trim() || undefined,
+                          secondary_gpa: student.gpa.trim() ? parseFloat(student.gpa) : null,
+                          secondary_graduation_year: student.graduation_year.trim() || undefined,
+                          exam_number: student.exam_number.trim() || undefined,
+                          exam_password: student.exam_password.trim() || undefined,
+                          department: student.department.trim() || undefined,
+                          username: student.username.trim() || undefined,
+                          password: student.password.trim() || undefined,
+                          stage,
+                          study_type: studyType,
+                          level,
+                          academic_year: student.academic_year.trim() || undefined,
+                          semester
+                        };
+                      });
+
+                      console.log('📤 البيانات المرسلة للاستيراد من الجدول:', studentsData);
+                      console.log('📊 عدد الطلاب:', studentsData.length);
+                      console.log('📋 بيانات الطالب الأول:', studentsData[0]);
+                      
+                      const response = await fetch('/api/students/bulk-import', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ students: studentsData }),
+                      });
+
+                      const result = await response.json();
+
+                      if (result.success) {
+                        alert(`تم إضافة ${result.data.added} طالب بنجاح!${result.data.failed > 0 ? `\nفشل إضافة ${result.data.failed} طالب` : ''}`);
+                        setShowBulkImportModal(false);
+                        setBulkImportStudents([{
+                          full_name: '',
+                          nickname: '',
+                          mother_name: '',
+                          birth_date: '',
+                          national_id: '',
+                          phone: '',
+                          school_name: '',
+                          gpa: '',
+                          graduation_year: '',
+                          exam_number: '',
+                          exam_password: '',
+                          department: '',
+                          username: '',
+                          password: '',
+                          stage: '',
+                          study_type: '',
+                          level: '',
+                          academic_year: '',
+                          semester: ''
+                        }]);
+                        await fetchStudents();
+                        await fetchDepartmentCounts();
+                      } else {
+                        alert('خطأ في الاستيراد: ' + (result.error || 'خطأ غير معروف'));
+                      }
+                    } catch (error) {
+                      console.error('خطأ في الاستيراد الجماعي:', error);
+                      alert('حدث خطأ أثناء الاستيراد');
+                    } finally {
+                      setIsImporting(false);
+                    }
+                  }}
+                  className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors font-medium"
+                  disabled={isImporting || bulkImportStudents.filter(s => s.full_name.trim()).length === 0}
+                >
+                  {isImporting ? 'جاري الاستيراد...' : 'استيراد الطلاب'}
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -36,6 +36,26 @@ export async function GET(
   const academicYear = searchParams.get('academicYear');
 
   try {
+    // التحقق من وجود عمود username وإنشاؤه إذا لم يكن موجوداً
+    try {
+      await query(`
+        ALTER TABLE student_affairs.students
+        ADD COLUMN IF NOT EXISTS username VARCHAR(100)
+      `);
+    } catch (error) {
+      console.log('عمود username موجود بالفعل أو حدث خطأ في التحقق:', error);
+    }
+    
+    // التحقق من وجود عمود password وإنشاؤه إذا لم يكن موجوداً
+    try {
+      await query(`
+        ALTER TABLE student_affairs.students
+        ADD COLUMN IF NOT EXISTS password VARCHAR(255)
+      `);
+    } catch (error) {
+      console.log('عمود password موجود بالفعل أو حدث خطأ في التحقق:', error);
+    }
+    
     // جلب معلومات الطالب الأساسية
     const summaryResult = await query(
       `
@@ -54,7 +74,9 @@ SELECT
   s.gender,
   s.phone,
   s.email,
-  s.photo
+  s.photo,
+  s.username,
+  s.password
 FROM student_affairs.students s
 WHERE s.id::text = $1
 LIMIT 1;
@@ -215,6 +237,8 @@ ORDER BY ts.academic_year DESC, ts.semester DESC, ts.material_name;
           phone: summaryRow.phone,
           email: summaryRow.email,
           photo: summaryRow.photo,
+          username: summaryRow.username || null,
+          password: summaryRow.password || null,
         },
       },
     });
