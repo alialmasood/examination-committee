@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     }
     
     if (department) {
-      whereConditions.push(`s.major = $${paramIndex}`);
+      whereConditions.push(`normalize_arabic(COALESCE(s.major, '')) = normalize_arabic($${paramIndex})`);
       queryParams.push(department);
       paramIndex++;
     }
