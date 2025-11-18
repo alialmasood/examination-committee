@@ -281,16 +281,20 @@ export default function StudentsPage() {
   const formatRegistrationDate = (dateString: string) => {
     if (!dateString) return 'غير محدد';
     
+    // إذا كان التاريخ بصيغة YYYY-MM-DD، إرجاعه مباشرة
+    if (typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+      const [year, month, day] = dateString.split('-');
+      return `${day}/${month}/${year}`;
+    }
+    
     const date = new Date(dateString);
     if (isNaN(date.getTime())) return 'غير محدد';
     
     const day = date.getDate().toString().padStart(2, '0');
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
     const year = date.getFullYear();
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
     
-    return `${day}/${month}/${year} ${hours}:${minutes}`;
+    return `${day}/${month}/${year}`;
   };
 
   const fetchStudents = async () => {
@@ -1494,7 +1498,7 @@ export default function StudentsPage() {
             nickname: student.nickname || '',
             motherName: student.mother_name || '',
             nationalId: student.national_id || '',
-            birthDate: student.birth_date ? student.birth_date.split('T')[0] : '',
+            birthDate: student.birth_date || '',
             birthPlace: student.province || student.birth_place || '',
             area: student.area || '',
             gender: student.gender || 'male',

@@ -47,17 +47,19 @@ export async function POST(request: NextRequest) {
 
     // قراءة الملف
     const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false, cellNF: false, cellText: false });
+    // استخدام cellDates: false و cellText: true لقراءة التواريخ كنص مباشرة
+    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false, cellNF: false, cellText: true });
     
     // الحصول على أول ورقة عمل
     const firstSheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[firstSheetName];
     
     // تحويل إلى JSON مع الحفاظ على جميع الصفوف
+    // استخدام raw: false لقراءة القيم كنص (من cellText: true)
     const data = XLSX.utils.sheet_to_json(worksheet, { 
       header: 1, 
       defval: '',
-      raw: false,
+      raw: false,  // قراءة القيم كنص (من cellText: true)
       blankrows: true
     }) as any[][];
 
@@ -179,35 +181,120 @@ export async function POST(request: NextRequest) {
         const lastName = nameParts.slice(1).join(' ') || firstName;
         console.log(`  📝 الاسم الأول: "${firstName}"، اللقب: "${lastName}"`);
 
-        // دالة لتحويل رقم Excel التسلسلي إلى تاريخ
+        // دالة لتحويل تاريخ Excel إلى نص بصيغة YYYY-MM-DD
         const excelDateToDateString = (value: any): string | null => {
-          if (!value) return null;
-          
-          const strValue = String(value).trim();
-          if (!strValue) return null;
-          
-          // إذا كان النص بصيغة تاريخ (YYYY-MM-DD)
-          if (/^\d{4}-\d{2}-\d{2}$/.test(strValue)) {
-            return strValue;
+          if (!value) {
+            console.log(`  📅 قيمة التاريخ فارغة`);
+            return null;
           }
           
-          // إذا كان رقم Excel التسلسلي
-          const numValue = parseFloat(strValue);
-          if (!isNaN(numValue) && numValue > 0) {
-            // Excel date epoch: January 1, 1900 = 1
-            // JavaScript date epoch: January 1, 1970 = 25569 (in Excel serial)
-            const excelEpoch = 25569; // Days from 1900-01-01 to 1970-01-01
-            const jsDate = new Date((numValue - excelEpoch) * 86400 * 1000);
-            
-            // التحقق من أن التاريخ صحيح
-            if (!isNaN(jsDate.getTime())) {
-              const year = jsDate.getFullYear();
-              const month = String(jsDate.getMonth() + 1).padStart(2, '0');
-              const day = String(jsDate.getDate()).padStart(2, '0');
-              return `${year}-${month}-${day}`;
+          // إذا كان value هو Date object (من cellDates: true)
+          if (value instanceof Date) {
+            // استخدام local methods بدلاً من UTC لتجنب إنقاص يوم
+            const year = value.getFullYear();
+            const month = String(value.getMonth() + 1).padStart(2, '0');
+            const day = String(value.getDate()).padStart(2, '0');
+            const result = `${year}-${month}-${day}`;
+            console.log(`  📅 تحويل التاريخ من Date object: ${value.toISOString()} -> ${result}`);
+            return result;
+          }
+          
+          const strValue = String(value).trim();
+          if (!strValue) {
+            console.log(`  📅 قيمة التاريخ نص فارغ بعد التحويل`);
+            return null;
+          }
+          
+          console.log(`  📅 معالجة قيمة التاريخ: "${strValue}"`);
+          
+          // إذا كان النص بصيغة تاريخ (YYYY-MM-DD) - هذه هي الصيغة الصحيحة
+          if (/^\d{4}-\d{2}-\d{2}$/.test(strValue)) {
+            // التحقق من أن التاريخ صالح
+            const [year, month, day] = strValue.split('-').map(Number);
+            const dateObj = new Date(year, month - 1, day);
+            if (dateObj.getFullYear() === year && dateObj.getMonth() === month - 1 && dateObj.getDate() === day) {
+              console.log(`  📅 التاريخ بصيغة YYYY-MM-DD، إرجاعه كما هو: ${strValue}`);
+              return strValue;
+            } else {
+              console.log(`  ⚠️ التاريخ غير صالح: ${strValue}`);
             }
           }
           
+          // معالجة صيغ التاريخ الأخرى (DD-MM-YYYY أو DD/MM/YYYY)
+          const dateMatch = strValue.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+          if (dateMatch) {
+            const day = dateMatch[1].padStart(2, '0');
+            const month = dateMatch[2].padStart(2, '0');
+            const year = dateMatch[3];
+            const result = `${year}-${month}-${day}`;
+            console.log(`  📅 تحويل التاريخ من نص DD-MM-YYYY: ${strValue} -> ${result}`);
+            return result;
+          }
+          
+          // إذا كان رقم Excel التسلسلي (fallback)
+          const numValue = parseFloat(strValue);
+          if (!isNaN(numValue) && numValue > 0) {
+            console.log(`  📅 التاريخ يبدو كرقم تسلسلي: ${numValue}`);
+            
+            // التحقق من أن الرقم ليس تاريخاً صالحاً بصيغة YYYYMMDD
+            // إذا كان الرقم بين 19000101 و 21001231، قد يكون تاريخاً بصيغة YYYYMMDD
+            if (numValue >= 19000101 && numValue <= 21001231 && numValue % 1 === 0) {
+              const dateStr = String(numValue);
+              if (dateStr.length === 8) {
+                const year = dateStr.substring(0, 4);
+                const month = dateStr.substring(4, 6);
+                const day = dateStr.substring(6, 8);
+                const result = `${year}-${month}-${day}`;
+                console.log(`  📅 تحويل التاريخ من رقم YYYYMMDD: ${numValue} -> ${result}`);
+                return result;
+              }
+            }
+            
+            // إذا كان الرقم صغيراً جداً (أقل من 100)، فمن المحتمل أن يكون هناك خطأ في القراءة
+            // الأرقام التسلسلية للتواريخ الحديثة (بعد 1900) تكون أكبر من 1000
+            if (numValue < 100) {
+              console.log(`  ⚠️ الرقم التسلسلي صغير جداً (${numValue})، قد يكون هناك خطأ في قراءة التاريخ`);
+              return null;
+            }
+            
+            // Excel date epoch: January 1, 1900 = 1
+            // الفرق بين 1900-01-01 و 1970-01-01 = 25569 يوم (في Excel serial)
+            // لكن Excel يعتبر 1900-02-29 موجود (خطأ معروف)، لذلك نضيف يوم واحد
+            const excelEpoch = 25569;
+            
+            // حساب التاريخ بشكل صحيح
+            // Excel serial number - epoch = milliseconds since 1970-01-01
+            // إضافة يوم واحد (86400 * 1000 milliseconds) لتعويض مشكلة المنطقة الزمنية
+            const milliseconds = (numValue - excelEpoch) * 86400 * 1000;
+            
+            // إنشاء Date object
+            const jsDate = new Date(milliseconds);
+            
+            // التحقق من أن التاريخ صحيح ومعقول (بين 1900 و 2100)
+            if (!isNaN(jsDate.getTime())) {
+              // استخدام local methods بدلاً من UTC لتجنب إنقاص يوم
+              // لكن نضيف يوم واحد لتعويض مشكلة المنطقة الزمنية
+              jsDate.setDate(jsDate.getDate() + 1);
+              
+              const year = jsDate.getFullYear();
+              
+              // التحقق من أن السنة معقولة
+              if (year >= 1900 && year <= 2100) {
+                const month = String(jsDate.getMonth() + 1).padStart(2, '0');
+                const day = String(jsDate.getDate()).padStart(2, '0');
+                const result = `${year}-${month}-${day}`;
+                
+                console.log(`  📅 تحويل التاريخ من رقم تسلسلي Excel: ${numValue} -> ${result} (تمت إضافة يوم واحد)`);
+                return result;
+              } else {
+                console.log(`  ⚠️ السنة غير معقولة: ${year} (من الرقم التسلسلي ${numValue})`);
+              }
+            } else {
+              console.log(`  📅 فشل تحويل الرقم التسلسلي إلى تاريخ صالح`);
+            }
+          }
+          
+          console.log(`  📅 لم يتم التعرف على صيغة التاريخ: "${strValue}"`);
           return null;
         };
 
@@ -253,8 +340,30 @@ export async function POST(request: NextRequest) {
         // استخراج البيانات من الصف
         const nickname = String(row[1] || '').trim() || null;
         const motherName = String(row[2] || '').trim() || null;
-        const birthDateRaw = row[3];
+        // قراءة التاريخ مباشرة من الخلية للحصول على القيمة النصية المنسقة
+        const cellAddress = XLSX.utils.encode_cell({ r: i, c: 3 }); // العمود 3 (D) = row[3]
+        const cell = worksheet[cellAddress];
+        let birthDateRaw = row[3];
+        
+        // محاولة قراءة القيمة النصية المنسقة من الخلية
+        if (cell && cell.w) {
+          birthDateRaw = cell.w; // القيمة النصية المنسقة
+          console.log(`  📅 قراءة التاريخ من الخلية ${cellAddress} (القيمة المنسقة):`, birthDateRaw);
+        } else {
+          birthDateRaw = row[3];
+          console.log(`  📅 قراءة التاريخ من row[3]:`, birthDateRaw);
+        }
+        
+        console.log(`  📅 تاريخ الميلاد الخام من Excel:`, {
+          raw: birthDateRaw,
+          type: typeof birthDateRaw,
+          isDate: birthDateRaw instanceof Date,
+          stringValue: String(birthDateRaw),
+          numberValue: typeof birthDateRaw === 'number' ? birthDateRaw : null,
+          cellValue: cell ? cell.w : null
+        });
         const birthDate = excelDateToDateString(birthDateRaw);
+        console.log(`  📅 تاريخ الميلاد بعد التحويل:`, birthDate);
         const nationalIdValue = nationalId || null;
         const phoneRaw = String(row[5] || '').trim();
         const phone = phoneRaw ? `+964${phoneRaw.replace(/^\+964/, '')}` : null;
