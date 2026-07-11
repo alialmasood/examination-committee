@@ -324,9 +324,10 @@ export default function AccountsInstallmentsPage() {
     await Promise.all([
       fetchDepartmentStats(),
       fetchPendingSummary(),
-      fetchPendingList()
+      fetchPendingList(),
+      fetchPaidList()
     ]);
-  }, [fetchDepartmentStats, fetchPendingSummary, fetchPendingList]);
+  }, [fetchDepartmentStats, fetchPendingSummary, fetchPendingList, fetchPaidList]);
 
   const refreshAllData = useCallback(async () => {
     await Promise.all([
@@ -386,7 +387,15 @@ export default function AccountsInstallmentsPage() {
       });
       const data = await res.json();
       if (data.success) {
-        await refreshAllData();
+        // تحديث فوري لجميع البيانات
+        await Promise.all([
+          fetchDepartmentStats(),
+          fetchPendingSummary(),
+          fetchPendingList(),
+          fetchPaidList()
+        ]);
+        
+        // إرسال رسالة عبر BroadcastChannel لتحديث الصفحات الأخرى
         try {
           const ch = new BroadcastChannel('payments');
           ch.postMessage({ 
@@ -397,6 +406,7 @@ export default function AccountsInstallmentsPage() {
           });
           ch.close();
         } catch {}
+        
         setShowModal(false);
         setSelectedStudent(null);
         setAmount('');

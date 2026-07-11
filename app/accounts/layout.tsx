@@ -385,13 +385,13 @@ export default function AccountsLayout({
             <Link
               href="/accounts/reports"
               className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
-                pathname === '/accounts/reports' 
+                pathname === '/accounts/reports' || pathname?.startsWith('/accounts/reports/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
               }`}
             >
               <div className="flex items-center">
-                {pathname === '/accounts/reports' && (
+                {(pathname === '/accounts/reports' || pathname?.startsWith('/accounts/reports/')) && (
                   <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
                 )}
                 <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">

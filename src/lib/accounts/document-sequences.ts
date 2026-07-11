@@ -1,5 +1,6 @@
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
+import { toDateOnly } from './fiscal';
 
 export const DOCUMENT_SEQUENCE_DEFAULTS = [
   { document_type: 'JOURNAL_ENTRY', prefix: 'JV' },
@@ -40,8 +41,30 @@ export function formatDocumentNumber(params: {
 }
 
 export function yearLabelFromDate(startDate: string | Date): string {
-  const d = typeof startDate === 'string' ? new Date(startDate) : startDate;
-  return String(d.getUTCFullYear());
+  if (typeof startDate === 'string') {
+    const raw = startDate.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 4);
+  }
+  if (startDate instanceof Date && !Number.isNaN(startDate.getTime())) {
+    // أعمدة DATE من pg تُعاد كمنتصف ليل محلي — استخدم المكونات المحلية
+    return String(startDate.getFullYear());
+  }
+  return toDateOnly(startDate).slice(0, 4);
+}
+
+/** تحويل آمن لتاريخ DATE قادم من PostgreSQL بدون إزاحة UTC */
+export function pgDateOnly(value: string | Date): string {
+  if (typeof value === 'string') {
+    const raw = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return toDateOnly(value);
 }
 
 /**

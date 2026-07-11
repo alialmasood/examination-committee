@@ -10,7 +10,7 @@ export async function GET() {
     `);
     const count = result.rows[0]?.count || 0;
     return NextResponse.json({ success: true, data: { count } });
-  } catch (e) {
+  } catch {
     return NextResponse.json({ success: false, error: 'خطأ في جلب عدد الطلبة قيد الدفع' }, { status: 500 });
   }
 }

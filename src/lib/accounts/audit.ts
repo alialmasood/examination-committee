@@ -25,7 +25,18 @@ export type AuditAction =
   | 'chart_account.move'
   | 'chart_account.toggle_status'
   | 'chart_account.delete'
-  | 'chart_account.seed';
+  | 'chart_account.seed'
+  | 'journal_entry.created'
+  | 'journal_entry.updated'
+  | 'journal_entry.deleted'
+  | 'journal_entry.submitted'
+  | 'journal_entry.reviewed'
+  | 'journal_entry.approved'
+  | 'journal_entry.rejected'
+  | 'journal_entry.returned_to_draft'
+  | 'journal_entry.cancelled'
+  | 'journal_entry.posted'
+  | 'journal_entry.reversed';
 
 export async function writeFinancialAudit(
   client: TxClient,

@@ -122,6 +122,15 @@ export function mapPgError(error: unknown): NextResponse {
     if (err.constraint?.includes('department')) {
       return jsonError('يوجد مركز كلفة مرتبط بهذا القسم مسبقاً', 409);
     }
+    if (err.constraint?.includes('uq_journal_entries_year_number')) {
+      return jsonError('رقم القيد مستخدم مسبقاً ضمن السنة المالية', 409);
+    }
+    if (err.constraint?.includes('uq_journal_entries_source')) {
+      return jsonError('يوجد قيد مرتبط بنفس المصدر مسبقاً', 409);
+    }
+    if (err.constraint?.includes('journal_entry_lines')) {
+      return jsonError('تعارض في سطور القيد', 409);
+    }
     if (err.constraint?.includes('document_sequences')) {
       return jsonError('تسلسل المستند موجود مسبقاً لهذه السنة', 409);
     }

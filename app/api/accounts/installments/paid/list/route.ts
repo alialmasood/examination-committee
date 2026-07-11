@@ -24,7 +24,7 @@ export async function GET() {
        LIMIT 200`
     );
     return NextResponse.json({ success: true, data: result.rows });
-  } catch (e) {
+  } catch {
     return NextResponse.json({ success: false, error: 'خطأ في جلب قائمة الطلبة المسددين' }, { status: 500 });
   }
 }
