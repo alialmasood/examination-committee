@@ -8,7 +8,7 @@
 | **اسم الإصدار** | Accounting Engine v1 |
 | **الوسم (Tag)** | `accounting-engine-v1` |
 | **رسالة الـ Commit** | `baseline: accounting engine v1` |
-| **رقم الـ Commit** | *(يُملأ بعد إنشاء الـ commit — انظر نهاية الملف أو `git rev-parse accounting-engine-v1`)* |
+| **رقم الـ Commit** | `6c61d599288a48e6cc44bd489e602d68146ba76e` (`6c61d59`) |
 | **تاريخ الإصدار** | 12 تموز 2026 |
 | **الحالة** | Baseline مستقر — جاهز لبدء المرحلة 3 (الصناديق) |
 | **النطاق** | المراحل 0–2 من نظام الحسابات + الوثائق الرسمية للبوابة إلى المرحلة 3 |
@@ -111,7 +111,7 @@
 |-------|--------|
 | **Tag** | `accounting-engine-v1` |
 | **Commit message** | `baseline: accounting engine v1` |
-| **Commit SHA** | `COMMIT_SHA_PLACEHOLDER` |
+| **Commit SHA** | `6c61d599288a48e6cc44bd489e602d68146ba76e` |
 | **Push** | **لم يُنفَّذ** (محلي فقط حسب الطلب) |
 
 للتحقق محلياً:
