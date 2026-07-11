@@ -1,0 +1,116 @@
+import type { TxClient } from './with-transaction';
+import { txQuery } from './with-transaction';
+
+export const DOCUMENT_SEQUENCE_DEFAULTS = [
+  { document_type: 'JOURNAL_ENTRY', prefix: 'JV' },
+  { document_type: 'RECEIPT_VOUCHER', prefix: 'RV' },
+  { document_type: 'PAYMENT_VOUCHER', prefix: 'PV' },
+  { document_type: 'FINANCIAL_TRANSFER', prefix: 'TR' },
+  { document_type: 'OPENING_BALANCE', prefix: 'OB' },
+] as const;
+
+export type DocumentType = (typeof DOCUMENT_SEQUENCE_DEFAULTS)[number]['document_type'];
+
+export async function createDefaultSequencesForYear(
+  client: TxClient,
+  fiscalYearId: string
+): Promise<void> {
+  for (const seq of DOCUMENT_SEQUENCE_DEFAULTS) {
+    await txQuery(
+      client,
+      `INSERT INTO accounts.document_sequences
+        (document_type, fiscal_year_id, prefix, current_number, padding_length, reset_yearly, is_active)
+       VALUES ($1, $2, $3, 0, 6, TRUE, TRUE)`,
+      [seq.document_type, fiscalYearId, seq.prefix]
+    );
+  }
+}
+
+function padNumber(value: number, length: number): string {
+  return String(value).padStart(length, '0');
+}
+
+export function formatDocumentNumber(params: {
+  prefix: string;
+  yearLabel: string;
+  number: number;
+  paddingLength: number;
+}): string {
+  return `${params.prefix}-${params.yearLabel}-${padNumber(params.number, params.paddingLength)}`;
+}
+
+export function yearLabelFromDate(startDate: string | Date): string {
+  const d = typeof startDate === 'string' ? new Date(startDate) : startDate;
+  return String(d.getUTCFullYear());
+}
+
+/**
+ * استخراج الرقم التالي داخل معاملة مع قفل الصف.
+ * للاستخدام في الخطوات القادمة — لا يُستدعى من واجهة الخطوة 0.
+ */
+export async function nextDocumentNumber(
+  client: TxClient,
+  params: {
+    documentType: DocumentType | string;
+    fiscalYearId: string;
+    yearLabel: string;
+  }
+): Promise<{ number: number; formatted: string; sequenceId: string }> {
+  const locked = await txQuery<{
+    id: string;
+    prefix: string;
+    current_number: number;
+    padding_length: number;
+    is_active: boolean;
+  }>(
+    client,
+    `SELECT id, prefix, current_number, padding_length, is_active
+     FROM accounts.document_sequences
+     WHERE document_type = $1 AND fiscal_year_id = $2
+     FOR UPDATE`,
+    [params.documentType, params.fiscalYearId]
+  );
+
+  if (locked.rows.length === 0) {
+    throw new Error('تسلسل المستند غير موجود لهذه السنة المالية');
+  }
+
+  const row = locked.rows[0];
+  if (!row.is_active) {
+    throw new Error('تسلسل المستند غير نشط');
+  }
+
+  const next = row.current_number + 1;
+  await txQuery(
+    client,
+    `UPDATE accounts.document_sequences
+     SET current_number = $1, updated_at = NOW()
+     WHERE id = $2`,
+    [next, row.id]
+  );
+
+  return {
+    number: next,
+    sequenceId: row.id,
+    formatted: formatDocumentNumber({
+      prefix: row.prefix,
+      yearLabel: params.yearLabel,
+      number: next,
+      paddingLength: row.padding_length,
+    }),
+  };
+}
+
+export function previewDocumentNumber(params: {
+  prefix: string;
+  yearLabel: string;
+  currentNumber: number;
+  paddingLength: number;
+}): string {
+  return formatDocumentNumber({
+    prefix: params.prefix,
+    yearLabel: params.yearLabel,
+    number: params.currentNumber + 1,
+    paddingLength: params.paddingLength,
+  });
+}

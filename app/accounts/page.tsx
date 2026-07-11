@@ -6,6 +6,11 @@ export default function AccountsDashboard() {
   const tiles = [
     { title: 'إدارة العمليات', color: 'bg-blue-500', link: '/accounts/exams' },
     { title: 'الحسابات الطلابية', color: 'bg-green-500', link: '/accounts/students' },
+    { title: 'القيود', color: 'bg-amber-500', link: '/accounts/entries' },
+    { title: 'الرواتب', color: 'bg-teal-500', link: '/accounts/payroll' },
+    { title: 'حسابات كادر الكلية', color: 'bg-rose-500', link: '/accounts/staff' },
+    { title: 'حساب الصندوق', color: 'bg-cyan-500', link: '/accounts/cashbox' },
+    { title: 'حساب الخزينة', color: 'bg-orange-500', link: '/accounts/treasury' },
     { title: 'كشوفات مالية', color: 'bg-purple-500', link: '/accounts/results' },
     { title: 'التقارير', color: 'bg-indigo-500', link: '/accounts/reports' },
   ];

@@ -40,7 +40,7 @@ export async function GET(
       
       if (fs.existsSync(photoPath)) {
         const fileBuffer = fs.readFileSync(photoPath);
-        return new NextResponse(fileBuffer, {
+        return new NextResponse(new Uint8Array(fileBuffer), {
           headers: {
             'Content-Type': 'image/jpeg',
             'Cache-Control': 'public, max-age=3600',
@@ -73,7 +73,7 @@ export async function GET(
     else if (ext === '.webp') contentType = 'image/webp';
     
     // إرجاع الصورة
-    return new NextResponse(fileBuffer, {
+    return new NextResponse(new Uint8Array(fileBuffer), {
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=3600',
