@@ -19,6 +19,8 @@
     "seed:student-affairs-users": "tsx src/scripts/add-student-affairs-users.ts",
     "fix:admin-student-affairs": "tsx src/scripts/fix-admin-student-affairs.ts",
     "seed:accounts": "tsx src/scripts/add-accounts-user.ts",
+    "seed:accounts-chart": "tsx src/scripts/seed-chart-of-accounts.ts",
+    "seed:accounts-chart:execute": "tsx src/scripts/seed-chart-of-accounts.ts --execute",
     "seed:construction": "tsx src/scripts/add-construction-user.ts",
     "seed:oil": "tsx src/scripts/add-oil-user.ts",
     "seed:physics": "tsx src/scripts/add-physics-user.ts",

@@ -110,6 +110,15 @@ export function mapPgError(error: unknown): NextResponse {
     if (err.constraint?.includes('cost_centers_code') || err.constraint?.includes('uq_cost_centers_code')) {
       return jsonError('رمز مركز الكلفة مستخدم مسبقاً', 409);
     }
+    if (err.constraint?.includes('chart_of_accounts') || err.constraint?.includes('uq_chart_of_accounts_code')) {
+      return jsonError('يوجد حساب آخر يستخدم الرمز نفسه', 409);
+    }
+    if (err.constraint?.includes('uq_chart_of_accounts_sibling_sort')) {
+      return jsonError('ترتيب العرض مستخدم مسبقاً ضمن نفس الحساب الأب', 409);
+    }
+    if (err.constraint?.includes('account_types')) {
+      return jsonError('رمز نوع الحساب مستخدم مسبقاً', 409);
+    }
     if (err.constraint?.includes('department')) {
       return jsonError('يوجد مركز كلفة مرتبط بهذا القسم مسبقاً', 409);
     }

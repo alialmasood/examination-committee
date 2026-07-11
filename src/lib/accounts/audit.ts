@@ -19,7 +19,13 @@ export type AuditAction =
   | 'cost_center.update'
   | 'cost_center.toggle_status'
   | 'cost_center.delete'
-  | 'document_sequence.update';
+  | 'document_sequence.update'
+  | 'chart_account.create'
+  | 'chart_account.update'
+  | 'chart_account.move'
+  | 'chart_account.toggle_status'
+  | 'chart_account.delete'
+  | 'chart_account.seed';
 
 export async function writeFinancialAudit(
   client: TxClient,

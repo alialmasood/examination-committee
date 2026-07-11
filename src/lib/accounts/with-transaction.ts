@@ -41,6 +41,9 @@ export const ADVISORY_LOCK_FISCAL_PERIODS = 58001002;
 /** قفل شجرة مراكز الكلفة */
 export const ADVISORY_LOCK_COST_CENTERS = 58001003;
 
+/** قفل دليل الحسابات */
+export const ADVISORY_LOCK_CHART_OF_ACCOUNTS = 58001004;
+
 export async function acquireFiscalYearsLock(client: TxClient): Promise<void> {
   await txQuery(client, 'SELECT pg_advisory_xact_lock($1)', [ADVISORY_LOCK_FISCAL_YEARS]);
 }
@@ -57,4 +60,8 @@ export async function acquireFiscalPeriodsLock(
 
 export async function acquireCostCentersLock(client: TxClient): Promise<void> {
   await txQuery(client, 'SELECT pg_advisory_xact_lock($1)', [ADVISORY_LOCK_COST_CENTERS]);
+}
+
+export async function acquireChartOfAccountsLock(client: TxClient): Promise<void> {
+  await txQuery(client, 'SELECT pg_advisory_xact_lock($1)', [ADVISORY_LOCK_CHART_OF_ACCOUNTS]);
 }
