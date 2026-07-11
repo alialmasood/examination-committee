@@ -586,6 +586,7 @@ docs/                             # وثائق معمارية ومتطلبات
 | **060** | Chart Enhancements | `source` (SYSTEM/USER) + `sort_order` |
 | **061** | Journal Engine | رؤوس وسطور القيود، دورة الحياة، العكس، `version` |
 | **062** | Cash Boxes Foundation | `platform.system_settings` + أنواع الصناديق + الصناديق + الأمناء (3.A / A1) |
+| **063** | Cash Box Sessions | جلسات يومية + جرد إغلاق مبسّط (3.B Backend) |
 
 > كل migration لاحق يُضاف إلى هذا الجدول فور اعتماده، مع رقم ووصف سطر واحد، دون تعديل صفوف migrations السابقة.
 

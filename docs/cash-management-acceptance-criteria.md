@@ -535,31 +535,31 @@
 | F-21 دور SUPERVISOR | Passed |
 | F-22 تسليم عهدة وفق القواعد | Deferred |
 | F-23 Audit تغيير الأمين | Passed |
-| F-30 فتح جلسة لـ ACTIVE فقط | Deferred |
-| F-31 إلزام سنة/فترة/تاريخ | Deferred |
-| F-32 صحة السنة ACTIVE والفترة OPEN | Deferred |
-| F-33 جلسة حية واحدة لكل صندوق | Deferred |
-| F-34 لقطة رصيد عند الفتح | Deferred |
-| F-35 Submit جرد إغلاق → CLOSING | Deferred |
-| F-36 رفض الجرد يعيد حالة الجلسة | Deferred |
-| F-37 إغلاق يحفظ اللقطات | Deferred |
-| F-38 إعادة فتح بسبب + REOPENED | Deferred |
-| F-39 منع جلسة جديدة وجلسة سابقة حية | Deferred |
-| F-40 جرد CLOSING و SURPRISE | Deferred |
-| F-41 تعديل مسودة فقط | Deferred |
-| F-42 تجميد book_balance عند Submit | Deferred |
-| F-43 فئات عملة وبنود ≥ 0 | Deferred |
-| F-44 اعتماد فرق صفر | Deferred |
-| F-45 مسودة قيد عند فرق ≠ 0 | Deferred |
-| F-46 source_type=CASH_COUNT_VARIANCE | Deferred |
-| F-47 اتجاه قيد الفروقات حسب السياسة | Deferred |
-| F-48 Idempotency لقيد التسوية | Deferred |
-| F-49 رفض التسوية بلا حسابات فروقات | Deferred |
+| F-30 فتح جلسة لـ ACTIVE فقط | Passed (Backend 3.B) |
+| F-31 إلزام سنة/فترة/تاريخ | Passed (Backend 3.B) |
+| F-32 صحة السنة ACTIVE والفترة OPEN | Passed (Backend 3.B) |
+| F-33 جلسة حية واحدة لكل صندوق | Passed (Backend 3.B — OPEN/CLOSING فقط؛ لا REOPEN) |
+| F-34 لقطة رصيد عند الفتح | Passed (Backend 3.B) |
+| F-35 Submit جرد إغلاق → CLOSING | Passed جزئياً (Backend: start-closing ثم count؛ لا مسار Approve منفصل) |
+| F-36 رفض الجرد يعيد حالة الجلسة | Passed جزئياً (Backend: cancel-closing → OPEN) |
+| F-37 إغلاق يحفظ اللقطات | Passed (Backend 3.B) |
+| F-38 إعادة فتح بسبب + REOPENED | Deferred (خارج 3.B) |
+| F-39 منع جلسة جديدة وجلسة سابقة حية | Passed (Backend 3.B) |
+| F-40 جرد CLOSING و SURPRISE | Passed جزئياً (جرد إغلاق إجمالي فقط؛ لا SURPRISE) |
+| F-41 تعديل مسودة فقط | Not Applicable في 3.B (سجل جرد جديد لكل محاولة) |
+| F-42 تجميد book_balance عند Submit | Passed (عند count) |
+| F-43 فئات عملة وبنود ≥ 0 | Deferred (3.C) |
+| F-44 اعتماد فرق صفر | Passed (إغلاق بفرق 0) |
+| F-45 مسودة قيد عند فرق ≠ 0 | Deferred (3.C) |
+| F-46 source_type=CASH_COUNT_VARIANCE | Deferred (3.C) |
+| F-47 اتجاه قيد الفروقات حسب السياسة | Deferred (3.C) |
+| F-48 Idempotency لقيد التسوية | Deferred (3.C) |
+| F-49 رفض التسوية بلا حسابات فروقات | Deferred (3.C) |
 | F-50 جرد مفاجئ لا يغلق الجلسة | Deferred |
-| F-51 رفض إغلاق بعد نشاط دفتري لاحق | Deferred |
+| F-51 رفض إغلاق بعد نشاط دفتري لاحق | Passed (Backend 3.B) |
 | F-52 تحذير رصيد دفتري سالب | Deferred |
 | F-60 قائمة صناديق مع أرصدة | Passed |
-| F-61 عرض جلسة يومية | Deferred |
+| F-61 عرض جلسة يومية | Passed (UI 3.B) |
 | F-62 تقرير فروقات الجرد | Deferred |
 | F-63 ملخص أرصدة | Passed |
 | F-64 endpoint options | Passed |
@@ -571,13 +571,13 @@
 | DB-04 Migration جديدة دون تعديل قديم | Passed |
 | DB-05 لا current_balance كمصدر حقيقة | Passed |
 | API-01 مسارات CRUD والصناديق | Passed |
-| API-02 مسارات الجلسات | Deferred |
-| API-03 مسارات الجرد والاعتماد | Deferred |
+| API-02 مسارات الجلسات | Passed (Backend 3.B) |
+| API-03 مسارات الجرد والاعتماد | Passed جزئياً (count/close؛ بلا تسوية) |
 | API-04 تقارير و options | Passed |
 | API-05 رموز الأخطاء 400/401/404/409 | Passed |
 | UI-01 قائمة /accounts/cashbox | Passed |
 | UI-02 تفاصيل الصندوق | Passed |
-| UI-03 شاشة الجلسة والجرد | Deferred |
+| UI-03 شاشة الجلسة والجرد | Passed (UI 3.B) |
 | UI-04 شاشة التقارير | Deferred |
 | UI-05 RTL وهوية الحسابات | Passed |
 | UI-06 لا ترحيل محاسبي من الواجهة | Passed |
@@ -593,7 +593,7 @@
 | TC-20…TC-35 اختبارات الرفض والتعارض | Passed |
 | TC-40…TC-42 عدم انحدار المرحلة 2 | Passed |
 | TC-50 قبول الدفعة 3.A | Passed |
-| TC-51…TC-54 قبول الدفعات 3.B–3.E | Deferred |
+| TC-51…TC-54 قبول الدفعات 3.B–3.E | TC-51 Passed (Backend+UI) · 3.C–3.E Deferred |
 | EC-01…EC-15 معالجة الحالات الحدية الملزمة | Deferred |
 | DEL-01 تسليم الملفات/الجداول/الواجهات المتوقعة | Passed |
 | DEL-02 تحديث الوثيقة المعمارية عند الخروج | Deferred |

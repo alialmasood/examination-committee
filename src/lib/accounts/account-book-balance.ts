@@ -5,7 +5,12 @@
 import { query } from '@/src/lib/db';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
-import { millisToMoney, moneyToMillis, normalizeMoneyInput } from './money';
+import {
+  millisToMoney,
+  moneyEquals,
+  moneyToMillis,
+  normalizeMoneyInput,
+} from './money';
 
 export type BookBalanceSource = 'POSTED_JOURNAL_LINES';
 
@@ -80,4 +85,136 @@ export async function getAccountsBookBalances(
 /** فرق رصيدين كنص مالّي موحّد */
 export function subtractBookBalances(a: string, b: string): string {
   return millisToMoney(moneyToMillis(a) - moneyToMillis(b));
+}
+
+export type LastPostedEntrySnapshot = {
+  entry_id: string;
+  posted_at: Date;
+};
+
+type Runner = (
+  text: string,
+  params?: unknown[]
+) => Promise<{ rows: Array<Record<string, unknown>> }>;
+
+async function fetchLastPostedEntry(
+  runner: Runner,
+  accountId: string
+): Promise<LastPostedEntrySnapshot | null> {
+  const result = await runner(
+    `SELECT e.id::text AS entry_id, e.posted_at
+     FROM accounts.journal_entry_lines l
+     INNER JOIN accounts.journal_entries e ON e.id = l.journal_entry_id
+     WHERE l.account_id = $1::uuid
+       AND e.status = 'POSTED'
+       AND e.posted_at IS NOT NULL
+     ORDER BY e.posted_at DESC, e.id DESC
+     LIMIT 1`,
+    [accountId]
+  );
+  const row = result.rows[0] as
+    | { entry_id: string; posted_at: Date | string }
+    | undefined;
+  if (!row) return null;
+  return {
+    entry_id: row.entry_id,
+    posted_at:
+      row.posted_at instanceof Date ? row.posted_at : new Date(String(row.posted_at)),
+  };
+}
+
+/** آخر قيد POSTED يؤثر على الحساب (للقطات التدقيق والتحقق) */
+export async function getLastPostedEntryForAccount(
+  accountId: string
+): Promise<LastPostedEntrySnapshot | null> {
+  return fetchLastPostedEntry(query, accountId);
+}
+
+export async function getLastPostedEntryForAccountTx(
+  client: TxClient,
+  accountId: string
+): Promise<LastPostedEntrySnapshot | null> {
+  return fetchLastPostedEntry(
+    (text, params) => txQuery(client, text, params),
+    accountId
+  );
+}
+
+export type BookSnapshot = {
+  balance: string;
+  last_posted_entry_id: string | null;
+  last_posted_at: Date | null;
+};
+
+/** لقطة رصيد + آخر قيد مرحّل في معاملة واحدة */
+export async function captureAccountBookSnapshotTx(
+  client: TxClient,
+  accountId: string
+): Promise<BookSnapshot> {
+  const bal = await getAccountBookBalanceTx(client, accountId);
+  const last = await getLastPostedEntryForAccountTx(client, accountId);
+  return {
+    balance: bal.balance,
+    last_posted_entry_id: last?.entry_id ?? null,
+    last_posted_at: last?.posted_at ?? null,
+  };
+}
+
+function toMs(value: Date | string | null | undefined): number | null {
+  if (value == null) return null;
+  const ms = value instanceof Date ? value.getTime() : new Date(String(value)).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * هل ظهر نشاط دفتري بعد لقطة الجرد؟
+ * يقارن الرصيد وآخر قيد (id + posted_at) ولا يعتمد على الزمن وحده.
+ */
+export function detectBookDriftSinceCount(params: {
+  currentBalance: string;
+  currentLast: LastPostedEntrySnapshot | null;
+  snapshotBalance: string;
+  snapshotEntryId: string | null;
+  snapshotPostedAt: Date | string | null;
+}): { drifted: boolean; reason: 'balance' | 'entry' | null } {
+  if (!moneyEquals(params.currentBalance, params.snapshotBalance)) {
+    return { drifted: true, reason: 'balance' };
+  }
+
+  const snapId = params.snapshotEntryId;
+  const snapAt = toMs(params.snapshotPostedAt);
+  const cur = params.currentLast;
+
+  if (!snapId && !cur) {
+    return { drifted: false, reason: null };
+  }
+  if (!snapId && cur) {
+    return { drifted: true, reason: 'entry' };
+  }
+  if (snapId && !cur) {
+    return { drifted: true, reason: 'entry' };
+  }
+  if (!cur || !snapId) {
+    return { drifted: true, reason: 'entry' };
+  }
+
+  if (cur.entry_id !== snapId) {
+    return { drifted: true, reason: 'entry' };
+  }
+
+  const curAt = toMs(cur.posted_at);
+  if (snapAt != null && curAt != null && curAt > snapAt) {
+    return { drifted: true, reason: 'entry' };
+  }
+
+  if (
+    snapAt != null &&
+    curAt != null &&
+    curAt === snapAt &&
+    cur.entry_id > snapId
+  ) {
+    return { drifted: true, reason: 'entry' };
+  }
+
+  return { drifted: false, reason: null };
 }

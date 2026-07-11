@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import ActivationChecklist from './components/ActivationChecklist';
 import CashBoxFormModal from './components/CashBoxFormModal';
@@ -126,16 +127,24 @@ export default function AccountsCashboxPage() {
               تعريف الصناديق النقدية وربطها بالدليل وتعيين الأمناء وتفعيل التشغيل.
             </p>
           </div>
-          <button
-            type="button"
-            className="px-4 py-2 rounded-md bg-red-900 text-white text-sm hover:bg-red-800"
-            onClick={() => {
-              setEditRow(null);
-              setFormOpen(true);
-            }}
-          >
-            إضافة صندوق
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/accounts/cashbox/sessions"
+              className="px-4 py-2 rounded-md border border-red-900 text-red-900 text-sm hover:bg-red-50"
+            >
+              الجلسات اليومية
+            </Link>
+            <button
+              type="button"
+              className="px-4 py-2 rounded-md bg-red-900 text-white text-sm hover:bg-red-800"
+              onClick={() => {
+                setEditRow(null);
+                setFormOpen(true);
+              }}
+            >
+              إضافة صندوق
+            </button>
+          </div>
         </div>
 
         {error && (

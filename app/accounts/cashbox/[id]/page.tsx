@@ -134,6 +134,12 @@ export default function CashBoxDetailPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Link
+              href="/accounts/cashbox/sessions"
+              className="px-3 py-2 rounded-md border border-red-900 text-red-900 text-sm hover:bg-red-50"
+            >
+              الجلسات اليومية
+            </Link>
             {box.status !== 'CLOSED' && (
               <button
                 type="button"

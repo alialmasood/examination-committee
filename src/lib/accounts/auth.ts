@@ -149,6 +149,18 @@ export function mapPgError(error: unknown): NextResponse {
     if (err.constraint?.includes('system_settings')) {
       return jsonError('مفتاح الإعداد مستخدم مسبقاً', 409);
     }
+    if (err.constraint?.includes('uq_cash_box_sessions_one_live')) {
+      return jsonError('يوجد يوم مفتوح أو قيد الإغلاق لهذا الصندوق مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_cash_box_sessions_box_date')) {
+      return jsonError('توجد جلسة لهذا الصندوق في نفس التاريخ مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_cash_counts_one_current')) {
+      return jsonError('يوجد جرد حالي لهذه الجلسة مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_cash_counts_session_sequence')) {
+      return jsonError('تعارض في تسلسل سجلات الجرد', 409);
+    }
     return jsonError('تعارض في البيانات: القيمة مكررة', 409);
   }
 

@@ -44,7 +44,12 @@ export type AuditAction =
   | 'cash_box.closed'
   | 'cash_box.custodian_assigned'
   | 'cash_box.custodian_removed'
-  | 'cash_box.variance_settings_updated';
+  | 'cash_box.variance_settings_updated'
+  | 'cash_session.opened'
+  | 'cash_session.closing_started'
+  | 'cash_session.count_recorded'
+  | 'cash_session.closing_cancelled'
+  | 'cash_session.closed';
 
 export async function writeFinancialAudit(
   client: TxClient,
