@@ -36,7 +36,15 @@ export type AuditAction =
   | 'journal_entry.returned_to_draft'
   | 'journal_entry.cancelled'
   | 'journal_entry.posted'
-  | 'journal_entry.reversed';
+  | 'journal_entry.reversed'
+  | 'cash_box.created'
+  | 'cash_box.updated'
+  | 'cash_box.activated'
+  | 'cash_box.suspended'
+  | 'cash_box.closed'
+  | 'cash_box.custodian_assigned'
+  | 'cash_box.custodian_removed'
+  | 'cash_box.variance_settings_updated';
 
 export async function writeFinancialAudit(
   client: TxClient,

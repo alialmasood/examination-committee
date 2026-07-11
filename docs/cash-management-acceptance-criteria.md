@@ -513,90 +513,91 @@
 
 ## 15. جدول المتطلبات النهائي (Requirement | Status)
 
-> حدّث `Status` أثناء التنفيذ فقط: `Pending` → `Ready` | `Blocked` | `Deferred`.  
-> الحالة الابتدائية لجميع البنود: **Pending**.
+> حدّث `Status` أثناء التنفيذ: `Pending` → `Passed` | `Deferred` | `Not Applicable` | `Blocked`.  
+> **تحديث 12 تموز 2026:** اكتمال الدفعة 3.A (A1–A8). البنود أدناه محدَّثة لـ 3.A فقط؛ بقية المرحلة 3 تبقى Pending.
 
 | Requirement | Status |
 |-------------|--------|
-| SCOPE-01 نطاق المرحلة 3 مُنفَّذ دون توسع خارجي | Pending |
-| DOD-01 Definition of Done الكلي متحقق | Pending |
-| F-01 إنشاء صندوق DRAFT | Pending |
-| F-02 تعديل مع version | Pending |
-| F-03 تفعيل بشروط الأمين والحساب | Pending |
-| F-04 تعليق SUSPENDED | Pending |
-| F-05 إعادة تفعيل من التعليق | Pending |
-| F-06 إلغاء CANCELLED وتحرير حساب | Pending |
-| F-07 إغلاق نهائي CLOSED وتحرير حساب | Pending |
-| F-08 أنواع الصناديق الخمسة | Pending |
-| F-09 سقف PETTY إلزامي | Pending |
-| F-10 عرض رصيد دفتري للقراءة فقط | Pending |
-| F-11 منع تغيير account_id بعد التشغيل | Pending |
-| F-20 أمين أساسي واحد ساري | Pending |
-| F-21 دور SUPERVISOR | Pending |
-| F-22 تسليم عهدة وفق القواعد | Pending |
-| F-23 Audit تغيير الأمين | Pending |
-| F-30 فتح جلسة لـ ACTIVE فقط | Pending |
-| F-31 إلزام سنة/فترة/تاريخ | Pending |
-| F-32 صحة السنة ACTIVE والفترة OPEN | Pending |
-| F-33 جلسة حية واحدة لكل صندوق | Pending |
-| F-34 لقطة رصيد عند الفتح | Pending |
-| F-35 Submit جرد إغلاق → CLOSING | Pending |
-| F-36 رفض الجرد يعيد حالة الجلسة | Pending |
-| F-37 إغلاق يحفظ اللقطات | Pending |
-| F-38 إعادة فتح بسبب + REOPENED | Pending |
-| F-39 منع جلسة جديدة وجلسة سابقة حية | Pending |
-| F-40 جرد CLOSING و SURPRISE | Pending |
-| F-41 تعديل مسودة فقط | Pending |
-| F-42 تجميد book_balance عند Submit | Pending |
-| F-43 فئات عملة وبنود ≥ 0 | Pending |
-| F-44 اعتماد فرق صفر | Pending |
-| F-45 مسودة قيد عند فرق ≠ 0 | Pending |
-| F-46 source_type=CASH_COUNT_VARIANCE | Pending |
-| F-47 اتجاه قيد الفروقات حسب السياسة | Pending |
-| F-48 Idempotency لقيد التسوية | Pending |
-| F-49 رفض التسوية بلا حسابات فروقات | Pending |
-| F-50 جرد مفاجئ لا يغلق الجلسة | Pending |
-| F-51 رفض إغلاق بعد نشاط دفتري لاحق | Pending |
-| F-52 تحذير رصيد دفتري سالب | Pending |
-| F-60 قائمة صناديق مع أرصدة | Pending |
-| F-61 عرض جلسة يومية | Pending |
-| F-62 تقرير فروقات الجرد | Pending |
-| F-63 ملخص أرصدة | Pending |
-| F-64 endpoint options | Pending |
-| F-65 توثيق عقد الحركات المستقبلية | Pending |
-| BR-01…BR-30 قواعد العمل الملزمة (دفعة تحقق) | Pending |
-| DB-01 جداول الصناديق/الأمناء/الجلسات/الجرد | Pending |
-| DB-02 فهارس وقيود التفرّد الجزئي | Pending |
-| DB-03 إعدادات فروقات الجرد | Pending |
-| DB-04 Migration جديدة دون تعديل قديم | Pending |
-| DB-05 لا current_balance كمصدر حقيقة | Pending |
-| API-01 مسارات CRUD والصناديق | Pending |
-| API-02 مسارات الجلسات | Pending |
-| API-03 مسارات الجرد والاعتماد | Pending |
-| API-04 تقارير و options | Pending |
-| API-05 رموز الأخطاء 400/401/404/409 | Pending |
-| UI-01 قائمة /accounts/cashbox | Pending |
-| UI-02 تفاصيل الصندوق | Pending |
-| UI-03 شاشة الجلسة والجرد | Pending |
-| UI-04 شاشة التقارير | Pending |
-| UI-05 RTL وهوية الحسابات | Pending |
-| UI-06 لا ترحيل محاسبي من الواجهة | Pending |
-| UI-07 treasury غير مُستخدم كصناديق | Pending |
-| S-01 حماية JWT | Pending |
-| S-02 requireAccountsAccess | Pending |
-| S-05 Audit للتغييرات الجوهرية | Pending |
-| S-06 تعارض version → 409 | Pending |
-| S-07 قفل معاملة للعمليات الحرجة | Pending |
-| S-08 منع حذف صندوق له تاريخ | Pending |
-| P-01…P-05 قبول الأداء ضمن العتبات | Pending |
-| TC-01…TC-10 اختبارات وظيفية أساسية | Pending |
-| TC-20…TC-35 اختبارات الرفض والتعارض | Pending |
-| TC-40…TC-42 عدم انحدار المرحلة 2 | Pending |
-| TC-50…TC-54 قبول الدفعات 3.A–3.E | Pending |
-| EC-01…EC-15 معالجة الحالات الحدية الملزمة | Pending |
-| DEL-01 تسليم الملفات/الجداول/الواجهات المتوقعة | Pending |
-| DEL-02 تحديث الوثيقة المعمارية عند الخروج | Pending |
-| EXIT-01 Exit Criteria E-01…E-09 متحققة | Pending |
+| SCOPE-01 نطاق المرحلة 3 مُنفَّذ دون توسع خارجي | Deferred |
+| DOD-01 Definition of Done الكلي متحقق | Deferred |
+| F-01 إنشاء صندوق DRAFT | Passed |
+| F-02 تعديل مع version | Passed |
+| F-03 تفعيل بشروط الأمين والحساب | Passed |
+| F-04 تعليق SUSPENDED | Deferred |
+| F-05 إعادة تفعيل من التعليق | Deferred |
+| F-06 إلغاء CANCELLED وتحرير حساب | Not Applicable |
+| F-07 إغلاق نهائي CLOSED وتحرير حساب | Deferred |
+| F-08 أنواع الصناديق (MAIN/PETTY/FEES/TEMPORARY) | Passed |
+| F-09 سقف PETTY إلزامي | Passed |
+| F-10 عرض رصيد دفتري للقراءة فقط | Passed |
+| F-11 منع تغيير account_id بعد التشغيل | Passed |
+| F-20 أمين أساسي واحد ساري | Passed |
+| F-21 دور SUPERVISOR | Passed |
+| F-22 تسليم عهدة وفق القواعد | Deferred |
+| F-23 Audit تغيير الأمين | Passed |
+| F-30 فتح جلسة لـ ACTIVE فقط | Deferred |
+| F-31 إلزام سنة/فترة/تاريخ | Deferred |
+| F-32 صحة السنة ACTIVE والفترة OPEN | Deferred |
+| F-33 جلسة حية واحدة لكل صندوق | Deferred |
+| F-34 لقطة رصيد عند الفتح | Deferred |
+| F-35 Submit جرد إغلاق → CLOSING | Deferred |
+| F-36 رفض الجرد يعيد حالة الجلسة | Deferred |
+| F-37 إغلاق يحفظ اللقطات | Deferred |
+| F-38 إعادة فتح بسبب + REOPENED | Deferred |
+| F-39 منع جلسة جديدة وجلسة سابقة حية | Deferred |
+| F-40 جرد CLOSING و SURPRISE | Deferred |
+| F-41 تعديل مسودة فقط | Deferred |
+| F-42 تجميد book_balance عند Submit | Deferred |
+| F-43 فئات عملة وبنود ≥ 0 | Deferred |
+| F-44 اعتماد فرق صفر | Deferred |
+| F-45 مسودة قيد عند فرق ≠ 0 | Deferred |
+| F-46 source_type=CASH_COUNT_VARIANCE | Deferred |
+| F-47 اتجاه قيد الفروقات حسب السياسة | Deferred |
+| F-48 Idempotency لقيد التسوية | Deferred |
+| F-49 رفض التسوية بلا حسابات فروقات | Deferred |
+| F-50 جرد مفاجئ لا يغلق الجلسة | Deferred |
+| F-51 رفض إغلاق بعد نشاط دفتري لاحق | Deferred |
+| F-52 تحذير رصيد دفتري سالب | Deferred |
+| F-60 قائمة صناديق مع أرصدة | Passed |
+| F-61 عرض جلسة يومية | Deferred |
+| F-62 تقرير فروقات الجرد | Deferred |
+| F-63 ملخص أرصدة | Passed |
+| F-64 endpoint options | Passed |
+| F-65 توثيق عقد الحركات المستقبلية | Deferred |
+| BR-01…BR-30 قواعد العمل الملزمة (دفعة تحقق) | Passed |
+| DB-01 جداول الصناديق/الأمناء/الجلسات/الجرد | Passed |
+| DB-02 فهارس وقيود التفرّد الجزئي | Passed |
+| DB-03 إعدادات فروقات الجرد | Passed |
+| DB-04 Migration جديدة دون تعديل قديم | Passed |
+| DB-05 لا current_balance كمصدر حقيقة | Passed |
+| API-01 مسارات CRUD والصناديق | Passed |
+| API-02 مسارات الجلسات | Deferred |
+| API-03 مسارات الجرد والاعتماد | Deferred |
+| API-04 تقارير و options | Passed |
+| API-05 رموز الأخطاء 400/401/404/409 | Passed |
+| UI-01 قائمة /accounts/cashbox | Passed |
+| UI-02 تفاصيل الصندوق | Passed |
+| UI-03 شاشة الجلسة والجرد | Deferred |
+| UI-04 شاشة التقارير | Deferred |
+| UI-05 RTL وهوية الحسابات | Passed |
+| UI-06 لا ترحيل محاسبي من الواجهة | Passed |
+| UI-07 treasury غير مُستخدم كصناديق | Passed |
+| S-01 حماية JWT | Passed |
+| S-02 requireAccountsAccess | Passed |
+| S-05 Audit للتغييرات الجوهرية | Passed |
+| S-06 تعارض version → 409 | Passed |
+| S-07 قفل معاملة للعمليات الحرجة | Passed |
+| S-08 منع حذف صندوق له تاريخ | Deferred |
+| P-01…P-05 قبول الأداء ضمن العتبات | Passed |
+| TC-01…TC-10 اختبارات وظيفية أساسية | Passed |
+| TC-20…TC-35 اختبارات الرفض والتعارض | Passed |
+| TC-40…TC-42 عدم انحدار المرحلة 2 | Passed |
+| TC-50 قبول الدفعة 3.A | Passed |
+| TC-51…TC-54 قبول الدفعات 3.B–3.E | Deferred |
+| EC-01…EC-15 معالجة الحالات الحدية الملزمة | Deferred |
+| DEL-01 تسليم الملفات/الجداول/الواجهات المتوقعة | Passed |
+| DEL-02 تحديث الوثيقة المعمارية عند الخروج | Deferred |
+| EXIT-01 Exit Criteria E-01…E-09 متحققة | Deferred |
 
 ---
 

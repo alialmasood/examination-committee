@@ -137,6 +137,18 @@ export function mapPgError(error: unknown): NextResponse {
     if (err.constraint?.includes('one_default')) {
       return jsonError('لا يمكن وجود أكثر من سنة مالية افتراضية واحدة', 409);
     }
+    if (err.constraint?.includes('uq_cash_boxes_code') || err.constraint?.includes('cash_boxes_code')) {
+      return jsonError('رمز الصندوق مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_cash_boxes_account_live')) {
+      return jsonError('الحساب مرتبط بصندوق حي آخر', 409);
+    }
+    if (err.constraint?.includes('uq_cash_box_one_primary_active')) {
+      return jsonError('يوجد أمين أساسي ساري لهذا الصندوق مسبقاً', 409);
+    }
+    if (err.constraint?.includes('system_settings')) {
+      return jsonError('مفتاح الإعداد مستخدم مسبقاً', 409);
+    }
     return jsonError('تعارض في البيانات: القيمة مكررة', 409);
   }
 

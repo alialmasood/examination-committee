@@ -53,7 +53,12 @@ export type DocumentSequence = {
   start_date?: string;
 };
 
-export type SettingsTab = 'years' | 'periods' | 'costCenters' | 'sequences';
+export type SettingsTab =
+  | 'years'
+  | 'periods'
+  | 'costCenters'
+  | 'sequences'
+  | 'cashboxes';
 
 export async function accountsFetch<T = unknown>(
   url: string,

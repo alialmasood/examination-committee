@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import CashBoxesSettingsPanel from './components/CashBoxesSettingsPanel';
 import CostCentersPanel from './components/CostCentersPanel';
 import DocumentSequencesPanel from './components/DocumentSequencesPanel';
 import FiscalPeriodsPanel from './components/FiscalPeriodsPanel';
@@ -12,6 +13,7 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'periods', label: 'الفترات المحاسبية' },
   { id: 'costCenters', label: 'مراكز الكلفة' },
   { id: 'sequences', label: 'تسلسل المستندات' },
+  { id: 'cashboxes', label: 'إعدادات الصناديق' },
 ];
 
 export default function AccountsSettingsPage() {
@@ -22,7 +24,7 @@ export default function AccountsSettingsPage() {
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h1 className="text-xl font-semibold text-gray-900 mb-1">إعدادات نظام الحسابات</h1>
         <p className="text-gray-600 mb-6 text-sm">
-          إدارة السنوات المالية والفترات ومراكز الكلفة وترقيم المستندات
+          إدارة السنوات المالية والفترات ومراكز الكلفة وترقيم المستندات وإعدادات الصناديق
         </p>
 
         <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-3 mb-6">
@@ -46,6 +48,7 @@ export default function AccountsSettingsPage() {
         {tab === 'periods' && <FiscalPeriodsPanel />}
         {tab === 'costCenters' && <CostCentersPanel />}
         {tab === 'sequences' && <DocumentSequencesPanel />}
+        {tab === 'cashboxes' && <CashBoxesSettingsPanel />}
       </div>
     </div>
   );
