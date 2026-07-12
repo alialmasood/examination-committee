@@ -24,8 +24,15 @@ import {
   postCashVoucher,
 } from '../lib/accounts/cash-vouchers';
 import {
+  createCashTransfer,
+  dispatchCashTransfer,
+  receiveCashTransfer,
+} from '../lib/accounts/cash-transfers';
+import {
   getCashVarianceSettings,
   setCashVarianceSettings,
+  getCashInTransitAccountId,
+  setCashInTransitAccount,
 } from '../lib/accounts/cash-settings';
 import { createDefaultSequencesForYear, pgDateOnly } from '../lib/accounts/document-sequences';
 import {
@@ -49,12 +56,17 @@ const DEMO = {
   lossAccount: 'DEMO-LOSS',
   contraAccount: 'DEMO-CONTRA',
   cashBox: 'DEMO-CB-MAIN',
+  cashBoxDest: 'DEMO-CB-DEST',
+  citAccount: 'DEMO-CIT',
   sessionZeroNotes: 'DEMO-SESSION-ZERO',
   sessionGainNotes: 'DEMO-SESSION-GAIN',
   sessionOpenNotes: 'DEMO-SESSION-OPEN',
   voucherReceiptNotes: 'DEMO-VOUCHER-RECEIPT',
   voucherPaymentNotes: 'DEMO-VOUCHER-PAYMENT',
   voucherDraftNotes: 'DEMO-VOUCHER-DRAFT',
+  transferReceivedNotes: 'DEMO-TRANSFER-RECEIVED',
+  transferDispatchedNotes: 'DEMO-TRANSFER-DISPATCHED',
+  transferDraftNotes: 'DEMO-TRANSFER-DRAFT',
 } as const;
 
 async function ensureAccount(params: {
@@ -660,11 +672,214 @@ async function main() {
     }
   }
 
+  // ——— 3.E: صندوق مستلم + CIT + تحويلات DEMO ———
+  {
+    const citAcc = await ensureAccount({
+      code: DEMO.citAccount,
+      nameAr: 'نقد بالطريق DEMO',
+      typeCode: 'ASSET',
+      userId,
+    });
+    const destCashAcc = await ensureAccount({
+      code: 'DEMO-CASH-2',
+      nameAr: 'صندوق نقدي فرعي DEMO',
+      typeCode: 'ASSET',
+      userId,
+    });
+
+    const citCurrent = await getCashInTransitAccountId();
+    if (!citCurrent) {
+      await withTransaction(async (client) => {
+        await setCashInTransitAccount(client, {
+          cash_in_transit_account_id: citAcc.id,
+          userId,
+        });
+      });
+      console.log(`✓ حساب CIT: ${DEMO.citAccount}`);
+    } else {
+      console.log('✓ حساب CIT مهيأ مسبقاً');
+    }
+
+    let destBoxId: string | null = null;
+    const destExists = await query(
+      `SELECT id, status FROM accounts.cash_boxes WHERE LOWER(code) = LOWER($1)`,
+      [DEMO.cashBoxDest]
+    );
+    if (destExists.rows[0]) {
+      destBoxId = destExists.rows[0].id as string;
+      console.log(`✓ صندوق مستلم DEMO موجود: ${DEMO.cashBoxDest}`);
+    } else {
+      const created = await withTransaction(async (client) => {
+        await acquireCashBoxesLock(client);
+        const box = await createCashBox(client, {
+          code: DEMO.cashBoxDest,
+          name_ar: 'صندوق فرعي DEMO',
+          box_type_code: 'MAIN',
+          account_id: destCashAcc.id,
+          created_by: userId,
+        });
+        await assignPrimaryCustodian(client, {
+          cashBoxId: box.id,
+          userId,
+          createdBy: userId,
+        });
+        return activateCashBox(client, box.id, {
+          version: box.version,
+          updated_at: box.updated_at,
+          activated_by: userId,
+        });
+      });
+      destBoxId = created.id;
+      console.log(`✓ صندوق مستلم DEMO: ${DEMO.cashBoxDest}`);
+    }
+
+    // جلسات مفتوحة للمرسل والمستلم
+    let srcOpenId: string | null = null;
+    const srcLive = await query(
+      `SELECT id FROM accounts.cash_box_sessions
+       WHERE cash_box_id = $1 AND status = 'OPEN' LIMIT 1`,
+      [boxId]
+    );
+    if (srcLive.rows[0]) srcOpenId = srcLive.rows[0].id as string;
+
+    let dstOpenId: string | null = null;
+    if (destBoxId) {
+      const dstLive = await query(
+        `SELECT id FROM accounts.cash_box_sessions
+         WHERE cash_box_id = $1 AND status = 'OPEN' LIMIT 1`,
+        [destBoxId]
+      );
+      if (dstLive.rows[0]) {
+        dstOpenId = dstLive.rows[0].id as string;
+      } else {
+        const d = new Date(`${entryDate}T12:00:00.000Z`);
+        d.setUTCDate(d.getUTCDate() + 5);
+        let destDate = d.toISOString().slice(0, 10);
+        const end = pgDateOnly(period.rows[0].end_date as string);
+        if (destDate > end) destDate = end;
+        try {
+          const s = await withTransaction(async (client) => {
+            await acquireCashBoxesLock(client);
+            return openCashSession(client, {
+              cash_box_id: destBoxId!,
+              fiscal_year_id: yearId,
+              fiscal_period_id: periodId,
+              session_date: destDate,
+              opened_by: userId,
+              notes: 'DEMO-SESSION-DEST-OPEN',
+            });
+          });
+          dstOpenId = s.id;
+          console.log(`✓ جلسة مستلم مفتوحة: /accounts/cashbox/sessions/${s.id}`);
+        } catch (e) {
+          console.log('⚠ جلسة المستلم:', e instanceof Error ? e.message : e);
+        }
+      }
+    }
+
+    if (srcOpenId && destBoxId && dstOpenId) {
+      const hasReceived = await query(
+        `SELECT id FROM accounts.cash_transfers WHERE description = $1 LIMIT 1`,
+        [DEMO.transferReceivedNotes]
+      );
+      if (!hasReceived.rows[0]) {
+        try {
+          const t = await withTransaction(async (client) => {
+            await acquireCashBoxesLock(client);
+            const created = await createCashTransfer(client, {
+              source_cash_box_id: boxId,
+              source_session_id: srcOpenId!,
+              destination_cash_box_id: destBoxId!,
+              transfer_date: entryDate,
+              amount: '30',
+              description: DEMO.transferReceivedNotes,
+              created_by: userId,
+            });
+            await acquireJournalEntriesLock(client);
+            const d = await dispatchCashTransfer(client, {
+              id: created.id,
+              userId,
+              version: created.version,
+              updated_at: created.updated_at,
+            });
+            return receiveCashTransfer(client, {
+              id: d.transfer.id,
+              userId,
+              version: d.transfer.version,
+              updated_at: d.transfer.updated_at,
+              destination_session_id: dstOpenId!,
+            });
+          });
+          console.log(`✓ تحويل RECEIVED: ${t.transfer.transfer_number}`);
+        } catch (e) {
+          console.log('⚠ تحويل RECEIVED:', e instanceof Error ? e.message : e);
+        }
+      } else console.log('✓ تحويل RECEIVED DEMO موجود');
+
+      const hasDisp = await query(
+        `SELECT id FROM accounts.cash_transfers WHERE description = $1 LIMIT 1`,
+        [DEMO.transferDispatchedNotes]
+      );
+      if (!hasDisp.rows[0]) {
+        try {
+          const t = await withTransaction(async (client) => {
+            await acquireCashBoxesLock(client);
+            const created = await createCashTransfer(client, {
+              source_cash_box_id: boxId,
+              source_session_id: srcOpenId!,
+              destination_cash_box_id: destBoxId!,
+              transfer_date: entryDate,
+              amount: '20',
+              description: DEMO.transferDispatchedNotes,
+              created_by: userId,
+            });
+            await acquireJournalEntriesLock(client);
+            return dispatchCashTransfer(client, {
+              id: created.id,
+              userId,
+              version: created.version,
+              updated_at: created.updated_at,
+            });
+          });
+          console.log(`✓ تحويل DISPATCHED: ${t.transfer.transfer_number}`);
+        } catch (e) {
+          console.log('⚠ تحويل DISPATCHED:', e instanceof Error ? e.message : e);
+        }
+      } else console.log('✓ تحويل DISPATCHED DEMO موجود');
+
+      const hasDraftT = await query(
+        `SELECT id FROM accounts.cash_transfers WHERE description = $1 LIMIT 1`,
+        [DEMO.transferDraftNotes]
+      );
+      if (!hasDraftT.rows[0]) {
+        try {
+          const t = await withTransaction(async (client) => {
+            await acquireCashBoxesLock(client);
+            return createCashTransfer(client, {
+              source_cash_box_id: boxId,
+              source_session_id: srcOpenId!,
+              destination_cash_box_id: destBoxId!,
+              transfer_date: entryDate,
+              amount: '15',
+              description: DEMO.transferDraftNotes,
+              created_by: userId,
+            });
+          });
+          console.log(`✓ تحويل DRAFT: ${t.transfer_number}`);
+        } catch (e) {
+          console.log('⚠ تحويل DRAFT:', e instanceof Error ? e.message : e);
+        }
+      } else console.log('✓ تحويل DRAFT DEMO موجود');
+    } else {
+      console.log('⚠ تخطّي تحويلات DEMO (يلزم جلسات مفتوحة للمرسل والمستلم)');
+    }
+  }
+
   console.log('\n——— ملخص العرض ———');
-  console.log(`صندوق: ${DEMO.cashBox}`);
-  console.log(`حسابات: ${DEMO.cashAccount} / ${DEMO.gainAccount} / ${DEMO.lossAccount}`);
+  console.log(`صناديق: ${DEMO.cashBox} → ${DEMO.cashBoxDest}`);
+  console.log(`حسابات: ${DEMO.cashAccount} / ${DEMO.citAccount} / ${DEMO.gainAccount}`);
   console.log(
-    'صفحات: /accounts · /accounts/cashbox · /accounts/cashbox/sessions · /accounts/cashbox/vouchers'
+    'صفحات: /accounts/cashbox · /accounts/cashbox/sessions · /accounts/cashbox/vouchers · /accounts/cashbox/transfers'
   );
   console.log(
     yearCreated

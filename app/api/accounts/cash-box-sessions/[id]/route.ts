@@ -19,6 +19,10 @@ import {
   listVouchersForSession,
   serializeCashVoucher,
 } from '@/src/lib/accounts/cash-vouchers';
+import {
+  listTransfersForSession,
+  serializeCashTransfer,
+} from '@/src/lib/accounts/cash-transfers';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
 import { query } from '@/src/lib/db';
 
@@ -61,14 +65,28 @@ export async function GET(request: NextRequest, context: Ctx) {
       currentBookBalance = bal.balance;
     }
 
-    const { vouchers, expected } = await withTransaction(async (client) => {
+    const { vouchers, expected, transfers } = await withTransaction(async (client) => {
       const v = await listVouchersForSession(client, id);
       const exp = await calculateSessionExpectedBalance(client, {
         sessionId: id,
         accountId: accountId ?? null,
       });
-      return { vouchers: v, expected: exp };
+      const t = await listTransfersForSession(client, id);
+      return { vouchers: v, expected: exp, transfers: t };
     });
+
+    // تحويلات DISPATCHED واردة لهذا الصندوق (حتى قبل ربط الجلسة)
+    const pendingInbound = await query(
+      `SELECT t.*,
+              sb.code AS source_cash_box_code,
+              sb.name_ar AS source_cash_box_name_ar
+       FROM accounts.cash_transfers t
+       JOIN accounts.cash_boxes sb ON sb.id = t.source_cash_box_id
+       WHERE t.destination_cash_box_id = $1::uuid
+         AND t.status = 'DISPATCHED'
+       ORDER BY t.dispatched_at DESC NULLS LAST`,
+      [session.cash_box_id]
+    );
 
     return jsonSuccess({
       data: {
@@ -79,6 +97,15 @@ export async function GET(request: NextRequest, context: Ctx) {
         counts: counts.map(serializeCashCount),
         vouchers: vouchers.map(serializeCashVoucher),
         expected_balance: expected,
+        transfers: {
+          outbound: transfers.outbound.map(serializeCashTransfer),
+          inbound: transfers.inbound.map(serializeCashTransfer),
+          in_transit_inbound: pendingInbound.rows.map((row) => ({
+            ...serializeCashTransfer(row as never),
+            source_cash_box_code: row.source_cash_box_code,
+            source_cash_box_name_ar: row.source_cash_box_name_ar,
+          })),
+        },
       },
     });
   } catch (error) {

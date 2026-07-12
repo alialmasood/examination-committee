@@ -19,6 +19,20 @@ export type CashCountView = {
   notes: string | null;
 };
 
+export type SessionTransferItem = {
+  id: string;
+  transfer_number: string;
+  status: string;
+  amount: string;
+  transfer_date: string;
+  source_cash_box_id: string;
+  destination_cash_box_id: string;
+  source_cash_box_code?: string;
+  source_cash_box_name_ar?: string;
+  destination_cash_box_code?: string;
+  destination_cash_box_name_ar?: string;
+};
+
 export type CashSessionListItem = {
   id: string;
   cash_box_id: string;
@@ -69,9 +83,16 @@ export type CashSessionDetail = CashSessionListItem & {
     opening_book_balance: string;
     posted_receipts_total: string;
     posted_payments_total: string;
+    transfers_out_total?: string;
+    transfers_in_total?: string;
     expected_balance: string;
     current_book_balance: string;
   } | null;
+  transfers?: {
+    outbound: SessionTransferItem[];
+    inbound: SessionTransferItem[];
+    in_transit_inbound: SessionTransferItem[];
+  };
 };
 
 export type SessionOptions = {

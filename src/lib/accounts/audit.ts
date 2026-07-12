@@ -57,7 +57,12 @@ export type AuditAction =
   | 'cash_voucher.updated'
   | 'cash_voucher.posted'
   | 'cash_voucher.voided'
-  | 'cash_voucher.deleted';
+  | 'cash_voucher.deleted'
+  | 'cash_transfer.created'
+  | 'cash_transfer.updated'
+  | 'cash_transfer.dispatched'
+  | 'cash_transfer.received'
+  | 'cash_transfer.cancelled';
 
 export async function writeFinancialAudit(
   client: TxClient,

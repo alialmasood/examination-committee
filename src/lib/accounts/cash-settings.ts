@@ -5,10 +5,15 @@ import { query } from '@/src/lib/db';
 
 export const CASH_VARIANCE_GAIN_KEY = 'cash_variance_gain_account_id';
 export const CASH_VARIANCE_LOSS_KEY = 'cash_variance_loss_account_id';
+export const CASH_IN_TRANSIT_KEY = 'cash_in_transit_account_id';
 
 export type CashVarianceSettings = {
   cash_variance_gain_account_id: string | null;
   cash_variance_loss_account_id: string | null;
+};
+
+export type CashInTransitSettings = {
+  cash_in_transit_account_id: string | null;
 };
 
 async function readSetting(key: string): Promise<string | null> {
@@ -144,4 +149,62 @@ export async function setCashVarianceSettings(
     cash_variance_gain_account_id: gain,
     cash_variance_loss_account_id: loss,
   };
+}
+
+export async function getCashInTransitAccountId(): Promise<string | null> {
+  return readSetting(CASH_IN_TRANSIT_KEY);
+}
+
+export async function getCashInTransitSettings(): Promise<CashInTransitSettings> {
+  return {
+    cash_in_transit_account_id: await getCashInTransitAccountId(),
+  };
+}
+
+/**
+ * حفظ حساب النقد بالطريق. القيمة null تمسح المفتاح.
+ * يجب أن يكون حساباً ترحيلياً فعّالاً وغير مرتبط بصندوق حي.
+ */
+export async function setCashInTransitAccount(
+  client: TxClient,
+  params: {
+    cash_in_transit_account_id?: unknown;
+    userId: string;
+  }
+): Promise<CashInTransitSettings> {
+  let cit = await getCashInTransitAccountId();
+
+  if (params.cash_in_transit_account_id !== undefined) {
+    if (
+      params.cash_in_transit_account_id === null ||
+      params.cash_in_transit_account_id === ''
+    ) {
+      cit = null;
+    } else {
+      cit = String(params.cash_in_transit_account_id);
+      await assertPostingAccount(client, cit);
+      const liveBox = await txQuery(
+        client,
+        `SELECT code FROM accounts.cash_boxes
+         WHERE account_id = $1::uuid AND status IN ('ACTIVE', 'SUSPENDED')
+         LIMIT 1`,
+        [cit]
+      );
+      if (liveBox.rows[0]) {
+        throw new AccountsHttpError(
+          `حساب النقد بالطريق لا يجوز أن يكون حساب صندوق حي (${liveBox.rows[0].code})`,
+          400
+        );
+      }
+    }
+  }
+
+  await upsertSetting(client, {
+    key: CASH_IN_TRANSIT_KEY,
+    value: cit,
+    userId: params.userId,
+    description: 'حساب النقد بالطريق (Cash in Transit) لتحويلات الصناديق',
+  });
+
+  return { cash_in_transit_account_id: cit };
 }

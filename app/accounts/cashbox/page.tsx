@@ -140,6 +140,12 @@ export default function AccountsCashboxPage() {
             >
               سندات القبض والصرف
             </Link>
+            <Link
+              href="/accounts/cashbox/transfers"
+              className="px-4 py-2 rounded-md border border-red-900 text-red-900 text-sm hover:bg-red-50"
+            >
+              التحويلات بين الصناديق
+            </Link>
             <button
               type="button"
               className="px-4 py-2 rounded-md bg-red-900 text-white text-sm hover:bg-red-800"

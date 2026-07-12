@@ -31,6 +31,7 @@ import {
   moneyToMillisSigned,
   millisToMoney,
   normalizeMoneyInput,
+  normalizeSignedMoneyInput,
 } from './money';
 import type { TxClient } from './with-transaction';
 import { acquireCashBoxesLock, txQuery } from './with-transaction';
@@ -209,11 +210,16 @@ export type SessionExpectedBalance = {
   opening_book_balance: string;
   posted_receipts_total: string;
   posted_payments_total: string;
+  transfers_out_total: string;
+  transfers_in_total: string;
   expected_balance: string;
   current_book_balance: string;
 };
 
-/** الرصيد المتوقع للجلسة = افتتاحي + مقبوضات مرحّلة − مصروفات مرحّلة */
+/**
+ * الرصيد المتوقع =
+ * افتتاحي + مقبوضات − مصروفات − تحويلات صادرة (DISPATCHED|RECEIVED) + تحويلات واردة (RECEIVED)
+ */
 export async function calculateSessionExpectedBalance(
   client: TxClient,
   params: { sessionId: string; accountId?: string | null }
@@ -231,11 +237,32 @@ export async function calculateSessionExpectedBalance(
      WHERE cash_box_session_id = $1::uuid`,
     [params.sessionId]
   );
+  const transfers = await txQuery<{ out_amt: string; in_amt: string }>(
+    client,
+    `SELECT
+       COALESCE(SUM(amount) FILTER (
+         WHERE source_session_id = $1::uuid
+           AND status IN ('DISPATCHED', 'RECEIVED')
+       ), 0)::text AS out_amt,
+       COALESCE(SUM(amount) FILTER (
+         WHERE destination_session_id = $1::uuid
+           AND status = 'RECEIVED'
+       ), 0)::text AS in_amt
+     FROM accounts.cash_transfers
+     WHERE source_session_id = $1::uuid OR destination_session_id = $1::uuid`,
+    [params.sessionId]
+  );
   const receipts = normalizeMoneyInput(sums.rows[0]?.receipts ?? '0');
   const payments = normalizeMoneyInput(sums.rows[0]?.payments ?? '0');
-  const opening = normalizeMoneyInput(session.opening_book_balance);
+  const transfersOut = normalizeMoneyInput(transfers.rows[0]?.out_amt ?? '0');
+  const transfersIn = normalizeMoneyInput(transfers.rows[0]?.in_amt ?? '0');
+  const opening = normalizeSignedMoneyInput(session.opening_book_balance);
   const expected = millisToMoney(
-    moneyToMillisSigned(opening) + moneyToMillis(receipts) - moneyToMillis(payments)
+    moneyToMillisSigned(opening) +
+      moneyToMillis(receipts) -
+      moneyToMillis(payments) -
+      moneyToMillis(transfersOut) +
+      moneyToMillis(transfersIn)
   );
 
   let currentBook = expected;
@@ -250,6 +277,8 @@ export async function calculateSessionExpectedBalance(
     opening_book_balance: opening,
     posted_receipts_total: receipts,
     posted_payments_total: payments,
+    transfers_out_total: transfersOut,
+    transfers_in_total: transfersIn,
     expected_balance: expected,
     current_book_balance: currentBook,
   };

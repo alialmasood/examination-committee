@@ -22,6 +22,7 @@ import {
   isZeroMoney,
   mapAdjustVarianceError,
   moneyNum,
+  SessionTransferItem,
   shortId,
 } from '../components/session-types';
 
@@ -419,6 +420,18 @@ export default function CashSessionDetailPage() {
                 label="مصروفات مرحّلة"
                 value={formatIqd(session.expected_balance.posted_payments_total)}
               />
+              {session.expected_balance.transfers_out_total != null && (
+                <Info
+                  label="تحويلات صادرة"
+                  value={formatIqd(session.expected_balance.transfers_out_total)}
+                />
+              )}
+              {session.expected_balance.transfers_in_total != null && (
+                <Info
+                  label="تحويلات واردة"
+                  value={formatIqd(session.expected_balance.transfers_in_total)}
+                />
+              )}
             </>
           )}
           {session.final_counted_amount != null && (
@@ -636,7 +649,7 @@ export default function CashSessionDetailPage() {
               حركات القبض والصرف
             </h2>
             {session.status === 'OPEN' && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Link
                   href={`/accounts/cashbox/vouchers?cash_box_id=${session.cash_box_id}&session_id=${session.id}`}
                   className="px-3 py-1.5 rounded-md bg-green-800 text-white text-xs hover:bg-green-700"
@@ -649,11 +662,17 @@ export default function CashSessionDetailPage() {
                 >
                   سند صرف جديد
                 </Link>
+                <Link
+                  href={`/accounts/cashbox/transfers?cash_box_id=${session.cash_box_id}&session_id=${session.id}`}
+                  className="px-3 py-1.5 rounded-md border border-red-900 text-red-900 text-xs hover:bg-red-50"
+                >
+                  تحويل إلى صندوق آخر
+                </Link>
               </div>
             )}
           </div>
           {session.expected_balance && (
-            <div className="grid md:grid-cols-4 gap-2 text-sm">
+            <div className="grid md:grid-cols-3 lg:grid-cols-6 gap-2 text-sm">
               <Info
                 label="افتتاحي"
                 value={formatIqd(session.expected_balance.opening_book_balance)}
@@ -666,6 +685,18 @@ export default function CashSessionDetailPage() {
                 label="مصروفات"
                 value={formatIqd(session.expected_balance.posted_payments_total)}
               />
+              {session.expected_balance.transfers_out_total != null && (
+                <Info
+                  label="تحويلات صادرة"
+                  value={formatIqd(session.expected_balance.transfers_out_total)}
+                />
+              )}
+              {session.expected_balance.transfers_in_total != null && (
+                <Info
+                  label="تحويلات واردة"
+                  value={formatIqd(session.expected_balance.transfers_in_total)}
+                />
+              )}
               <Info
                 label="رصيد متوقع"
                 value={formatIqd(session.expected_balance.expected_balance)}
@@ -709,6 +740,66 @@ export default function CashSessionDetailPage() {
           ) : (
             <p className="text-sm text-gray-500">لا سندات لهذه الجلسة بعد.</p>
           )}
+        </section>
+
+        <section className="border border-gray-200 rounded-lg p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-gray-900">التحويلات النقدية</h2>
+            {session.status === 'OPEN' && (
+              <Link
+                href={`/accounts/cashbox/transfers?cash_box_id=${session.cash_box_id}&session_id=${session.id}`}
+                className="px-3 py-1.5 rounded-md border border-red-900 text-red-900 text-xs hover:bg-red-50"
+              >
+                تحويل إلى صندوق آخر
+              </Link>
+            )}
+          </div>
+
+          {(session.transfers?.in_transit_inbound?.length ?? 0) > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold text-orange-900">
+                وارد قيد النقل — بانتظار الاستلام
+              </h3>
+              <ul className="space-y-1 text-sm">
+                {session.transfers!.in_transit_inbound.map((t) => (
+                  <li
+                    key={t.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded border border-orange-100 bg-orange-50/50 px-2 py-1.5"
+                  >
+                    <span>
+                      <Link
+                        href={`/accounts/cashbox/transfers/${t.id}`}
+                        className="text-red-900 underline font-mono text-xs"
+                      >
+                        {t.transfer_number}
+                      </Link>
+                      {' · '}
+                      {t.source_cash_box_code || 'مرسل'} · {formatIqd(t.amount)}
+                    </span>
+                    {session.status === 'OPEN' && (
+                      <Link
+                        href={`/accounts/cashbox/transfers/${t.id}`}
+                        className="px-2 py-1 rounded bg-green-800 text-white text-xs hover:bg-green-700"
+                      >
+                        استلام
+                      </Link>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <TransferList
+            title="صادرة من هذه الجلسة"
+            items={session.transfers?.outbound}
+            empty="لا تحويلات صادرة."
+          />
+          <TransferList
+            title="واردة مستلمة"
+            items={session.transfers?.inbound}
+            empty="لا تحويلات واردة مستلمة."
+          />
         </section>
 
         {session.status === 'OPEN' && (
@@ -1059,6 +1150,40 @@ function Info({
       <div className={`mt-0.5 text-gray-900 ${mono ? 'font-mono text-xs' : ''}`}>
         {value}
       </div>
+    </div>
+  );
+}
+
+function TransferList({
+  title,
+  items,
+  empty,
+}: {
+  title: string;
+  items: SessionTransferItem[] | undefined;
+  empty: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <h3 className="text-xs font-semibold text-gray-700">{title}</h3>
+      {(items?.length ?? 0) === 0 ? (
+        <p className="text-sm text-gray-500">{empty}</p>
+      ) : (
+        <ul className="text-sm space-y-1">
+          {items!.map((t) => (
+            <li key={t.id} className="flex flex-wrap gap-2 border-t pt-1">
+              <Link
+                href={`/accounts/cashbox/transfers/${t.id}`}
+                className="text-red-900 underline font-mono text-xs"
+              >
+                {t.transfer_number}
+              </Link>
+              <span>{formatIqd(t.amount)}</span>
+              <span className="text-gray-500 text-xs">{t.status}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
