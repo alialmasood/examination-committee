@@ -55,6 +55,23 @@ export type CashSessionDetail = CashSessionListItem & {
   current_book_balance?: string | null;
   current_count?: CashCountView | null;
   counts?: CashCountView[];
+  vouchers?: Array<{
+    id: string;
+    voucher_number: string;
+    voucher_type: 'CASH_RECEIPT' | 'CASH_PAYMENT';
+    status: string;
+    amount: string;
+    party_name: string | null;
+    description: string;
+    journal_entry_id: string | null;
+  }>;
+  expected_balance?: {
+    opening_book_balance: string;
+    posted_receipts_total: string;
+    posted_payments_total: string;
+    expected_balance: string;
+    current_book_balance: string;
+  } | null;
 };
 
 export type SessionOptions = {

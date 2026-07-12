@@ -20,6 +20,10 @@ import {
   startClosingCashSession,
 } from '../lib/accounts/cash-box-sessions';
 import {
+  createCashVoucher,
+  postCashVoucher,
+} from '../lib/accounts/cash-vouchers';
+import {
   getCashVarianceSettings,
   setCashVarianceSettings,
 } from '../lib/accounts/cash-settings';
@@ -47,6 +51,10 @@ const DEMO = {
   cashBox: 'DEMO-CB-MAIN',
   sessionZeroNotes: 'DEMO-SESSION-ZERO',
   sessionGainNotes: 'DEMO-SESSION-GAIN',
+  sessionOpenNotes: 'DEMO-SESSION-OPEN',
+  voucherReceiptNotes: 'DEMO-VOUCHER-RECEIPT',
+  voucherPaymentNotes: 'DEMO-VOUCHER-PAYMENT',
+  voucherDraftNotes: 'DEMO-VOUCHER-DRAFT',
 } as const;
 
 async function ensureAccount(params: {
@@ -493,10 +501,171 @@ async function main() {
     }
   }
 
+  // ——— 3.D: جلسة مفتوحة + سندات DEMO ———
+  {
+    let openSessionId: string | null = null;
+    const liveAgain = await query(
+      `SELECT id, status, version, updated_at FROM accounts.cash_box_sessions
+       WHERE cash_box_id = $1 AND status = 'OPEN' LIMIT 1`,
+      [boxId]
+    );
+    if (liveAgain.rows[0]) {
+      openSessionId = liveAgain.rows[0].id as string;
+      console.log(`\n✓ جلسة مفتوحة موجودة للسندات: ${openSessionId}`);
+    } else {
+      const openExists = await query(
+        `SELECT id FROM accounts.cash_box_sessions
+         WHERE cash_box_id = $1 AND notes = $2 LIMIT 1`,
+        [boxId, DEMO.sessionOpenNotes]
+      );
+      if (openExists.rows[0]) {
+        // كانت موجودة ثم أُغلقت — افتح تاريخاً جديداً
+      }
+      const d = new Date(`${entryDate}T12:00:00.000Z`);
+      d.setUTCDate(d.getUTCDate() + 3);
+      let openDate = d.toISOString().slice(0, 10);
+      const end = pgDateOnly(period.rows[0].end_date as string);
+      if (openDate > end) openDate = end;
+      // تجنّب تعارض تاريخ موجود
+      const clash = await query(
+        `SELECT 1 FROM accounts.cash_box_sessions
+         WHERE cash_box_id = $1 AND session_date = $2::date LIMIT 1`,
+        [boxId, openDate]
+      );
+      if (clash.rows[0]) {
+        const d2 = new Date(`${openDate}T12:00:00.000Z`);
+        d2.setUTCDate(d2.getUTCDate() + 1);
+        openDate = d2.toISOString().slice(0, 10);
+        if (openDate > end) openDate = end;
+      }
+      try {
+        const s = await withTransaction(async (client) => {
+          await acquireCashBoxesLock(client);
+          return openCashSession(client, {
+            cash_box_id: boxId,
+            fiscal_year_id: yearId,
+            fiscal_period_id: periodId,
+            session_date: openDate,
+            opened_by: userId,
+            notes: DEMO.sessionOpenNotes,
+          });
+        });
+        openSessionId = s.id;
+        console.log(`\n✓ جلسة مفتوحة للسندات: /accounts/cashbox/sessions/${s.id}`);
+      } catch (e) {
+        console.log('\n⚠ تعذر فتح جلسة سندات DEMO:', e instanceof Error ? e.message : e);
+      }
+    }
+
+    if (openSessionId) {
+      const sessRow = await query(
+        `SELECT id, version, updated_at FROM accounts.cash_box_sessions WHERE id = $1`,
+        [openSessionId]
+      );
+      const hasReceipt = await query(
+        `SELECT id FROM accounts.cash_vouchers
+         WHERE cash_box_session_id = $1 AND description = $2 LIMIT 1`,
+        [openSessionId, DEMO.voucherReceiptNotes]
+      );
+      if (!hasReceipt.rows[0]) {
+        const created = await withTransaction(async (client) => {
+          await acquireCashBoxesLock(client);
+          return createCashVoucher(client, {
+            voucher_type: 'CASH_RECEIPT',
+            cash_box_id: boxId,
+            cash_box_session_id: openSessionId!,
+            counter_account_id: gainAcc.id,
+            voucher_date: entryDate,
+            amount: '150',
+            party_name: 'طالب عرض DEMO',
+            description: DEMO.voucherReceiptNotes,
+            created_by: userId,
+          });
+        });
+        await withTransaction(async (client) => {
+          await acquireCashBoxesLock(client);
+          await acquireJournalEntriesLock(client);
+          return postCashVoucher(client, {
+            id: created.id,
+            userId,
+            version: created.version,
+            updated_at: created.updated_at,
+          });
+        });
+        console.log(`✓ سند قبض POSTED: ${created.voucher_number}`);
+      } else {
+        console.log('✓ سند قبض DEMO موجود');
+      }
+
+      const hasPayment = await query(
+        `SELECT id FROM accounts.cash_vouchers
+         WHERE cash_box_session_id = $1 AND description = $2 LIMIT 1`,
+        [openSessionId, DEMO.voucherPaymentNotes]
+      );
+      if (!hasPayment.rows[0]) {
+        const created = await withTransaction(async (client) => {
+          await acquireCashBoxesLock(client);
+          return createCashVoucher(client, {
+            voucher_type: 'CASH_PAYMENT',
+            cash_box_id: boxId,
+            cash_box_session_id: openSessionId!,
+            counter_account_id: lossAcc.id,
+            voucher_date: entryDate,
+            amount: '40',
+            party_name: 'مورد عرض DEMO',
+            description: DEMO.voucherPaymentNotes,
+            created_by: userId,
+          });
+        });
+        await withTransaction(async (client) => {
+          await acquireCashBoxesLock(client);
+          await acquireJournalEntriesLock(client);
+          return postCashVoucher(client, {
+            id: created.id,
+            userId,
+            version: created.version,
+            updated_at: created.updated_at,
+          });
+        });
+        console.log(`✓ سند صرف POSTED: ${created.voucher_number}`);
+      } else {
+        console.log('✓ سند صرف DEMO موجود');
+      }
+
+      const hasDraft = await query(
+        `SELECT id FROM accounts.cash_vouchers
+         WHERE cash_box_session_id = $1 AND description = $2 LIMIT 1`,
+        [openSessionId, DEMO.voucherDraftNotes]
+      );
+      if (!hasDraft.rows[0]) {
+        const created = await withTransaction(async (client) => {
+          await acquireCashBoxesLock(client);
+          return createCashVoucher(client, {
+            voucher_type: 'CASH_RECEIPT',
+            cash_box_id: boxId,
+            cash_box_session_id: openSessionId!,
+            counter_account_id: gainAcc.id,
+            voucher_date: entryDate,
+            amount: '25',
+            party_name: 'مسودة DEMO',
+            description: DEMO.voucherDraftNotes,
+            created_by: userId,
+          });
+        });
+        console.log(`✓ سند مسودة DRAFT: ${created.voucher_number}`);
+      } else {
+        console.log('✓ سند مسودة DEMO موجود');
+      }
+      void sessRow;
+    }
+  }
+
   console.log('\n——— ملخص العرض ———');
   console.log(`صندوق: ${DEMO.cashBox}`);
   console.log(`حسابات: ${DEMO.cashAccount} / ${DEMO.gainAccount} / ${DEMO.lossAccount}`);
-  console.log('صفحات: /accounts · /accounts/cashbox · /accounts/cashbox/sessions');
+  console.log(
+    'صفحات: /accounts · /accounts/cashbox · /accounts/cashbox/sessions · /accounts/cashbox/vouchers'
+  );
   console.log(
     yearCreated
       ? 'ملاحظة: أُنشئت سنة DEMO-FY لأنها لم تكن موجودة.'

@@ -405,6 +405,22 @@ export default function CashSessionDetailPage() {
             label="الرصيد الدفتري الحالي"
             value={formatIqd(session.current_book_balance)}
           />
+          {session.expected_balance && (
+            <>
+              <Info
+                label="الرصيد المتوقع للجلسة"
+                value={formatIqd(session.expected_balance.expected_balance)}
+              />
+              <Info
+                label="مقبوضات مرحّلة"
+                value={formatIqd(session.expected_balance.posted_receipts_total)}
+              />
+              <Info
+                label="مصروفات مرحّلة"
+                value={formatIqd(session.expected_balance.posted_payments_total)}
+              />
+            </>
+          )}
           {session.final_counted_amount != null && (
             <Info
               label="المبلغ المعدود النهائي"
@@ -613,6 +629,87 @@ export default function CashSessionDetailPage() {
             )}
           </section>
         )}
+
+        <section className="border border-gray-200 rounded-lg p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-gray-900">
+              حركات القبض والصرف
+            </h2>
+            {session.status === 'OPEN' && (
+              <div className="flex gap-2">
+                <Link
+                  href={`/accounts/cashbox/vouchers?cash_box_id=${session.cash_box_id}&session_id=${session.id}`}
+                  className="px-3 py-1.5 rounded-md bg-green-800 text-white text-xs hover:bg-green-700"
+                >
+                  سند قبض جديد
+                </Link>
+                <Link
+                  href={`/accounts/cashbox/vouchers?cash_box_id=${session.cash_box_id}&session_id=${session.id}`}
+                  className="px-3 py-1.5 rounded-md bg-red-900 text-white text-xs hover:bg-red-800"
+                >
+                  سند صرف جديد
+                </Link>
+              </div>
+            )}
+          </div>
+          {session.expected_balance && (
+            <div className="grid md:grid-cols-4 gap-2 text-sm">
+              <Info
+                label="افتتاحي"
+                value={formatIqd(session.expected_balance.opening_book_balance)}
+              />
+              <Info
+                label="مقبوضات"
+                value={formatIqd(session.expected_balance.posted_receipts_total)}
+              />
+              <Info
+                label="مصروفات"
+                value={formatIqd(session.expected_balance.posted_payments_total)}
+              />
+              <Info
+                label="رصيد متوقع"
+                value={formatIqd(session.expected_balance.expected_balance)}
+              />
+            </div>
+          )}
+          {(session.vouchers?.length ?? 0) > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-gray-600">
+                  <tr>
+                    <th className="text-right px-2 py-1">الرقم</th>
+                    <th className="text-right px-2 py-1">النوع</th>
+                    <th className="text-right px-2 py-1">الطرف</th>
+                    <th className="text-right px-2 py-1">المبلغ</th>
+                    <th className="text-right px-2 py-1">الحالة</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {session.vouchers!.map((v) => (
+                    <tr key={v.id} className="border-t">
+                      <td className="px-2 py-1">
+                        <Link
+                          href={`/accounts/cashbox/vouchers/${v.id}`}
+                          className="text-red-900 underline font-mono text-xs"
+                        >
+                          {v.voucher_number}
+                        </Link>
+                      </td>
+                      <td className="px-2 py-1">
+                        {v.voucher_type === 'CASH_RECEIPT' ? 'قبض' : 'صرف'}
+                      </td>
+                      <td className="px-2 py-1">{v.party_name || '—'}</td>
+                      <td className="px-2 py-1">{formatIqd(v.amount)}</td>
+                      <td className="px-2 py-1">{v.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">لا سندات لهذه الجلسة بعد.</p>
+          )}
+        </section>
 
         {session.status === 'OPEN' && (
           <section className="border border-red-100 bg-red-50/40 rounded-lg p-4 space-y-3">

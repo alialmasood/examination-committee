@@ -14,6 +14,11 @@ import {
   serializeCashSession,
   listCashCountsForSession,
 } from '@/src/lib/accounts/cash-box-sessions';
+import {
+  calculateSessionExpectedBalance,
+  listVouchersForSession,
+  serializeCashVoucher,
+} from '@/src/lib/accounts/cash-vouchers';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
 import { query } from '@/src/lib/db';
 
@@ -56,6 +61,15 @@ export async function GET(request: NextRequest, context: Ctx) {
       currentBookBalance = bal.balance;
     }
 
+    const { vouchers, expected } = await withTransaction(async (client) => {
+      const v = await listVouchersForSession(client, id);
+      const exp = await calculateSessionExpectedBalance(client, {
+        sessionId: id,
+        accountId: accountId ?? null,
+      });
+      return { vouchers: v, expected: exp };
+    });
+
     return jsonSuccess({
       data: {
         ...serializeCashSession(session),
@@ -63,6 +77,8 @@ export async function GET(request: NextRequest, context: Ctx) {
         current_book_balance: currentBookBalance,
         current_count: currentCount ? serializeCashCount(currentCount) : null,
         counts: counts.map(serializeCashCount),
+        vouchers: vouchers.map(serializeCashVoucher),
+        expected_balance: expected,
       },
     });
   } catch (error) {
