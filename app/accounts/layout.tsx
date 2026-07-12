@@ -341,6 +341,26 @@ export default function AccountsLayout({
               إدارة الصناديق
             </Link>
 
+            {/* Bank Accounts */}
+            <Link
+              href="/accounts/banks"
+              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+                pathname === '/accounts/banks' || pathname?.startsWith('/accounts/banks/')
+                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
+                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
+              }`}
+            >
+              <div className="flex items-center">
+                {(pathname === '/accounts/banks' || pathname?.startsWith('/accounts/banks/')) && (
+                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
+                )}
+                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              الحسابات المصرفية
+            </Link>
+
             {/* Treasury Account */}
             <Link
               href="/accounts/treasury"

@@ -50,6 +50,9 @@ export const ADVISORY_LOCK_JOURNAL_ENTRIES = 58001005;
 /** قفل عمليات الصناديق */
 export const ADVISORY_LOCK_CASH_BOXES = 58001006;
 
+/** قفل عمليات المصارف والحسابات البنكية */
+export const ADVISORY_LOCK_BANKS = 58001007;
+
 export async function acquireFiscalYearsLock(client: TxClient): Promise<void> {
   await txQuery(client, 'SELECT pg_advisory_xact_lock($1)', [ADVISORY_LOCK_FISCAL_YEARS]);
 }
@@ -78,4 +81,8 @@ export async function acquireJournalEntriesLock(client: TxClient): Promise<void>
 
 export async function acquireCashBoxesLock(client: TxClient): Promise<void> {
   await txQuery(client, 'SELECT pg_advisory_xact_lock($1)', [ADVISORY_LOCK_CASH_BOXES]);
+}
+
+export async function acquireBanksLock(client: TxClient): Promise<void> {
+  await txQuery(client, 'SELECT pg_advisory_xact_lock($1)', [ADVISORY_LOCK_BANKS]);
 }

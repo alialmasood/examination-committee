@@ -28,6 +28,7 @@
     "test:cash-count-adjustments": "tsx src/scripts/test-cash-count-adjustments.ts",
     "test:cash-vouchers": "tsx src/scripts/test-cash-vouchers.ts",
     "test:cash-transfers": "tsx src/scripts/test-cash-transfers.ts",
+    "test:bank-accounts": "tsx src/scripts/test-bank-accounts.ts",
     "seed:accounts-demo": "tsx src/scripts/seed-accounts-demo.ts",
     "seed:construction": "tsx src/scripts/add-construction-user.ts",
     "seed:oil": "tsx src/scripts/add-oil-user.ts",

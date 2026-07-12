@@ -146,6 +146,30 @@ export function mapPgError(error: unknown): NextResponse {
     if (err.constraint?.includes('uq_cash_box_one_primary_active')) {
       return jsonError('يوجد أمين أساسي ساري لهذا الصندوق مسبقاً', 409);
     }
+    if (err.constraint?.includes('uq_banks_code')) {
+      return jsonError('رمز المصرف مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_bank_branches_bank_code')) {
+      return jsonError('رمز الفرع مستخدم مسبقاً ضمن نفس المصرف', 409);
+    }
+    if (err.constraint?.includes('uq_bank_accounts_code')) {
+      return jsonError('الكود الداخلي للحساب المصرفي مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_bank_accounts_gl_account')) {
+      return jsonError('حساب GL مرتبط بحساب مصرفي آخر', 409);
+    }
+    if (err.constraint?.includes('uq_bank_accounts_bank_number')) {
+      return jsonError('رقم الحساب مستخدم مسبقاً ضمن نفس المصرف', 409);
+    }
+    if (err.constraint?.includes('uq_bank_accounts_iban')) {
+      return jsonError('رقم IBAN مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_bank_accounts_primary_per_currency')) {
+      return jsonError('يوجد حساب أساسي آخر لنفس العملة', 409);
+    }
+    if (err.constraint?.includes('uq_bank_account_users_pair')) {
+      return jsonError('المستخدم مرتبط بهذا الحساب مسبقاً', 409);
+    }
     if (err.constraint?.includes('system_settings')) {
       return jsonError('مفتاح الإعداد مستخدم مسبقاً', 409);
     }

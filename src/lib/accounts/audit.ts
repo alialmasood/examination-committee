@@ -62,7 +62,20 @@ export type AuditAction =
   | 'cash_transfer.updated'
   | 'cash_transfer.dispatched'
   | 'cash_transfer.received'
-  | 'cash_transfer.cancelled';
+  | 'cash_transfer.cancelled'
+  | 'bank.created'
+  | 'bank.updated'
+  | 'bank.deactivated'
+  | 'bank_branch.created'
+  | 'bank_branch.updated'
+  | 'bank_branch.deactivated'
+  | 'bank_account.created'
+  | 'bank_account.updated'
+  | 'bank_account.suspended'
+  | 'bank_account.activated'
+  | 'bank_account.closed'
+  | 'bank_account.user_assigned'
+  | 'bank_account.user_removed';
 
 export async function writeFinancialAudit(
   client: TxClient,

@@ -28,6 +28,9 @@ import {
   dispatchCashTransfer,
   receiveCashTransfer,
 } from '../lib/accounts/cash-transfers';
+import { createBank } from '../lib/accounts/banks';
+import { createBankBranch } from '../lib/accounts/bank-branches';
+import { createBankAccount } from '../lib/accounts/bank-accounts';
 import {
   getCashVarianceSettings,
   setCashVarianceSettings,
@@ -43,6 +46,7 @@ import {
 } from '../lib/accounts/journal-entries';
 import { normalizeMoneyInput } from '../lib/accounts/money';
 import {
+  acquireBanksLock,
   acquireCashBoxesLock,
   acquireJournalEntriesLock,
   txQuery,
@@ -58,6 +62,12 @@ const DEMO = {
   cashBox: 'DEMO-CB-MAIN',
   cashBoxDest: 'DEMO-CB-DEST',
   citAccount: 'DEMO-CIT',
+  bank: 'DEMO-BANK',
+  bankBranch: 'DEMO-BR-MAIN',
+  bankAccountIqd: 'DEMO-BA-IQD',
+  bankAccountUsd: 'DEMO-BA-USD',
+  bankGl: 'DEMO-BANK-GL',
+  bankGlUsd: 'DEMO-BANK-GL-USD',
   sessionZeroNotes: 'DEMO-SESSION-ZERO',
   sessionGainNotes: 'DEMO-SESSION-GAIN',
   sessionOpenNotes: 'DEMO-SESSION-OPEN',
@@ -875,11 +885,153 @@ async function main() {
     }
   }
 
+  // ——— 4.A: مصارف وحسابات DEMO ———
+  {
+    const bankGl = await ensureAccount({
+      code: DEMO.bankGl,
+      nameAr: 'حساب بنك تشغيلي DEMO',
+      typeCode: 'ASSET',
+      userId,
+    });
+    const bankGlUsd = await ensureAccount({
+      code: DEMO.bankGlUsd,
+      nameAr: 'حساب بنك دولار DEMO',
+      typeCode: 'ASSET',
+      userId,
+    });
+
+    let bankId: string | null = null;
+    const bankEx = await query(
+      `SELECT id FROM accounts.banks WHERE LOWER(code)=LOWER($1)`,
+      [DEMO.bank]
+    );
+    if (bankEx.rows[0]) {
+      bankId = bankEx.rows[0].id as string;
+      console.log(`✓ مصرف DEMO موجود: ${DEMO.bank}`);
+    } else {
+      const b = await withTransaction(async (client) => {
+        await acquireBanksLock(client);
+        return createBank(client, {
+          code: DEMO.bank,
+          name_ar: 'مصرف الشرق التجريبي',
+          name_en: 'Demo Orient Bank',
+          short_name: 'شرق DEMO',
+          swift_code: 'ORIEIQBA',
+          country_code: 'IQ',
+          created_by: userId,
+        });
+      });
+      bankId = b.id;
+      console.log(`✓ مصرف DEMO: ${DEMO.bank} → /accounts/banks`);
+    }
+
+    let branchId: string | null = null;
+    if (bankId) {
+      const brEx = await query(
+        `SELECT id FROM accounts.bank_branches WHERE bank_id=$1 AND LOWER(code)=LOWER($2)`,
+        [bankId, DEMO.bankBranch]
+      );
+      if (brEx.rows[0]) {
+        branchId = brEx.rows[0].id as string;
+        console.log(`✓ فرع DEMO موجود: ${DEMO.bankBranch}`);
+      } else {
+        const br = await withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          return createBankBranch(client, {
+            bank_id: bankId!,
+            code: DEMO.bankBranch,
+            name_ar: 'فرع البصرة الرئيسي',
+            city: 'البصرة',
+            created_by: userId,
+          });
+        });
+        branchId = br.id;
+        console.log(`✓ فرع DEMO: ${DEMO.bankBranch}`);
+      }
+    }
+
+    if (bankId && branchId) {
+      const baEx = await query(
+        `SELECT id FROM accounts.bank_accounts WHERE LOWER(code)=LOWER($1)`,
+        [DEMO.bankAccountIqd]
+      );
+      if (baEx.rows[0]) {
+        console.log(`✓ حساب بنكي IQD DEMO موجود: ${DEMO.bankAccountIqd}`);
+        console.log(`  الرابط: /accounts/banks/${baEx.rows[0].id}`);
+      } else {
+        try {
+          const ba = await withTransaction(async (client) => {
+            await acquireBanksLock(client);
+            return createBankAccount(client, {
+              code: DEMO.bankAccountIqd,
+              bank_id: bankId!,
+              bank_branch_id: branchId!,
+              account_name_ar: 'حساب كلية الشرق التشغيلي DEMO',
+              account_name_en: 'College Operating Account DEMO',
+              account_number: '001122334455',
+              iban: 'IQ20ORIE001122334455667',
+              currency_code: 'IQD',
+              gl_account_id: bankGl.id,
+              account_type: 'CURRENT',
+              is_primary: true,
+              allows_receipts: true,
+              allows_payments: true,
+              allows_transfers: true,
+              allows_cheques: true,
+              cheque_book_enabled: true,
+              opening_balance_reference: '0',
+              opening_balance_date: entryDate,
+              notes: 'حساب عرض DEMO — رصيد مرجعي وليس قيداً',
+              created_by: userId,
+            });
+          });
+          console.log(`✓ حساب بنكي IQD: ${ba.code} → /accounts/banks/${ba.id}`);
+        } catch (e) {
+          console.log('⚠ حساب IQD:', e instanceof Error ? e.message : e);
+        }
+      }
+
+      const baUsdEx = await query(
+        `SELECT id FROM accounts.bank_accounts WHERE LOWER(code)=LOWER($1)`,
+        [DEMO.bankAccountUsd]
+      );
+      if (baUsdEx.rows[0]) {
+        console.log(`✓ حساب بنكي USD DEMO موجود: ${DEMO.bankAccountUsd}`);
+      } else {
+        try {
+          const ba = await withTransaction(async (client) => {
+            await acquireBanksLock(client);
+            return createBankAccount(client, {
+              code: DEMO.bankAccountUsd,
+              bank_id: bankId!,
+              bank_branch_id: branchId!,
+              account_name_ar: 'حساب كلية الشرق دولار DEMO',
+              account_number: '009988776655',
+              currency_code: 'USD',
+              gl_account_id: bankGlUsd.id,
+              account_type: 'CURRENT',
+              is_primary: true,
+              allows_receipts: true,
+              allows_payments: true,
+              allows_transfers: true,
+              allows_cheques: false,
+              created_by: userId,
+            });
+          });
+          console.log(`✓ حساب بنكي USD: ${ba.code} → /accounts/banks/${ba.id}`);
+        } catch (e) {
+          console.log('⚠ حساب USD:', e instanceof Error ? e.message : e);
+        }
+      }
+    }
+  }
+
   console.log('\n——— ملخص العرض ———');
   console.log(`صناديق: ${DEMO.cashBox} → ${DEMO.cashBoxDest}`);
-  console.log(`حسابات: ${DEMO.cashAccount} / ${DEMO.citAccount} / ${DEMO.gainAccount}`);
+  console.log(`مصرف: ${DEMO.bank} / ${DEMO.bankBranch} / ${DEMO.bankAccountIqd}`);
+  console.log(`حسابات: ${DEMO.cashAccount} / ${DEMO.citAccount} / ${DEMO.bankGl}`);
   console.log(
-    'صفحات: /accounts/cashbox · /accounts/cashbox/sessions · /accounts/cashbox/vouchers · /accounts/cashbox/transfers'
+    'صفحات: /accounts/cashbox · /accounts/cashbox/transfers · /accounts/banks'
   );
   console.log(
     yearCreated
