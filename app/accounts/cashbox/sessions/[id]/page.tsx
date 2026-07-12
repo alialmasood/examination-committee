@@ -6,14 +6,22 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import ConfirmDialog from '../components/ConfirmDialog';
 import SessionStatusBadge from '../components/SessionStatusBadge';
 import {
+  AccountLabel,
+  ADJUSTMENT_DIRECTION_LABEL,
+  ADJUSTMENT_STATUS_LABEL,
+  accountLabel,
   cashApi,
+  CashCountAdjustmentView,
   CashSessionDetail,
+  CashVarianceSettingsView,
   closeChecklist,
   computeVariance,
   formatDateOnly,
   formatDateTime,
   formatIqd,
   isZeroMoney,
+  mapAdjustVarianceError,
+  moneyNum,
   shortId,
 } from '../components/session-types';
 
@@ -21,6 +29,10 @@ export default function CashSessionDetailPage() {
   const params = useParams();
   const id = String(params.id || '');
   const [session, setSession] = useState<CashSessionDetail | null>(null);
+  const [adjustments, setAdjustments] = useState<CashCountAdjustmentView[]>([]);
+  const [varianceSettings, setVarianceSettings] =
+    useState<CashVarianceSettingsView | null>(null);
+  const [accounts, setAccounts] = useState<AccountLabel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -28,12 +40,27 @@ export default function CashSessionDetailPage() {
 
   const [countedAmount, setCountedAmount] = useState('');
   const [countNotes, setCountNotes] = useState('');
+  const [adjustNotes, setAdjustNotes] = useState('');
   const [cancelReason, setCancelReason] = useState('');
+  const [lastPostedEntry, setLastPostedEntry] = useState<{
+    id: string;
+    number: string | null;
+  } | null>(null);
 
   const [confirmStart, setConfirmStart] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmAdjust, setConfirmAdjust] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const loadAdjustments = useCallback(async () => {
+    if (!id) return;
+    const res = await cashApi<CashCountAdjustmentView[]>(
+      `/api/accounts/cash-box-sessions/${id}/adjustments`
+    );
+    if (res.success && res.data) setAdjustments(res.data);
+    else setAdjustments([]);
+  }, [id]);
 
   const load = useCallback(
     async (showSpinner = false) => {
@@ -54,9 +81,10 @@ export default function CashSessionDetailPage() {
           setCountedAmount(res.data.current_book_balance);
         }
       }
+      await loadAdjustments();
       setLoading(false);
     },
-    [id]
+    [id, loadAdjustments]
   );
 
   useEffect(() => {
@@ -64,13 +92,74 @@ export default function CashSessionDetailPage() {
     void load(true);
   }, [load]);
 
+  useEffect(() => {
+    void (async () => {
+      const [vr, opt] = await Promise.all([
+        cashApi<CashVarianceSettingsView>(
+          '/api/accounts/cash-boxes/settings/variance-accounts'
+        ),
+        cashApi<{
+          posting_accounts?: AccountLabel[];
+          eligible_accounts?: AccountLabel[];
+        }>('/api/accounts/cash-boxes/options'),
+      ]);
+      if (vr.success && vr.data) setVarianceSettings(vr.data);
+      if (opt.success && opt.data) {
+        setAccounts(
+          opt.data.posting_accounts || opt.data.eligible_accounts || []
+        );
+      }
+    })();
+  }, []);
+
   const liveVariance = useMemo(() => {
     const book = session?.current_book_balance ?? '0';
     return computeVariance(countedAmount || '0', book);
   }, [countedAmount, session?.current_book_balance]);
 
-  const checklist = session ? closeChecklist(session) : { ok: false, items: [] };
+  const currentPostedAdj = useMemo(() => {
+    const countId = session?.current_count?.id;
+    if (!countId) return null;
+    return (
+      adjustments.find(
+        (a) => a.cash_count_id === countId && a.status === 'POSTED'
+      ) ?? null
+    );
+  }, [adjustments, session?.current_count?.id]);
+
+  const checklist = session
+    ? closeChecklist(session, currentPostedAdj)
+    : { ok: false, items: [] };
   const readOnly = session?.status === 'CLOSED';
+
+  const count = session?.current_count ?? null;
+  const hasNonZeroVariance = Boolean(count && !isZeroMoney(count.variance_amount));
+  const countDirection = count
+    ? computeVariance(count.counted_amount, count.book_balance_at_count)
+    : null;
+  const varianceSettingsOk = Boolean(
+    varianceSettings?.cash_variance_gain_account_id &&
+      varianceSettings?.cash_variance_loss_account_id
+  );
+  const plannedVarianceAccountId =
+    countDirection?.isGain
+      ? varianceSettings?.cash_variance_gain_account_id
+      : countDirection?.isLoss
+        ? varianceSettings?.cash_variance_loss_account_id
+        : null;
+
+  const canCreateAdjustment =
+    session?.status === 'CLOSING' &&
+    hasNonZeroVariance &&
+    !currentPostedAdj &&
+    varianceSettingsOk;
+
+  const cashAccountDisplay = currentPostedAdj
+    ? `${currentPostedAdj.cash_account_code || ''} — ${currentPostedAdj.cash_account_name_ar || ''}`.trim()
+    : accountLabel(accounts, session?.account_id);
+  const varianceAccountDisplay = currentPostedAdj
+    ? `${currentPostedAdj.variance_account_code || ''} — ${currentPostedAdj.variance_account_name_ar || ''}`.trim()
+    : accountLabel(accounts, plannedVarianceAccountId);
 
   const postAction = async (
     path: string,
@@ -128,18 +217,62 @@ export default function CashSessionDetailPage() {
     }
     setSuccess(
       liveVariance.isZero
-        ? 'تم حفظ الجرد بفرق صفر'
-        : 'تم حفظ الجرد مع فرق — لا يمكن الإغلاق النهائي حتى يصفر الفرق (3.C للتسوية)'
+        ? 'تم حفظ الجرد بفرق صفر — يمكن الإغلاق مباشرة'
+        : 'تم حفظ الجرد مع فرق — أنشئ قيد التسوية قبل الإغلاق النهائي'
     );
     setCountNotes('');
     await load(false);
+  };
+
+  const doAdjustVariance = async () => {
+    if (!session || busy) return;
+    setBusy(true);
+    setActionError(null);
+    const res = await cashApi<{
+      adjustment: CashCountAdjustmentView;
+      created: boolean;
+    }>(`/api/accounts/cash-box-sessions/${id}/adjust-variance`, {
+      method: 'POST',
+      body: JSON.stringify({
+        notes: adjustNotes || undefined,
+        version: session.version,
+        updated_at: session.updated_at,
+      }),
+    });
+    setBusy(false);
+    if (!res.success) {
+      setActionError(mapAdjustVarianceError(res.message));
+      return;
+    }
+    const adj = res.data?.adjustment;
+    setConfirmAdjust(false);
+    setAdjustNotes('');
+    await load(false);
+    // رقم القيد من قائمة التسويات بعد التحديث
+    const list = await cashApi<CashCountAdjustmentView[]>(
+      `/api/accounts/cash-box-sessions/${id}/adjustments`
+    );
+    const posted =
+      list.data?.find((a) => a.id === adj?.id) ||
+      list.data?.find((a) => a.cash_count_id === adj?.cash_count_id);
+    setLastPostedEntry({
+      id: posted?.journal_entry_id || adj?.journal_entry_id || '',
+      number: posted?.journal_entry_number || null,
+    });
+    setSuccess(
+      posted?.journal_entry_number
+        ? `تم إنشاء وترحيل قيد التسوية بنجاح — رقم القيد ${posted.journal_entry_number}`
+        : 'تم إنشاء وترحيل قيد التسوية بنجاح'
+    );
   };
 
   const doClose = async () => {
     const ok = await postAction(
       `/api/accounts/cash-box-sessions/${id}/close`,
       {},
-      'تم إغلاق الجلسة بنجاح'
+      currentPostedAdj
+        ? 'تم إغلاق الجلسة بعد تسوية فرق الجرد'
+        : 'تم إغلاق الجلسة بنجاح'
     );
     if (ok) setConfirmClose(false);
   };
@@ -183,6 +316,9 @@ export default function CashSessionDetailPage() {
     );
   }
 
+  const anyDialogOpen =
+    confirmStart || confirmClose || confirmCancel || confirmAdjust;
+
   return (
     <div className="p-4 md:p-6 space-y-4" dir="rtl">
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 md:p-6 space-y-4">
@@ -223,17 +359,29 @@ export default function CashSessionDetailPage() {
           </div>
         )}
         {success && (
-          <div className="text-sm text-green-800 bg-green-50 border border-green-200 rounded px-3 py-2">
-            {success}
+          <div className="text-sm text-green-800 bg-green-50 border border-green-200 rounded px-3 py-2 space-y-1">
+            <div>{success}</div>
+            {lastPostedEntry?.id && (
+              <div>
+                {lastPostedEntry.number && (
+                  <span className="font-mono ml-2">{lastPostedEntry.number}</span>
+                )}
+                <Link
+                  href={`/accounts/entries?q=${encodeURIComponent(lastPostedEntry.number || lastPostedEntry.id)}`}
+                  className="underline text-green-900"
+                >
+                  عرض القيد في دفتر القيود
+                </Link>
+              </div>
+            )}
           </div>
         )}
-        {actionError && !confirmStart && !confirmClose && !confirmCancel && (
+        {actionError && !anyDialogOpen && (
           <div className="text-sm text-red-800 bg-red-50 border border-red-200 rounded px-3 py-2">
             {actionError}
           </div>
         )}
 
-        {/* بيانات الجلسة */}
         <section className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
           <Info label="رقم الجلسة" value={shortId(session.id)} mono />
           <Info
@@ -271,7 +419,6 @@ export default function CashSessionDetailPage() {
           )}
         </section>
 
-        {/* Timeline مبسط */}
         <section className="border border-gray-200 rounded-lg p-4 space-y-2">
           <h2 className="text-sm font-semibold text-gray-900">مسار الجلسة</h2>
           <ol className="space-y-2 text-sm">
@@ -303,6 +450,17 @@ export default function CashSessionDetailPage() {
               }
             />
             <TimelineStep
+              done={Boolean(currentPostedAdj)}
+              title="تسوية فرق الجرد"
+              detail={
+                currentPostedAdj
+                  ? `${ADJUSTMENT_DIRECTION_LABEL[currentPostedAdj.direction]} · ${formatIqd(currentPostedAdj.variance_amount)}${currentPostedAdj.journal_entry_number ? ` · ${currentPostedAdj.journal_entry_number}` : ''}`
+                  : hasNonZeroVariance
+                    ? 'مطلوبة قبل الإغلاق'
+                    : 'غير مطلوبة (فرق صفر)'
+              }
+            />
+            <TimelineStep
               done={session.status === 'CLOSED'}
               title="الإغلاق النهائي"
               detail={
@@ -319,7 +477,6 @@ export default function CashSessionDetailPage() {
           </ol>
         </section>
 
-        {/* آخر جرد */}
         {session.current_count && (
           <section className="border border-gray-200 rounded-lg p-4 text-sm space-y-2">
             <h2 className="font-semibold text-gray-900">آخر جرد</h2>
@@ -345,15 +502,118 @@ export default function CashSessionDetailPage() {
                 value={`#${session.current_count.sequence_no}`}
               />
             </div>
-            {!isZeroMoney(session.current_count.variance_amount) && (
+            {hasNonZeroVariance && !currentPostedAdj && (
               <div className="text-amber-900 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                يوجد فرق جرد. لا يمكن الإغلاق النهائي في هذه المرحلة دون فرق صفر.
+                يوجد فرق جرد. أنشئ قيد التسوية من القسم أدناه قبل الإغلاق النهائي.
+              </div>
+            )}
+            {currentPostedAdj && (
+              <div className="text-green-900 bg-green-50 border border-green-200 rounded px-3 py-2">
+                تمت تسوية الفرق — يمكن الإغلاق إذا تطابق الرصيد الدفتري مع المعدود.
               </div>
             )}
           </section>
         )}
 
-        {/* 3) بدء الإغلاق */}
+        {/* تسوية فرق الجرد */}
+        {hasNonZeroVariance && (
+          <section className="border border-red-100 bg-red-50/30 rounded-lg p-4 space-y-3">
+            <h2 className="text-sm font-semibold text-gray-900">تسوية فرق الجرد</h2>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2 text-sm">
+              <Info
+                label="نوع الفرق"
+                value={
+                  countDirection?.isGain
+                    ? 'زيادة'
+                    : countDirection?.isLoss
+                      ? 'عجز'
+                      : '—'
+                }
+              />
+              <Info
+                label="المبلغ المعدود"
+                value={formatIqd(count!.counted_amount)}
+              />
+              <Info
+                label="الرصيد الدفتري وقت الجرد"
+                value={formatIqd(count!.book_balance_at_count)}
+              />
+              <Info
+                label="قيمة الفرق"
+                value={formatIqd(
+                  currentPostedAdj?.variance_amount ||
+                    Math.abs(moneyNum(count!.variance_amount)).toFixed(3)
+                )}
+              />
+              <Info label="حساب الصندوق" value={cashAccountDisplay || '—'} />
+              <Info
+                label="حساب فرق الجرد"
+                value={varianceAccountDisplay || '—'}
+              />
+              <Info
+                label="حالة التسوية"
+                value={
+                  currentPostedAdj
+                    ? ADJUSTMENT_STATUS_LABEL[currentPostedAdj.status]
+                    : 'لم تُنشأ'
+                }
+              />
+              {currentPostedAdj?.journal_entry_number && (
+                <Info
+                  label="رقم قيد التسوية"
+                  value={currentPostedAdj.journal_entry_number}
+                  mono
+                />
+              )}
+            </div>
+
+            {!varianceSettingsOk && (
+              <div className="text-sm text-red-900 bg-red-50 border border-red-200 rounded px-3 py-2">
+                إعدادات حسابات فروقات الجرد غير مكتملة.{' '}
+                <Link href="/accounts/cashbox" className="underline">
+                  راجع إعدادات الصناديق
+                </Link>
+              </div>
+            )}
+
+            {currentPostedAdj?.journal_entry_id && (
+              <Link
+                href={`/accounts/entries?q=${encodeURIComponent(currentPostedAdj.journal_entry_number || currentPostedAdj.journal_entry_id)}`}
+                className="inline-block text-sm text-red-900 underline"
+              >
+                فتح قيد التسوية في دفتر القيود
+              </Link>
+            )}
+
+            {canCreateAdjustment && (
+              <>
+                <label className="block text-sm">
+                  <span className="text-gray-700">ملاحظات (اختياري)</span>
+                  <textarea
+                    className="mt-1 w-full border rounded-md px-3 py-2 text-sm bg-white"
+                    rows={2}
+                    value={adjustNotes}
+                    onChange={(e) => setAdjustNotes(e.target.value)}
+                    disabled={busy}
+                    placeholder="سبب فرق الجرد إن وُجد"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-md bg-red-900 text-white text-sm hover:bg-red-800 disabled:opacity-40"
+                  disabled={busy}
+                  onClick={() => {
+                    setActionError(null);
+                    setConfirmAdjust(true);
+                  }}
+                >
+                  إنشاء وترحيل قيد التسوية
+                </button>
+              </>
+            )}
+          </section>
+        )}
+
         {session.status === 'OPEN' && (
           <section className="border border-red-100 bg-red-50/40 rounded-lg p-4 space-y-3">
             <h2 className="text-sm font-semibold text-gray-900">بدء الإغلاق</h2>
@@ -375,7 +635,6 @@ export default function CashSessionDetailPage() {
           </section>
         )}
 
-        {/* 4) تسجيل الجرد */}
         {session.status === 'CLOSING' && (
           <section className="border border-gray-200 rounded-lg p-4 space-y-3">
             <h2 className="text-sm font-semibold text-gray-900">تسجيل الجرد</h2>
@@ -404,13 +663,18 @@ export default function CashSessionDetailPage() {
                   }`}
                 >
                   {formatIqd(liveVariance.variance)}
+                  {!liveVariance.isZero && (
+                    <span className="text-xs font-normal mr-2">
+                      ({liveVariance.isGain ? 'زيادة' : 'عجز'})
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
             {!liveVariance.isZero && (
               <div className="text-sm text-amber-950 bg-amber-50 border border-amber-300 rounded px-3 py-2">
-                تحذير: الفرق غير صفري. يمكنك حفظ الجرد للعرض، لكن الإغلاق النهائي
-                غير مسموح حتى يصبح الفرق صفراً.
+                الفرق غير صفري. بعد حفظ الجرد ستحتاج لإنشاء قيد التسوية قبل
+                الإغلاق.
               </div>
             )}
             <label className="block text-sm">
@@ -434,7 +698,6 @@ export default function CashSessionDetailPage() {
           </section>
         )}
 
-        {/* 5) الإغلاق النهائي */}
         {session.status === 'CLOSING' && (
           <section className="border border-gray-200 rounded-lg p-4 space-y-3">
             <h2 className="text-sm font-semibold text-gray-900">الإغلاق النهائي</h2>
@@ -452,8 +715,10 @@ export default function CashSessionDetailPage() {
             </ul>
             {!checklist.ok && (
               <p className="text-sm text-gray-600">
-                أكمل الشروط أعلاه قبل إغلاق الجلسة. عند وجود فرق غير صفري لن يُسمح
-                بالإغلاق في هذه المرحلة.
+                أكمل الشروط أعلاه قبل إغلاق الجلسة.
+                {hasNonZeroVariance && !currentPostedAdj
+                  ? ' عند وجود فرق غير صفري أنشئ قيد التسوية أولاً.'
+                  : ''}
               </p>
             )}
             <button
@@ -470,7 +735,6 @@ export default function CashSessionDetailPage() {
           </section>
         )}
 
-        {/* 6) إلغاء الإغلاق */}
         {session.status === 'CLOSING' && (
           <section className="border border-amber-200 bg-amber-50/50 rounded-lg p-4 space-y-3">
             <h2 className="text-sm font-semibold text-gray-900">إلغاء الإغلاق</h2>
@@ -504,11 +768,61 @@ export default function CashSessionDetailPage() {
 
         {readOnly && (
           <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">
-            الجلسة مغلقة — للعرض فقط. لا يمكن التعديل أو إعادة الفتح في المرحلة 3.B.
+            الجلسة مغلقة — للعرض فقط.
           </div>
         )}
 
-        {/* سجل الجردات */}
+        {adjustments.length > 0 && (
+          <section className="border border-gray-200 rounded-lg p-4 space-y-2">
+            <h2 className="text-sm font-semibold text-gray-900">سجل التسويات</h2>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-gray-600">
+                  <tr>
+                    <th className="text-right px-2 py-1">الاتجاه</th>
+                    <th className="text-right px-2 py-1">قيمة الفرق</th>
+                    <th className="text-right px-2 py-1">رقم القيد</th>
+                    <th className="text-right px-2 py-1">الحالة</th>
+                    <th className="text-right px-2 py-1">المنفذ</th>
+                    <th className="text-right px-2 py-1">تاريخ التنفيذ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adjustments.map((a) => (
+                    <tr key={a.id} className="border-t">
+                      <td className="px-2 py-1">
+                        {ADJUSTMENT_DIRECTION_LABEL[a.direction]}
+                      </td>
+                      <td className="px-2 py-1">{formatIqd(a.variance_amount)}</td>
+                      <td className="px-2 py-1 font-mono text-xs">
+                        {a.journal_entry_id ? (
+                          <Link
+                            href={`/accounts/entries?q=${encodeURIComponent(a.journal_entry_number || a.journal_entry_id)}`}
+                            className="text-red-900 underline"
+                          >
+                            {a.journal_entry_number || shortId(a.journal_entry_id)}
+                          </Link>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-2 py-1">
+                        {ADJUSTMENT_STATUS_LABEL[a.status]}
+                      </td>
+                      <td className="px-2 py-1">
+                        {a.posted_by_name || a.created_by_name || '—'}
+                      </td>
+                      <td className="px-2 py-1 whitespace-nowrap">
+                        {formatDateTime(a.posted_at || a.created_at)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
         {(session.counts?.length ?? 0) > 0 && (
           <section className="border border-gray-200 rounded-lg p-4 space-y-2">
             <h2 className="text-sm font-semibold text-gray-900">سجل محاولات الجرد</h2>
@@ -557,7 +871,11 @@ export default function CashSessionDetailPage() {
       <ConfirmDialog
         open={confirmClose}
         title="تأكيد إغلاق الجلسة"
-        message="سيتم إغلاق الجلسة نهائياً بعد التحقق من فرق صفر وعدم وجود حركة دفترية بعد الجرد."
+        message={
+          currentPostedAdj
+            ? 'سيتم إغلاق الجلسة بعد التحقق من تطابق الرصيد مع المعدود وعدم وجود حركة بعد قيد التسوية.'
+            : 'سيتم إغلاق الجلسة نهائياً بعد التحقق من فرق صفر وعدم وجود حركة دفترية بعد الجرد.'
+        }
         confirmLabel="إغلاق الجلسة"
         busy={busy}
         error={actionError}
@@ -574,6 +892,56 @@ export default function CashSessionDetailPage() {
         error={actionError}
         onClose={() => setConfirmCancel(false)}
         onConfirm={() => void doCancelClosing()}
+      />
+      <ConfirmDialog
+        open={confirmAdjust}
+        title="تأكيد قيد التسوية"
+        message={
+          <div className="space-y-2">
+            <p>سيتم إنشاء قيد التسوية وترحيله مباشرة.</p>
+            <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-gray-800">
+              {countDirection?.isGain ? (
+                <>
+                  <div>
+                    من حـ/ حساب الصندوق
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {cashAccountDisplay}
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    إلى حـ/ حساب زيادة الجرد
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {varianceAccountDisplay}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    من حـ/ حساب عجز الجرد
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {varianceAccountDisplay}
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    إلى حـ/ حساب الصندوق
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {cashAccountDisplay}
+                    </div>
+                  </div>
+                </>
+              )}
+              <div className="mt-2 font-medium">
+                المبلغ: {formatIqd(Math.abs(moneyNum(count?.variance_amount)).toFixed(3))}
+              </div>
+            </div>
+          </div>
+        }
+        confirmLabel="إنشاء وترحيل"
+        busy={busy}
+        error={actionError}
+        onClose={() => setConfirmAdjust(false)}
+        onConfirm={() => void doAdjustVariance()}
       />
     </div>
   );

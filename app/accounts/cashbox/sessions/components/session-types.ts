@@ -100,12 +100,63 @@ export type SessionStats = {
   closed: number;
 };
 
+export type CashCountAdjustmentView = {
+  id: string;
+  cash_count_id: string;
+  cash_box_session_id: string;
+  cash_box_id: string;
+  direction: 'GAIN' | 'LOSS';
+  variance_amount: string;
+  original_signed_variance: string;
+  cash_account_id: string;
+  variance_account_id: string;
+  gain_account_id: string | null;
+  loss_account_id: string | null;
+  journal_entry_id: string | null;
+  journal_entry_number?: string | null;
+  status: 'CREATED' | 'POSTED';
+  created_by: string;
+  posted_by: string | null;
+  created_at: string;
+  posted_at: string | null;
+  updated_at: string;
+  version: number;
+  notes: string | null;
+  cash_account_code?: string | null;
+  cash_account_name_ar?: string | null;
+  variance_account_code?: string | null;
+  variance_account_name_ar?: string | null;
+  posted_by_name?: string | null;
+  created_by_name?: string | null;
+};
+
+export type CashVarianceSettingsView = {
+  cash_variance_gain_account_id: string | null;
+  cash_variance_loss_account_id: string | null;
+};
+
+export type AccountLabel = {
+  id: string;
+  code: string;
+  name_ar: string;
+};
+
 export { cashApi, formatIqd };
 
 export const SESSION_STATUS_LABEL: Record<CashSessionStatus, string> = {
   OPEN: 'مفتوحة',
   CLOSING: 'قيد الإغلاق',
   CLOSED: 'مغلقة',
+};
+
+export const ADJUSTMENT_DIRECTION_LABEL: Record<'GAIN' | 'LOSS', string> = {
+  GAIN: 'زيادة',
+  LOSS: 'عجز',
+};
+
+export const ADJUSTMENT_STATUS_LABEL: Record<'CREATED' | 'POSTED', string> = {
+  CREATED: 'قيد الإنشاء',
+  POSTED: 'مرحّلة',
 };
 
 export function sessionStatusBadgeClass(status: string): string {
@@ -152,32 +203,111 @@ export function isZeroMoney(value: string | null | undefined): boolean {
   return Math.abs(moneyNum(value)) < 0.0005;
 }
 
+export function accountLabel(
+  accounts: AccountLabel[] | undefined,
+  id: string | null | undefined
+): string {
+  if (!id) return '—';
+  const a = accounts?.find((x) => x.id === id);
+  return a ? `${a.code} — ${a.name_ar}` : shortId(id);
+}
+
 /** فرق الجرد للعرض: المعدود − الدفتري */
 export function computeVariance(
   counted: string,
   book: string
-): { variance: string; isZero: boolean } {
+): { variance: string; isZero: boolean; isGain: boolean; isLoss: boolean } {
   const v = moneyNum(counted) - moneyNum(book);
   const variance = v.toFixed(3);
-  return { variance, isZero: Math.abs(v) < 0.0005 };
+  return {
+    variance,
+    isZero: Math.abs(v) < 0.0005,
+    isGain: v > 0.0005,
+    isLoss: v < -0.0005,
+  };
 }
 
-export function closeChecklist(session: CashSessionDetail): {
+export function mapAdjustVarianceError(message: string | undefined): string {
+  const m = message || 'تعذر إنشاء قيد التسوية';
+  if (m.includes('حسابات فروقات') || m.includes('فروقات الجرد')) {
+    return 'إعدادات حسابات فروقات الجرد غير مكتملة. راجع إعدادات الصناديق.';
+  }
+  if (
+    m.includes('تسوية سابقة') ||
+    m.includes('تسوية مرحّلة') ||
+    m.includes('موجودة مسبقاً')
+  ) {
+    return 'توجد تسوية سابقة لهذا الجرد.';
+  }
+  if (
+    m.includes('بعد الجرد') ||
+    m.includes('بعد قيد التسوية') ||
+    m.includes('حركة مالية')
+  ) {
+    return 'ظهرت حركة مالية بعد الجرد — أعد الجرد قبل التسوية أو الإغلاق.';
+  }
+  if (
+    m.includes('إصدار') ||
+    m.includes('version') ||
+    m.includes('مستخدم آخر') ||
+    m.includes('تعارض') ||
+    m.includes('إعادة التحميل')
+  ) {
+    return 'تغيرت البيانات بواسطة مستخدم آخر — حدّث الصفحة ثم أعد المحاولة.';
+  }
+  if (m.includes('فرق') && (m.includes('صفر') || m.includes('صفراً'))) {
+    return 'لا توجد حاجة لتسوية — الفرق صفري.';
+  }
+  return m.includes('تعذر') ? m : `تعذر إنشاء قيد التسوية: ${m}`;
+}
+
+export function closeChecklist(
+  session: CashSessionDetail,
+  postedAdjustment?: CashCountAdjustmentView | null
+): {
   ok: boolean;
   items: Array<{ label: string; pass: boolean }>;
 } {
   const count = session.current_count;
+  const closing = session.status === 'CLOSING';
   const varianceOk = Boolean(count && isZeroMoney(count.variance_amount));
-  const noDrift = Boolean(
+  const adjusted =
+    Boolean(count) &&
+    Boolean(postedAdjustment) &&
+    postedAdjustment!.status === 'POSTED' &&
+    postedAdjustment!.cash_count_id === count!.id &&
+    !isZeroMoney(count!.variance_amount);
+
+  const balanceMatchesCounted = Boolean(
     count &&
       session.current_book_balance != null &&
-      Math.abs(moneyNum(session.current_book_balance) - moneyNum(count.book_balance_at_count)) <
+      Math.abs(moneyNum(session.current_book_balance) - moneyNum(count.counted_amount)) <
         0.0005
   );
-  const closing = session.status === 'CLOSING';
+
+  const noDriftOnZeroPath = Boolean(
+    count &&
+      session.current_book_balance != null &&
+      Math.abs(
+        moneyNum(session.current_book_balance) - moneyNum(count.book_balance_at_count)
+      ) < 0.0005
+  );
+
+  const pathOk = varianceOk ? noDriftOnZeroPath : adjusted && balanceMatchesCounted;
+
   const items = [
-    { label: 'لا يوجد فرق جرد', pass: varianceOk },
-    { label: 'لا توجد حركة مالية مرحلة بعد الجرد', pass: noDrift },
+    {
+      label: varianceOk
+        ? 'لا يوجد فرق جرد'
+        : 'تسوية فرق الجرد مرحّلة (أو فرق صفر)',
+      pass: varianceOk || adjusted,
+    },
+    {
+      label: varianceOk
+        ? 'لا توجد حركة مالية مرحلة بعد الجرد'
+        : 'الرصيد الدفتري يطابق المبلغ المعدود بعد التسوية',
+      pass: pathOk,
+    },
     { label: 'الجلسة في حالة CLOSING', pass: closing },
   ];
   return { ok: items.every((i) => i.pass), items };

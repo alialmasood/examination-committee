@@ -92,7 +92,7 @@
 |------|----------|
 | 3.A | CRUD صناديق + أمناء + إعدادات فروقات (مفاتيح) + قائمة/تفاصيل |
 | 3.B | جلسة حية واحدة + جرد إغلاق مبسّط + إغلاق بفرق 0 فقط |
-| 3.C | فئات + فرق ≠ 0 + قيد تسوية + رفض إغلاق بعد نشاط دفتري لاحق |
+| 3.C | فرق ≠ 0 + كيان `cash_count_adjustments` + قيد تسوية POSTED + إغلاق بعد التسوية |
 | 3.D | إعادة فتح + تعليق/إغلاق نهائي + تسليم عهدة + Audit كامل |
 | 3.E | تقارير أساسية + options + توثيق عقد الحركات المستقبلية |
 
@@ -149,8 +149,8 @@
 | F-42 | Submit يجمّد `book_balance` ويحسب `physical_total` و`variance` | Must |
 | F-43 | فئات عملة قابلة للتهيئة + بنود بكميات ≥ 0 | Must |
 | F-44 | اعتماد جرد بفرق 0 دون قيد تسوية | Must |
-| F-45 | اعتماد جرد بفرق ≠ 0 ينشئ مسودة قيد `ADJUSTMENT` مرتبطة | Must |
-| F-46 | القيد: `source_type=CASH_COUNT_VARIANCE` و`source_id=count.id` | Must |
+| F-45 | تسوية فرق ≠ 0 عبر `cash_count_adjustments` + قيد `ADJUSTMENT` مرحّل | Must |
+| F-46 | القيد: `source_type=CASH_COUNT_VARIANCE` و`source_id=adjustment.id` | Must |
 | F-47 | اتجاه القيد وفق ربح/خسارة الفروقات من إعدادات السياسة | Must |
 | F-48 | Idempotency: لا قيد ثانٍ لنفس الجرد | Must |
 | F-49 | رفض إنشاء قيد تسوية إن حسابات الفروقات غير مهيأة | Must |
@@ -548,15 +548,15 @@
 | F-40 جرد CLOSING و SURPRISE | Passed جزئياً (جرد إغلاق إجمالي فقط؛ لا SURPRISE) |
 | F-41 تعديل مسودة فقط | Not Applicable في 3.B (سجل جرد جديد لكل محاولة) |
 | F-42 تجميد book_balance عند Submit | Passed (عند count) |
-| F-43 فئات عملة وبنود ≥ 0 | Deferred (3.C) |
+| F-43 فئات عملة وبنود ≥ 0 | Deferred (خارج 3.C الحالية — جرد إجمالي) |
 | F-44 اعتماد فرق صفر | Passed (إغلاق بفرق 0) |
-| F-45 مسودة قيد عند فرق ≠ 0 | Deferred (3.C) |
-| F-46 source_type=CASH_COUNT_VARIANCE | Deferred (3.C) |
-| F-47 اتجاه قيد الفروقات حسب السياسة | Deferred (3.C) |
-| F-48 Idempotency لقيد التسوية | Deferred (3.C) |
-| F-49 رفض التسوية بلا حسابات فروقات | Deferred (3.C) |
+| F-45 تسوية فرق ≠ 0 + قيد ADJUSTMENT POSTED | Passed (Backend 3.C — كيان adjustments) |
+| F-46 source_type=CASH_COUNT_VARIANCE و source_id=adjustment.id | Passed (Backend 3.C) |
+| F-47 اتجاه قيد الفروقات حسب السياسة | Passed (Backend 3.C — GAIN/LOSS) |
+| F-48 Idempotency لقيد التسوية | Passed (Backend 3.C — UNIQUE cash_count_id) |
+| F-49 رفض التسوية بلا حسابات فروقات | Passed (Backend 3.C) |
 | F-50 جرد مفاجئ لا يغلق الجلسة | Deferred |
-| F-51 رفض إغلاق بعد نشاط دفتري لاحق | Passed (Backend 3.B) |
+| F-51 رفض إغلاق بعد نشاط دفتري لاحق | Passed (3.B + 3.C بعد قيد التسوية) |
 | F-52 تحذير رصيد دفتري سالب | Deferred |
 | F-60 قائمة صناديق مع أرصدة | Passed |
 | F-61 عرض جلسة يومية | Passed (UI 3.B) |
@@ -565,19 +565,19 @@
 | F-64 endpoint options | Passed |
 | F-65 توثيق عقد الحركات المستقبلية | Deferred |
 | BR-01…BR-30 قواعد العمل الملزمة (دفعة تحقق) | Passed |
-| DB-01 جداول الصناديق/الأمناء/الجلسات/الجرد | Passed |
+| DB-01 جداول الصناديق/الأمناء/الجلسات/الجرد/التسويات | Passed (064: cash_count_adjustments) |
 | DB-02 فهارس وقيود التفرّد الجزئي | Passed |
 | DB-03 إعدادات فروقات الجرد | Passed |
 | DB-04 Migration جديدة دون تعديل قديم | Passed |
 | DB-05 لا current_balance كمصدر حقيقة | Passed |
 | API-01 مسارات CRUD والصناديق | Passed |
 | API-02 مسارات الجلسات | Passed (Backend 3.B) |
-| API-03 مسارات الجرد والاعتماد | Passed جزئياً (count/close؛ بلا تسوية) |
+| API-03 مسارات الجرد والاعتماد | Passed (Backend 3.C: adjust-variance + adjustments) |
 | API-04 تقارير و options | Passed |
 | API-05 رموز الأخطاء 400/401/404/409 | Passed |
 | UI-01 قائمة /accounts/cashbox | Passed |
 | UI-02 تفاصيل الصندوق | Passed |
-| UI-03 شاشة الجلسة والجرد | Passed (UI 3.B) |
+| UI-03 شاشة الجلسة والجرد | Passed (UI 3.B + تسوية 3.C) |
 | UI-04 شاشة التقارير | Deferred |
 | UI-05 RTL وهوية الحسابات | Passed |
 | UI-06 لا ترحيل محاسبي من الواجهة | Passed |
@@ -593,7 +593,7 @@
 | TC-20…TC-35 اختبارات الرفض والتعارض | Passed |
 | TC-40…TC-42 عدم انحدار المرحلة 2 | Passed |
 | TC-50 قبول الدفعة 3.A | Passed |
-| TC-51…TC-54 قبول الدفعات 3.B–3.E | TC-51 Passed (Backend+UI) · 3.C–3.E Deferred |
+| TC-51…TC-54 قبول الدفعات 3.B–3.E | TC-51 Passed · TC-52 Passed (Backend 3.C) · 3.D–3.E Deferred |
 | EC-01…EC-15 معالجة الحالات الحدية الملزمة | Deferred |
 | DEL-01 تسليم الملفات/الجداول/الواجهات المتوقعة | Passed |
 | DEL-02 تحديث الوثيقة المعمارية عند الخروج | Deferred |

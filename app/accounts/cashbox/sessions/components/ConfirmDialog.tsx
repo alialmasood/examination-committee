@@ -1,5 +1,7 @@
 'use client';
 
+import type { ReactNode } from 'react';
+
 export default function ConfirmDialog({
   open,
   title,
@@ -14,7 +16,7 @@ export default function ConfirmDialog({
 }: {
   open: boolean;
   title: string;
-  message: string;
+  message: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   busy?: boolean;
@@ -33,7 +35,7 @@ export default function ConfirmDialog({
         aria-modal="true"
       >
         <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-        <p className="text-sm text-gray-600">{message}</p>
+        <div className="text-sm text-gray-600 space-y-2">{message}</div>
         {error && (
           <div className="text-sm text-red-800 bg-red-50 border border-red-200 rounded px-3 py-2">
             {error}

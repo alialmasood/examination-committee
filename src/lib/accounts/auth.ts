@@ -161,6 +161,12 @@ export function mapPgError(error: unknown): NextResponse {
     if (err.constraint?.includes('uq_cash_counts_session_sequence')) {
       return jsonError('تعارض في تسلسل سجلات الجرد', 409);
     }
+    if (err.constraint?.includes('uq_cash_count_adjustments_one_per_count')) {
+      return jsonError('توجد تسوية لفرق هذا الجرد مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_cash_count_adjustments_journal')) {
+      return jsonError('القيد مرتبط بتسوية أخرى مسبقاً', 409);
+    }
     return jsonError('تعارض في البيانات: القيمة مكررة', 409);
   }
 

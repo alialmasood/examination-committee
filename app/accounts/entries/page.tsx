@@ -37,6 +37,13 @@ export default function AccountsEntriesPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [years, setYears] = useState<Array<{ id: string; code: string }>>([]);
   const [fiscalYearId, setFiscalYearId] = useState('');
+  const [urlQReady, setUrlQReady] = useState(false);
+
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('q');
+    if (fromUrl) setQ(fromUrl);
+    setUrlQReady(true);
+  }, []);
 
   const load = async () => {
     setLoading(true);
@@ -83,9 +90,10 @@ export default function AccountsEntriesPage() {
   }, []);
 
   useEffect(() => {
+    if (!urlQReady) return;
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, status, entryType, fiscalYearId]);
+  }, [page, status, entryType, fiscalYearId, urlQReady]);
 
   return (
     <div className="p-4 md:p-6 space-y-4">

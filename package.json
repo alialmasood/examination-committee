@@ -25,6 +25,8 @@
     "seed:cash-box-types:execute": "tsx src/scripts/seed-cash-box-types.ts --execute",
     "test:cash-boxes": "tsx src/scripts/test-cash-boxes.ts",
     "test:cash-box-sessions": "tsx src/scripts/test-cash-box-sessions.ts",
+    "test:cash-count-adjustments": "tsx src/scripts/test-cash-count-adjustments.ts",
+    "seed:accounts-demo": "tsx src/scripts/seed-accounts-demo.ts",
     "seed:construction": "tsx src/scripts/add-construction-user.ts",
     "seed:oil": "tsx src/scripts/add-oil-user.ts",
     "seed:physics": "tsx src/scripts/add-physics-user.ts",

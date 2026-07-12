@@ -46,3 +46,29 @@ export function moneyIsPositive(value: string): boolean {
 export function moneyIsZero(value: string): boolean {
   return moneyToMillis(value) === ZERO;
 }
+
+/** يقبل الإشارة السالبة للمبالغ (فروقات الجرد وغيرها) */
+export function normalizeSignedMoneyInput(value: unknown): string {
+  if (value == null || value === '') return '0.000';
+  const raw = String(value).trim().replace(/,/g, '');
+  const neg = raw.startsWith('-');
+  const body = neg ? raw.slice(1) : raw;
+  const abs = normalizeMoneyInput(body);
+  if (neg && moneyToMillis(abs) !== ZERO) {
+    return `-${abs}`;
+  }
+  return abs;
+}
+
+export function moneyToMillisSigned(value: string): bigint {
+  const n = normalizeSignedMoneyInput(value);
+  if (n.startsWith('-')) {
+    return -moneyToMillis(n.slice(1));
+  }
+  return moneyToMillis(n);
+}
+
+export function absoluteMoney(value: string): string {
+  const m = moneyToMillisSigned(value);
+  return millisToMoney(m < ZERO ? -m : m);
+}

@@ -14,9 +14,10 @@ import { pgDateOnly } from './document-sequences';
 import { assertFiscalContextForEntry } from './journal-entries';
 import {
   moneyEquals,
-  moneyIsZero,
   moneyToMillis,
+  moneyToMillisSigned,
   normalizeMoneyInput,
+  normalizeSignedMoneyInput,
 } from './money';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
@@ -106,7 +107,7 @@ export function serializeCashCount(row: CashCountRow) {
     ...row,
     counted_amount: normalizeMoneyInput(row.counted_amount),
     book_balance_at_count: normalizeMoneyInput(row.book_balance_at_count),
-    variance_amount: normalizeMoneyInput(row.variance_amount),
+    variance_amount: normalizeSignedMoneyInput(row.variance_amount),
     counted_at: iso(row.counted_at)!,
     last_posted_entry_at_count: iso(row.last_posted_entry_at_count),
     created_at: iso(row.created_at)!,
@@ -470,11 +471,71 @@ export async function closeCashSession(
     throw new AccountsHttpError('سجل الجرد الحالي غير موجود', 409);
   }
 
-  if (!moneyIsZero(normalizeMoneyInput(count.variance_amount))) {
-    throw new AccountsHttpError(
-      'لا يمكن إغلاق الجلسة بوجود فرق جرد — التسوية مؤجّلة للمرحلة 3.C',
-      409
+  if (moneyToMillisSigned(normalizeSignedMoneyInput(count.variance_amount)) !== BigInt(0)) {
+    // مسار 3.C: تسوية POSTED للجرد الحالي بدل رفض الفرق مباشرة
+    const adjRes = await txQuery<{
+      id: string;
+      cash_count_id: string;
+      journal_entry_id: string | null;
+      status: string;
+      posted_at: Date | string | null;
+    }>(
+      client,
+      `SELECT id, cash_count_id, journal_entry_id, status, posted_at
+       FROM accounts.cash_count_adjustments
+       WHERE cash_count_id = $1::uuid AND status = 'POSTED'
+       LIMIT 1
+       FOR UPDATE`,
+      [count.id]
     );
+    const adj = adjRes.rows[0];
+    if (!adj || !adj.journal_entry_id) {
+      throw new AccountsHttpError(
+        'لا يمكن إغلاق الجلسة بوجود فرق جرد — نفّذ تسوية فرق الجرد أولاً',
+        409
+      );
+    }
+
+    const currentSnap = await captureAccountBookSnapshotTx(client, box.account_id);
+    const counted = normalizeMoneyInput(count.counted_amount);
+
+    // أولاً: أي POSTED أحدث مؤثر على حساب الصندوق بعد قيد التسوية
+    const last = currentSnap.last_posted_entry_id
+      ? {
+          entry_id: currentSnap.last_posted_entry_id,
+          posted_at: currentSnap.last_posted_at!,
+        }
+      : null;
+    if (!last || last.entry_id !== adj.journal_entry_id) {
+      throw new AccountsHttpError(
+        'توجد حركة مالية مرحلة بعد قيد التسوية، يجب إعادة الجرد قبل إغلاق الجلسة',
+        409
+      );
+    }
+
+    if (!moneyEquals(currentSnap.balance, counted)) {
+      throw new AccountsHttpError(
+        'الرصيد الدفتري لا يطابق المبلغ المعدود بعد التسوية — أعد الجرد',
+        409
+      );
+    }
+
+    const upd = await txQuery<CashBoxSessionRow>(
+      client,
+      `UPDATE accounts.cash_box_sessions
+       SET status = 'CLOSED',
+           closed_by = $2::uuid,
+           closed_at = NOW(),
+           final_book_balance = $3::numeric,
+           final_counted_amount = $4::numeric,
+           final_variance_amount = 0,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $1::uuid
+       RETURNING *`,
+      [session.id, params.userId, counted, counted]
+    );
+    return upd.rows[0];
   }
 
   const currentSnap = await captureAccountBookSnapshotTx(client, box.account_id);
