@@ -36,7 +36,7 @@ export function sumMoney(values: string[]): string {
 }
 
 export function moneyEquals(a: string, b: string): boolean {
-  return moneyToMillis(a) === moneyToMillis(b);
+  return moneyToMillisSigned(a) === moneyToMillisSigned(b);
 }
 
 export function moneyIsPositive(value: string): boolean {

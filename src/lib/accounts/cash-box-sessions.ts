@@ -82,14 +82,14 @@ function iso(value: Date | string | null | undefined): string | null {
 
 function moneyField(value: string | null | undefined): string | null {
   if (value == null) return null;
-  return normalizeMoneyInput(value);
+  return normalizeSignedMoneyInput(value);
 }
 
 export function serializeCashSession(row: CashBoxSessionRow) {
   return {
     ...row,
     session_date: pgDateOnly(row.session_date as string | Date),
-    opening_book_balance: normalizeMoneyInput(row.opening_book_balance),
+    opening_book_balance: normalizeSignedMoneyInput(row.opening_book_balance),
     opening_last_posted_at: iso(row.opening_last_posted_at),
     opened_at: iso(row.opened_at)!,
     closed_at: iso(row.closed_at),
@@ -106,7 +106,7 @@ export function serializeCashCount(row: CashCountRow) {
   return {
     ...row,
     counted_amount: normalizeMoneyInput(row.counted_amount),
-    book_balance_at_count: normalizeMoneyInput(row.book_balance_at_count),
+    book_balance_at_count: normalizeSignedMoneyInput(row.book_balance_at_count),
     variance_amount: normalizeSignedMoneyInput(row.variance_amount),
     counted_at: iso(row.counted_at)!,
     last_posted_entry_at_count: iso(row.last_posted_entry_at_count),
@@ -547,7 +547,7 @@ export async function closeCashSession(
           posted_at: currentSnap.last_posted_at!,
         }
       : null,
-    snapshotBalance: normalizeMoneyInput(count.book_balance_at_count),
+    snapshotBalance: normalizeSignedMoneyInput(count.book_balance_at_count),
     snapshotEntryId: count.last_posted_entry_id_at_count,
     snapshotPostedAt: count.last_posted_entry_at_count,
   });
@@ -557,7 +557,7 @@ export async function closeCashSession(
   }
 
   // تأكيد اتساق المبلغ المعدود مع اللقطة
-  if (!moneyEquals(currentSnap.balance, normalizeMoneyInput(count.book_balance_at_count))) {
+  if (!moneyEquals(currentSnap.balance, normalizeSignedMoneyInput(count.book_balance_at_count))) {
     throw new AccountsHttpError(POST_COUNT_DRIFT_MESSAGE, 409);
   }
 
@@ -577,9 +577,9 @@ export async function closeCashSession(
     [
       session.id,
       params.userId,
-      normalizeMoneyInput(count.book_balance_at_count),
+      normalizeSignedMoneyInput(count.book_balance_at_count),
       normalizeMoneyInput(count.counted_amount),
-      normalizeMoneyInput(count.variance_amount),
+      normalizeSignedMoneyInput(count.variance_amount),
     ]
   );
   return upd.rows[0];

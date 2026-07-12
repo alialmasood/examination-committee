@@ -28,11 +28,12 @@ import {
 import {
   moneyIsPositive,
   moneyToMillis,
+  moneyToMillisSigned,
   millisToMoney,
   normalizeMoneyInput,
 } from './money';
 import type { TxClient } from './with-transaction';
-import { txQuery } from './with-transaction';
+import { acquireCashBoxesLock, txQuery } from './with-transaction';
 
 export type CashVoucherType = 'CASH_RECEIPT' | 'CASH_PAYMENT';
 export type CashVoucherStatus = 'DRAFT' | 'POSTED' | 'VOID';
@@ -159,6 +160,13 @@ async function assertOpenSessionForVoucher(
   client: TxClient,
   session: CashBoxSessionRow
 ): Promise<void> {
+  // بدء الإغلاق ينقل الجلسة إلى CLOSING — تُرفض الحركات حتى قبل CLOSED
+  if (session.status === 'CLOSING' || session.closing_started_at) {
+    throw new AccountsHttpError(
+      'لا يمكن إنشاء أو تعديل أو ترحيل سندات بعد بدء إغلاق الجلسة',
+      409
+    );
+  }
   if (session.status !== 'OPEN') {
     throw new AccountsHttpError(
       'سندات القبض والصرف تتطلب جلسة صندوق مفتوحة (OPEN)',
@@ -227,7 +235,7 @@ export async function calculateSessionExpectedBalance(
   const payments = normalizeMoneyInput(sums.rows[0]?.payments ?? '0');
   const opening = normalizeMoneyInput(session.opening_book_balance);
   const expected = millisToMoney(
-    moneyToMillis(opening) + moneyToMillis(receipts) - moneyToMillis(payments)
+    moneyToMillisSigned(opening) + moneyToMillis(receipts) - moneyToMillis(payments)
   );
 
   let currentBook = expected;
@@ -581,11 +589,23 @@ export async function postCashVoucher(
   const amount = normalizeMoneyInput(voucher.amount);
 
   if (voucher.voucher_type === 'CASH_PAYMENT') {
+    // تأمين ضد التزامن حتى لو نُسي القفل في الـ route
+    await acquireCashBoxesLock(client);
+    // قفل صف الجلسة أولاً (وليس فقط صفوف POSTED) حتى يتسلسل الترحيل
+    // عند عدم وجود سندات مرحّلة كافية — يمنع تجاوز الرصيد تحت READ COMMITTED
+    await loadCashSession(client, session.id, true);
+    await txQuery(
+      client,
+      `SELECT id FROM accounts.cash_vouchers
+       WHERE cash_box_session_id = $1::uuid
+       FOR UPDATE`,
+      [session.id]
+    );
     const expected = await calculateSessionExpectedBalance(client, {
       sessionId: session.id,
       accountId: box.account_id,
     });
-    if (moneyToMillis(amount) > moneyToMillis(expected.expected_balance)) {
+    if (moneyToMillis(amount) > moneyToMillisSigned(expected.expected_balance)) {
       throw new AccountsHttpError(
         'لا يمكن ترحيل سند الصرف لأن رصيد الصندوق المتاح غير كافٍ.',
         409
@@ -724,6 +744,12 @@ export async function voidCashVoucher(
   if (session.status === 'CLOSED') {
     throw new AccountsHttpError(
       'لا يمكن إلغاء سند مرتبط بجلسة صندوق مغلقة',
+      409
+    );
+  }
+  if (session.status === 'CLOSING' || session.closing_started_at) {
+    throw new AccountsHttpError(
+      'لا يمكن إلغاء سند بعد بدء إغلاق الجلسة',
       409
     );
   }

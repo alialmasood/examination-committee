@@ -8,8 +8,8 @@ import { txQuery } from './with-transaction';
 import {
   millisToMoney,
   moneyEquals,
-  moneyToMillis,
-  normalizeMoneyInput,
+  moneyToMillisSigned,
+  normalizeSignedMoneyInput,
 } from './money';
 
 export type BookBalanceSource = 'POSTED_JOURNAL_LINES';
@@ -36,7 +36,7 @@ async function sumPostedNet(
     [accountId]
   );
   const raw = result.rows[0]?.net ?? '0';
-  return normalizeMoneyInput(String(raw));
+  return normalizeSignedMoneyInput(String(raw));
 }
 
 /** رصيد حساب واحد (مدين − دائن) من قيود POSTED فقط */
@@ -77,14 +77,14 @@ export async function getAccountsBookBalances(
   );
 
   for (const row of result.rows as Array<{ account_id: string; net: string }>) {
-    map.set(row.account_id, normalizeMoneyInput(row.net));
+    map.set(row.account_id, normalizeSignedMoneyInput(row.net));
   }
   return map;
 }
 
 /** فرق رصيدين كنص مالّي موحّد */
 export function subtractBookBalances(a: string, b: string): string {
-  return millisToMoney(moneyToMillis(a) - moneyToMillis(b));
+  return millisToMoney(moneyToMillisSigned(a) - moneyToMillisSigned(b));
 }
 
 export type LastPostedEntrySnapshot = {

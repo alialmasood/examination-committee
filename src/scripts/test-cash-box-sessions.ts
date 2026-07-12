@@ -30,7 +30,7 @@ import {
   normalizeAndValidateLines,
   replaceJournalLines,
 } from '../lib/accounts/journal-entries';
-import { moneyEquals, normalizeMoneyInput } from '../lib/accounts/money';
+import { moneyEquals, normalizeSignedMoneyInput } from '../lib/accounts/money';
 import {
   acquireCashBoxesLock,
   acquireJournalEntriesLock,
@@ -270,7 +270,7 @@ async function main() {
 
     // 6) opening_book_balance من POSTED
     const liveBal = await getAccountBookBalance(cashAcc);
-    if (moneyEquals(normalizeMoneyInput(session.opening_book_balance), liveBal.balance)) {
+    if (moneyEquals(normalizeSignedMoneyInput(session.opening_book_balance), liveBal.balance)) {
       ok('6) opening_book_balance من POSTED فقط');
     } else {
       fail('6) opening_book_balance', {
@@ -469,7 +469,7 @@ async function main() {
       s = r.session;
       return r.count;
     });
-    if (moneyEquals(normalizeMoneyInput(countZero.variance_amount), '0')) {
+    if (moneyEquals(normalizeSignedMoneyInput(countZero.variance_amount), '0')) {
       ok('8) تسجيل جرد بفرق صفر');
     } else fail('8) جرد صفر', countZero.variance_amount);
 
@@ -486,7 +486,7 @@ async function main() {
       s = r.session;
       return r.count;
     });
-    if (!moneyEquals(normalizeMoneyInput(countZero.variance_amount), '0')) {
+    if (!moneyEquals(normalizeSignedMoneyInput(countZero.variance_amount), '0')) {
       ok('9) تسجيل جرد بفرق غير صفر');
     } else fail('9) جرد غير صفر');
 
@@ -509,21 +509,18 @@ async function main() {
     // إعادة جرد صفر ثم 11) نجاح الإغلاق
     countZero = await withTransaction(async (client) => {
       await acquireCashBoxesLock(client);
-      const bal = await getAccountBookBalance(cashAcc);
-      // need live balance inside tx — use helper via record which captures
-      const live = await txQuery<{ net: string }>(
-        client,
-        `SELECT COALESCE(SUM(l.debit_amount - l.credit_amount), 0)::text AS net
-         FROM accounts.journal_entry_lines l
-         JOIN accounts.journal_entries e ON e.id = l.journal_entry_id
-         WHERE l.account_id = $1 AND e.status = 'POSTED'`,
-        [cashAcc]
+      const { getAccountBookBalanceTx } = await import(
+        '../lib/accounts/account-book-balance'
       );
-      void bal;
+      const bal = await getAccountBookBalanceTx(client, cashAcc);
+      const counted =
+        bal.balance.startsWith('-') && bal.balance !== '-0.000'
+          ? '0'
+          : bal.balance.replace(/^-/, '');
       const r = await recordCashCount(client, {
         sessionId: s.id,
         userId,
-        counted_amount: normalizeMoneyInput(live.rows[0].net),
+        counted_amount: counted,
         version: s.version,
         updated_at: s.updated_at,
       });
@@ -531,25 +528,32 @@ async function main() {
       return r.count;
     });
 
-    s = await withTransaction(async (client) => {
-      await acquireCashBoxesLock(client);
-      const closed = await closeCashSession(client, {
-        sessionId: s.id,
-        userId,
-        version: s.version,
-        updated_at: s.updated_at,
+    // إن بقي فرق بسبب رصيد سالب لا يمكن مطابقة الجرد به — سجّل جرداً مطابقاً عبر مسار بديل
+    if (!moneyEquals(normalizeSignedMoneyInput(countZero.variance_amount), '0')) {
+      // للجلسة الأولى نضمن صفراً بإعادة جرد بقيمة book إن كانت غير سالبة؛ وإلا نتخطى لرفض الإغلاق ثم...
+      // في الواقع الاختبار يتوقع نجاح الإغلاق — صفّر الرصيد أولاً خارجياً إن لزم
+      fail('11 prep) تعذّر جرد بفرق صفر', countZero.variance_amount);
+    } else {
+      s = await withTransaction(async (client) => {
+        await acquireCashBoxesLock(client);
+        const closed = await closeCashSession(client, {
+          sessionId: s.id,
+          userId,
+          version: s.version,
+          updated_at: s.updated_at,
+        });
+        await writeFinancialAudit(client, {
+          userId,
+          action: 'cash_session.closed',
+          entityType: 'cash_box_session',
+          entityId: closed.id,
+          newValues: serializeCashSession(closed),
+        });
+        return closed;
       });
-      await writeFinancialAudit(client, {
-        userId,
-        action: 'cash_session.closed',
-        entityType: 'cash_box_session',
-        entityId: closed.id,
-        newValues: serializeCashSession(closed),
-      });
-      return closed;
-    });
-    if (s.status === 'CLOSED') ok('11) نجاح الإغلاق عند فرق صفر');
-    else fail('11) إغلاق', s.status);
+      if (s.status === 'CLOSED') ok('11) نجاح الإغلاق عند فرق صفر');
+      else fail('11) إغلاق', s.status);
+    }
 
     // 14) منع تعديل CLOSED
     await expectHttp(
@@ -667,26 +671,78 @@ async function main() {
 
     const countBeforePost = await withTransaction(async (client) => {
       await acquireCashBoxesLock(client);
-      const live = await txQuery<{ net: string }>(
-        client,
-        `SELECT COALESCE(SUM(l.debit_amount - l.credit_amount), 0)::text AS net
-         FROM accounts.journal_entry_lines l
-         JOIN accounts.journal_entries e ON e.id = l.journal_entry_id
-         WHERE l.account_id = $1 AND e.status = 'POSTED'`,
-        [accForS2]
+      const { getAccountBookBalanceTx } = await import(
+        '../lib/accounts/account-book-balance'
       );
+      let countedForMatch = (await getAccountBookBalanceTx(client, accForS2)).balance;
+      // الجرد المطابق يتطلب مبلغاً معدوداً غير سالب يساوي الرصيد الدفتري
+      if (countedForMatch.startsWith('-') && countedForMatch !== '-0.000') {
+        await acquireJournalEntriesLock(client);
+        const absAmt = countedForMatch.slice(1);
+        await assertFiscalContextForEntry(client, {
+          fiscalYearId: yearId,
+          fiscalPeriodId: periodId,
+          entryDate,
+        });
+        const { lines, totalDebit, totalCredit } = await normalizeAndValidateLines(
+          client,
+          [
+            {
+              account_id: accForS2,
+              debit_amount: absAmt,
+              credit_amount: '0',
+              description: 'تسوية رصيد سالب للاختبار',
+            },
+            {
+              account_id: cashAcc === accForS2 ? otherAcc : cashAcc,
+              debit_amount: '0',
+              credit_amount: absAmt,
+              description: 'مقابل',
+            },
+          ],
+          'strict'
+        );
+        const entryNumber = await allocateJournalEntryNumber(client, yearId);
+        const ins = await txQuery(
+          client,
+          `INSERT INTO accounts.journal_entries
+            (entry_number, fiscal_year_id, fiscal_period_id, entry_date, entry_type,
+             description, total_debit, total_credit, status, created_by, updated_by,
+             posted_by, posted_at)
+           VALUES ($1,$2,$3,$4::date,'MANUAL',$5,$6::numeric,$7::numeric,'POSTED',$8,$8,$8,NOW())
+           RETURNING id`,
+          [
+            entryNumber,
+            yearId,
+            periodId,
+            entryDate,
+            `تسوية سالب ${suffix}`,
+            totalDebit,
+            totalCredit,
+            userId,
+          ]
+        );
+        await replaceJournalLines(client, ins.rows[0].id as string, lines);
+        createdJeIds.push(ins.rows[0].id as string);
+        countedForMatch = '0.000';
+      }
       const r = await recordCashCount(client, {
         sessionId: s2.id,
         userId,
-        counted_amount: normalizeMoneyInput(live.rows[0].net),
+        counted_amount: countedForMatch,
         version: s2.version,
         updated_at: s2.updated_at,
       });
       s2 = r.session;
       return r.count;
     });
-    void countBeforePost;
-    ok('لقطة الجرد: book_balance + last_posted محفوظان');
+    if (
+      !moneyEquals(normalizeSignedMoneyInput(countBeforePost.variance_amount), '0')
+    ) {
+      fail('لقطة الجرد يجب أن تكون بفرق صفر', countBeforePost.variance_amount);
+    } else {
+      ok('لقطة الجرد: book_balance + last_posted محفوظان');
+    }
 
     // ترحيل قيد بعد الجرد
     const jeAfter = await postJe({
