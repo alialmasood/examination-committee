@@ -311,6 +311,7 @@ export type StudentInstallmentItem = {
   due_date: string;
   amount: string;
   paid_amount: string;
+  relief_amount?: string;
   outstanding_amount: string;
   status: StudentInstallmentStatus;
   student_charge_id: string | null;
@@ -508,4 +509,136 @@ export function sumMoneyValues(values: Array<string | number | null | undefined>
     if (Number.isFinite(n)) total += n;
   }
   return total;
+}
+
+// ——— المرحلة 5.C.1: التخفيضات والمنح ———
+
+export type StudentReliefStatus =
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'APPROVED'
+  | 'POSTED'
+  | 'REJECTED'
+  | 'VOID';
+
+export type ReliefKind = 'DISCOUNT' | 'SCHOLARSHIP' | 'WAIVER';
+export type ReliefCalculationType = 'FIXED_AMOUNT' | 'PERCENTAGE';
+
+export type StudentReliefTypeItem = {
+  id: string;
+  code: string;
+  name_ar: string;
+  name_en: string | null;
+  relief_kind: ReliefKind;
+  calculation_type: ReliefCalculationType;
+  default_value: string | null;
+  max_value: string | null;
+  gl_account_id: string;
+  requires_approval: boolean;
+  is_refundable: boolean;
+  is_active: boolean;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  gl_code?: string | null;
+  gl_name_ar?: string | null;
+};
+
+export type StudentReliefListItem = {
+  id: string;
+  relief_number: string;
+  student_account_id: string;
+  student_id: string;
+  relief_type_id: string;
+  student_charge_id: string;
+  relief_date: string;
+  calculation_type: ReliefCalculationType;
+  percentage_value: string | null;
+  requested_amount: string;
+  approved_amount: string | null;
+  currency_code: string;
+  reason: string;
+  status: StudentReliefStatus;
+  version: number;
+  updated_at: string;
+  journal_entry_id: string | null;
+  relief_type_code?: string | null;
+  relief_type_name_ar?: string | null;
+  account_number?: string | null;
+  student_full_name_ar?: string | null;
+  charge_number?: string | null;
+};
+
+export type StudentReliefDetail = StudentReliefListItem & {
+  relief_kind?: string | null;
+  billing_plan_id: string | null;
+  student_installment_id: string | null;
+  external_reference: string | null;
+  rejection_reason: string | null;
+  void_reason: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  posted_at: string | null;
+  voided_at: string | null;
+  charge_outstanding?: string | null;
+};
+
+export type ReliefOptions = {
+  relief_types: Array<{
+    id: string;
+    code: string;
+    name_ar: string;
+    relief_kind: string;
+    calculation_type: string;
+    default_value: string | null;
+    max_value: string | null;
+    requires_approval: boolean;
+  }>;
+  relief_kinds: Array<{ code: string; name_ar: string }>;
+  calculation_types: Array<{ code: string; name_ar: string }>;
+  statuses: Array<{ code: string; name_ar: string }>;
+  expense_gl_accounts: Array<{
+    id: string;
+    code: string;
+    name_ar: string;
+    account_type_code: string;
+  }>;
+};
+
+export const RELIEF_TYPES_API = '/api/accounts/student-relief-types';
+export const RELIEFS_API = '/api/accounts/student-reliefs';
+export const RELIEF_OPTIONS_API = '/api/accounts/student-reliefs/options';
+
+export const RELIEF_KIND_LABEL: Record<ReliefKind, string> = {
+  DISCOUNT: 'خصم',
+  SCHOLARSHIP: 'منحة',
+  WAIVER: 'إعفاء',
+};
+
+export const RELIEF_STATUS_LABEL: Record<StudentReliefStatus, string> = {
+  DRAFT: 'مسودة',
+  PENDING_APPROVAL: 'بانتظار الاعتماد',
+  APPROVED: 'معتمد',
+  POSTED: 'مرحّل',
+  REJECTED: 'مرفوض',
+  VOID: 'ملغى',
+};
+
+export function reliefStatusBadge(status: string): string {
+  switch (status) {
+    case 'DRAFT':
+      return 'bg-yellow-100 text-yellow-900';
+    case 'PENDING_APPROVAL':
+      return 'bg-orange-100 text-orange-900';
+    case 'APPROVED':
+      return 'bg-blue-100 text-blue-800';
+    case 'POSTED':
+      return 'bg-green-100 text-green-800';
+    case 'REJECTED':
+      return 'bg-red-100 text-red-900';
+    case 'VOID':
+      return 'bg-gray-200 text-gray-700';
+    default:
+      return 'bg-gray-100 text-gray-700';
+  }
 }

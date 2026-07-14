@@ -10,7 +10,9 @@ const TABS: Array<{ href: string; label: string; exact?: boolean }> = [
   { href: '/accounts/students/installments', label: 'الأقساط' },
   { href: '/accounts/students/collections', label: 'التحصيلات' },
   { href: '/accounts/students/charges', label: 'المطالبات' },
+  { href: '/accounts/students/reliefs', label: 'الخصومات والمنح' },
   { href: '/accounts/students/fee-types', label: 'أنواع الرسوم' },
+  { href: '/accounts/students/relief-types', label: 'أنواع التخفيضات' },
 ];
 
 export default function StudentsNav() {
