@@ -2,6 +2,12 @@ import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
 import { toDateOnly } from './fiscal';
 
+/**
+ * يجب أن تبقى هذه القائمة متزامنة مع بذر accounts.document_sequence_types
+ * في db/migrations/073_document_sequence_types.sql (نفس document_type/prefix).
+ * الجدول المرجعي في القاعدة هو الآن مصدر قيد التحقق (FK) على document_sequences.document_type،
+ * وهذه القائمة تبقى مصدر التوليد الفعلي من الكود (createDefaultSequencesForYear).
+ */
 export const DOCUMENT_SEQUENCE_DEFAULTS = [
   { document_type: 'JOURNAL_ENTRY', prefix: 'JV' },
   { document_type: 'RECEIPT_VOUCHER', prefix: 'RV' },
