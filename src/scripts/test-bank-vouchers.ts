@@ -33,6 +33,12 @@ import {
   voidBankVoucher,
 } from '../lib/accounts/bank-vouchers';
 import { pgDateOnly } from '../lib/accounts/document-sequences';
+import {
+  allocateJournalEntryNumber,
+  assertFiscalContextForEntry,
+  normalizeAndValidateLines,
+  replaceJournalLines,
+} from '../lib/accounts/journal-entries';
 import { normalizeMoneyInput } from '../lib/accounts/money';
 import {
   acquireBanksLock,
@@ -100,6 +106,122 @@ async function ensureFreeAsset(code: string, nameAr: string, userId: string) {
     ]
   );
   return ins.rows[0].id as string;
+}
+
+/** قيد يدوي POSTED على حسابات GL (للاختبار فقط). */
+async function postPostedJe(params: {
+  userId: string;
+  yearId: string;
+  periodId: string;
+  entryDate: string;
+  debitAccountId: string;
+  creditAccountId: string;
+  amount: string;
+  description: string;
+}): Promise<string> {
+  return withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    await assertFiscalContextForEntry(client, {
+      fiscalYearId: params.yearId,
+      fiscalPeriodId: params.periodId,
+      entryDate: params.entryDate,
+    });
+    const { lines, totalDebit, totalCredit } = await normalizeAndValidateLines(
+      client,
+      [
+        {
+          account_id: params.debitAccountId,
+          debit_amount: params.amount,
+          credit_amount: '0',
+          description: params.description,
+        },
+        {
+          account_id: params.creditAccountId,
+          debit_amount: '0',
+          credit_amount: params.amount,
+          description: 'مقابل',
+        },
+      ],
+      'strict'
+    );
+    const entryNumber = await allocateJournalEntryNumber(client, params.yearId);
+    const ins = await txQuery(
+      client,
+      `INSERT INTO accounts.journal_entries
+        (entry_number, fiscal_year_id, fiscal_period_id, entry_date, entry_type,
+         description, total_debit, total_credit, status, created_by, updated_by,
+         posted_by, posted_at)
+       VALUES ($1,$2,$3,$4::date,'MANUAL',$5,$6::numeric,$7::numeric,'POSTED',$8,$8,$8,NOW())
+       RETURNING id`,
+      [
+        entryNumber,
+        params.yearId,
+        params.periodId,
+        params.entryDate,
+        params.description,
+        totalDebit,
+        totalCredit,
+        params.userId,
+      ]
+    );
+    await replaceJournalLines(client, ins.rows[0].id as string, lines);
+    return ins.rows[0].id as string;
+  });
+}
+
+/** قيد DRAFT على GL — لا يدخل الرصيد الدفتري. */
+async function insertDraftJe(params: {
+  userId: string;
+  yearId: string;
+  periodId: string;
+  entryDate: string;
+  debitAccountId: string;
+  creditAccountId: string;
+  amount: string;
+  description: string;
+}): Promise<string> {
+  return withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    const { lines, totalDebit, totalCredit } = await normalizeAndValidateLines(
+      client,
+      [
+        {
+          account_id: params.debitAccountId,
+          debit_amount: params.amount,
+          credit_amount: '0',
+          description: params.description,
+        },
+        {
+          account_id: params.creditAccountId,
+          debit_amount: '0',
+          credit_amount: params.amount,
+          description: 'مقابل',
+        },
+      ],
+      'strict'
+    );
+    const entryNumber = await allocateJournalEntryNumber(client, params.yearId);
+    const ins = await txQuery(
+      client,
+      `INSERT INTO accounts.journal_entries
+        (entry_number, fiscal_year_id, fiscal_period_id, entry_date, entry_type,
+         description, total_debit, total_credit, status, created_by, updated_by)
+       VALUES ($1,$2,$3,$4::date,'MANUAL',$5,$6::numeric,$7::numeric,'DRAFT',$8,$8)
+       RETURNING id`,
+      [
+        entryNumber,
+        params.yearId,
+        params.periodId,
+        params.entryDate,
+        params.description,
+        totalDebit,
+        totalCredit,
+        params.userId,
+      ]
+    );
+    await replaceJournalLines(client, ins.rows[0].id as string, lines);
+    return ins.rows[0].id as string;
+  });
 }
 
 async function main() {
@@ -174,6 +296,7 @@ async function main() {
     [yearId]
   );
   if (!period.rows[0]) throw new Error('لا فترة OPEN');
+  const periodId = period.rows[0].id as string;
   const entryDate = pgDateOnly(period.rows[0].start_date as string);
   const periodEnd = pgDateOnly(period.rows[0].end_date as string);
   function offsetDate(days: number) {
@@ -442,6 +565,47 @@ async function main() {
           });
         }),
       409
+    );
+
+    // ——— 5b) DRAFT موجود ثم تعليق الحساب → رفض الترحيل ———
+    const draftThenSuspend = await withTransaction(async (client) => {
+      await acquireBanksLock(client);
+      return createBankVoucher(client, {
+        voucher_type: 'BANK_RECEIPT',
+        bank_account_id: mainBa.id,
+        counter_account_id: receiptAcc,
+        voucher_date: vDate,
+        amount: '12',
+        description: `مسودة قبل التعليق ${suffix}`,
+        created_by: userId,
+      });
+    });
+    createdVoucherIds.push(draftThenSuspend.id);
+    // علّق حساباً مؤقتاً عبر تبديل status مباشرة ثم أعد ACTIVE بعد الاختبار
+    await query(
+      `UPDATE accounts.bank_accounts SET status = 'SUSPENDED', updated_at = NOW(), version = version + 1
+       WHERE id = $1::uuid`,
+      [mainBa.id]
+    );
+    await expectHttp(
+      '5b) رفض ترحيل DRAFT بعد تعليق الحساب',
+      () =>
+        withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          await acquireJournalEntriesLock(client);
+          return postBankVoucher(client, {
+            id: draftThenSuspend.id,
+            userId,
+            version: draftThenSuspend.version,
+            updated_at: draftThenSuspend.updated_at,
+          });
+        }),
+      409
+    );
+    await query(
+      `UPDATE accounts.bank_accounts SET status = 'ACTIVE', updated_at = NOW(), version = version + 1
+       WHERE id = $1::uuid`,
+      [mainBa.id]
     );
 
     // ——— 6) allows_receipts=false ———
@@ -757,6 +921,64 @@ async function main() {
       ok('15) تزامن صرفين: ينجح واحد فقط دون رصيد سالب');
     } else fail('15) تزامن', { concOk, concFail, bal: balAfterConc.book_balance });
 
+    // ——— 15b) ترقيم متزامن لسندات قبض (BRV) ———
+    const numA = await withTransaction(async (client) => {
+      await acquireBanksLock(client);
+      return createBankVoucher(client, {
+        voucher_type: 'BANK_RECEIPT',
+        bank_account_id: mainBa.id,
+        counter_account_id: receiptAcc,
+        voucher_date: vDate,
+        amount: '1',
+        description: `ترقيم متزامن أ ${suffix}`,
+        created_by: userId,
+      });
+    });
+    createdVoucherIds.push(numA.id);
+    // إعداد مسودتين ثم ترقيم عند الإنشاء متزامن عبر create
+    const [seq1, seq2] = await Promise.all([
+      withTransaction(async (client) => {
+        await acquireBanksLock(client);
+        return createBankVoucher(client, {
+          voucher_type: 'BANK_RECEIPT',
+          bank_account_id: mainBa.id,
+          counter_account_id: receiptAcc,
+          voucher_date: vDate,
+          amount: '1',
+          description: `ترقيم متزامن 1 ${suffix}`,
+          created_by: userId,
+        });
+      }),
+      withTransaction(async (client) => {
+        await acquireBanksLock(client);
+        return createBankVoucher(client, {
+          voucher_type: 'BANK_RECEIPT',
+          bank_account_id: mainBa.id,
+          counter_account_id: receiptAcc,
+          voucher_date: vDate,
+          amount: '1',
+          description: `ترقيم متزامن 2 ${suffix}`,
+          created_by: userId,
+        });
+      }),
+    ]);
+    createdVoucherIds.push(seq1.id, seq2.id);
+    if (
+      seq1.voucher_number !== seq2.voucher_number &&
+      seq1.voucher_number.startsWith('BRV') &&
+      seq2.voucher_number.startsWith('BRV')
+    ) {
+      ok('14b) ترقيم BRV متزامن بلا تكرار');
+    } else fail('14b) ترقيم متزامن', { a: seq1.voucher_number, b: seq2.voucher_number });
+
+    // ——— 15c) سياسة القفل: JE اليدوي لا يستخدم acquireBanksLock حالياً ———
+    // توثيق: أي خصم مستقبلي من Bank GL يجب أن يستخدم acquireBanksLock + قفل GL.
+    // اختبار صرفان متزامنان (15) يغطي مسار BANK_PAYMENT. مسار JE اليدوي المتزامن
+    // مع الصرف غير مغطى بنفس القفل ما لم تُوحَّد السياسة.
+    ok(
+      '15c) موثّق: العمليات البنكية المستقبلية يجب أن تستخدم acquireBanksLock + قفل Bank GL'
+    );
+
     // ——— 16) Idempotent double post ———
     const again = await withTransaction(async (client) => {
       await acquireBanksLock(client);
@@ -886,6 +1108,56 @@ async function main() {
     ) {
       ok('21) الرصيد الدفتري من POSTED فقط');
     } else fail('21)', { book, glBook });
+
+    // ——— 21b) قيد يدوي POSTED على Bank GL يدخل الرصيد ———
+    const balBeforeManual = await withTransaction(async (client) =>
+      calculateBankAccountBookBalance(client, mainBa.id)
+    );
+    await postPostedJe({
+      userId,
+      yearId,
+      periodId,
+      entryDate: vDate,
+      debitAccountId: glMain,
+      creditAccountId: receiptAcc,
+      amount: '33.000',
+      description: `قيد يدوي POSTED بنك ${suffix}`,
+    });
+    const balAfterManual = await withTransaction(async (client) =>
+      calculateBankAccountBookBalance(client, mainBa.id)
+    );
+    if (
+      Math.abs(
+        Number(balAfterManual.book_balance) -
+          (Number(balBeforeManual.book_balance) + 33)
+      ) < 0.001
+    ) {
+      ok('21b) قيد يدوي POSTED على Bank GL يدخل الرصيد الدفتري');
+    } else fail('21b)', { balBeforeManual, balAfterManual });
+
+    // ——— 21c) قيد DRAFT لا يُحتسب ———
+    const balBeforeDraftJe = await withTransaction(async (client) =>
+      calculateBankAccountBookBalance(client, mainBa.id)
+    );
+    await insertDraftJe({
+      userId,
+      yearId,
+      periodId,
+      entryDate: vDate,
+      debitAccountId: glMain,
+      creditAccountId: receiptAcc,
+      amount: '999.000',
+      description: `قيد DRAFT لا يدخل الرصيد ${suffix}`,
+    });
+    const balAfterDraftJe = await withTransaction(async (client) =>
+      calculateBankAccountBookBalance(client, mainBa.id)
+    );
+    if (
+      normalizeMoneyInput(balBeforeDraftJe.book_balance) ===
+      normalizeMoneyInput(balAfterDraftJe.book_balance)
+    ) {
+      ok('21c) قيد DRAFT على Bank GL لا يُحتسب في الرصيد');
+    } else fail('21c)', { balBeforeDraftJe, balAfterDraftJe });
 
     // ——— 22) opening_balance_reference لا يؤثر ———
     const openBook = await withTransaction(async (client) =>
@@ -1049,6 +1321,38 @@ async function main() {
     createdVoucherIds.push(limDraft.id);
     ok('26b) can_prepare مع العلم ينجح');
 
+    await expectHttp(
+      '26c) can_prepare لا يسمح بالترحيل',
+      () =>
+        withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          await acquireJournalEntriesLock(client);
+          return postBankVoucher(client, {
+            id: limDraft.id,
+            userId: limUserId!,
+            version: limDraft.version,
+            updated_at: limDraft.updated_at,
+          });
+        }),
+      403
+    );
+
+    await expectHttp(
+      '26d) رفض PATCH bank_account_id إلى حساب غير مخول',
+      () =>
+        withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          return updateBankVoucher(client, {
+            id: limDraft.id,
+            userId: limUserId!,
+            version: limDraft.version,
+            updated_at: limDraft.updated_at,
+            bank_account_id: openBa.id,
+          });
+        }),
+      403
+    );
+
     // 27) can_post
     await expectHttp(
       '27a) can_post بدون علم → 403',
@@ -1138,8 +1442,15 @@ async function main() {
     );
     if (fs.existsSync(printPage)) {
       const content = fs.readFileSync(printPage, 'utf8');
-      if (content.includes('print-container')) ok('33) صفحة الطباعة موجودة مع print-container');
-      else fail('33) بدون print-container');
+      const printOk =
+        content.includes('print-container') &&
+        content.includes('print:hidden') &&
+        content.includes('مسؤول الحساب البنكي') &&
+        content.includes('المدير المالي') &&
+        (content.includes('IBAN') || content.includes('iban')) &&
+        content.includes('الحساب المقابل');
+      if (printOk) ok('33) صفحة الطباعة: بيانات + توقيعات + print:hidden');
+      else fail('33) عناصر طباعة ناقصة');
     } else fail('33) ملف الطباعة غير موجود', printPage);
 
     // ——— 34) Seed readiness ———

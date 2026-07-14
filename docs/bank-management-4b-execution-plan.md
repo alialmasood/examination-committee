@@ -55,7 +55,8 @@
 - الترحيل داخل معاملة مع `acquireBanksLock` + محرك القيود.
 - `source_type` = نوع السند · `source_id` = معرف السند · `entry_type` = `RECEIPT` / `PAYMENT`.
 - منع: حساب غير ACTIVE · تعطيل مصرف/فرع · `allows_receipts/payments = false` · عملة مختلفة · مقابل = GL البنك · حساب تجميعي/غير ترحيلي · صرف بمبلغ أكبر من الرصيد الدفتري المتاح.
-- تزامن الصرف: قفل صفوف سندات الحساب + فحص الرصيد داخل القفل؛ صرفان متزامنان لا يجوز أن يُرجعا رصيداً سالباً.
+- تزامن الصرف: بعد `acquireBanksLock` يُقفل صف الحساب البنكي ثم صف **Bank GL** (`chart_of_accounts … FOR UPDATE`) ثم صفوف `bank_vouchers` للحساب، ويُحسب الرصيد من دفتر الأستاذ POSTED داخل نفس المعاملة قبل الخصم. صرفان متزامنان لا يجوز أن يُرجعا رصيداً سالباً.
+- **سياسة قفل مُلزمة:** أي عملية بنكية مستقبلية تخصم من رصيد Bank GL (تحويل، شيك، تسوية، قيد يؤثر على البنك عبر مسار بنكي…) يجب أن تستخدم `acquireBanksLock` + قفل صف Bank GL قبل فحص الرصيد. قفل `bank_vouchers` وحده غير كافٍ لأن قيوداً أخرى قد تستخدم نفس الـ GL.
 
 ## سياسة الرصيد الدفتري
 
@@ -78,9 +79,10 @@
 1. **دخول النظام:** `requireAccountsAccess` (توكن + نظام `ACCOUNTS`) → 401 / 403.
 2. **على الحساب البنكي** عبر `bank_account_users`:
    - `can_view` · `can_prepare` (إنشاء/تعديل مسودة) · `can_post` (ترحيل/إلغاء مرحّل)
-3. **تجاوز privileged:** أسماء المستخدم `accounts` أو `admin` (و`superadmin` / `super_admin`) عبر `isAccountsPrivilegedUser` — لا يحتاجون صفاً في `bank_account_users`.
-4. **IDOR:** مستخدم ACCOUNTS بلا تعيين على `bank_account_id` → 403 عند الإعداد/الترحيل.
+3. **تجاوز privileged (مؤقت):** لا يوجد Role/صلاحية رسمية «Accounts Admin» على نظام ACCOUNTS حالياً. التجاوز مركزي فقط في `bank-account-access.ts` عبر مطابقة دقيقة لـ `username` من قاعدة البيانات (`accounts` / `admin` / `superadmin` / `super_admin`) — **لا** يُعتمد على اسم العرض أو قيمة عميل. يجب استبداله لاحقاً بدور/صلاحية رسمية.
+4. **IDOR:** مستخدم ACCOUNTS بلا تعيين على `bank_account_id` → 403 عند العرض/الإعداد/الترحيل/تفاصيل السند.
 5. خيارات العمليات تعرض حسابات **ACTIVE** فقط (لا `SUSPENDED`/`CLOSED`).
+6. تاريخ القيد المحاسبي = `voucher_date` (وليس `value_date`). القيد العكسي يستخدم أيضاً `voucher_date`.
 
 ## APIs
 

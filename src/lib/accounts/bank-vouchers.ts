@@ -554,16 +554,24 @@ export async function updateBankVoucher(
     throw new AccountsHttpError('يمكن تعديل المسودات فقط', 409);
   }
 
+  // صلاحية الإعداد على الحساب الحالي أولاً (منع سحب سند عبر تغيير الحساب)
+  await assertCanPrepareBankAccount(client, {
+    bankAccountId: voucher.bank_account_id,
+    userId: params.userId,
+  });
+
   let bankAccountId = voucher.bank_account_id;
   if (params.bank_account_id !== undefined) {
     bankAccountId = String(params.bank_account_id || '').trim();
     if (!bankAccountId) throw new AccountsHttpError('الحساب المصرفي مطلوب', 400);
   }
 
-  await assertCanPrepareBankAccount(client, {
-    bankAccountId,
-    userId: params.userId,
-  });
+  if (bankAccountId !== voucher.bank_account_id) {
+    await assertCanPrepareBankAccount(client, {
+      bankAccountId,
+      userId: params.userId,
+    });
+  }
 
   let voucherType = voucher.voucher_type;
   if (params.voucher_type !== undefined) {
@@ -765,8 +773,19 @@ export async function postBankVoucher(
   const amount = normalizeMoneyInput(voucher.amount);
 
   if (voucher.voucher_type === 'BANK_PAYMENT') {
-    // تسلسل الصرف: قفل جميع سندات الحساب + صف الحساب
+    // تسلسل الصرف داخل نفس المعاملة بعد acquireBanksLock:
+    // 1) قفل صف الحساب البنكي
+    // 2) قفل صف Bank GL — يمنع تزامن أي عملية أخرى تقفل نفس الـ GL قبل الخصم
+    // 3) قفل سندات الحساب
+    // 4) حساب الرصيد من دفتر الأستاذ POSTED ثم الفحص
+    // سياسة: كل عملية بنكية مستقبلية تخصم من الرصيد يجب أن تستخدم acquireBanksLock
+    // وأن تقفل صف Bank GL (FOR UPDATE) قبل فحص الرصيد.
     await loadBankAccount(client, voucher.bank_account_id, true);
+    await txQuery(
+      client,
+      `SELECT id FROM accounts.chart_of_accounts WHERE id = $1::uuid FOR UPDATE`,
+      [bankAcc.gl_account_id]
+    );
     await txQuery(
       client,
       `SELECT id FROM accounts.bank_vouchers

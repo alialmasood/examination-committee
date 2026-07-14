@@ -179,7 +179,7 @@ export default function BankVoucherDetailPage() {
               </span>
             </h1>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 print:hidden">
             <button
               type="button"
               className="px-3 py-2 border rounded-md text-sm"
@@ -461,18 +461,21 @@ export default function BankVoucherDetailPage() {
           </div>
         )}
 
-        <div className="hidden print:grid grid-cols-2 gap-8 pt-10 text-sm text-center">
+        <div className="hidden print:grid grid-cols-5 gap-4 pt-10 text-sm text-center">
           <div>
-            <div className="border-t pt-2">المستلم / الدافع</div>
+            <div className="border-t border-gray-800 pt-2">المستفيد / الدافع</div>
           </div>
           <div>
-            <div className="border-t pt-2">أمين الحسابات</div>
+            <div className="border-t border-gray-800 pt-2">المحاسب</div>
           </div>
           <div>
-            <div className="border-t pt-2">المحاسب</div>
+            <div className="border-t border-gray-800 pt-2">مسؤول الحساب البنكي</div>
           </div>
           <div>
-            <div className="border-t pt-2">التدقيق</div>
+            <div className="border-t border-gray-800 pt-2">المدير المالي</div>
+          </div>
+          <div>
+            <div className="border-t border-gray-800 pt-2">التدقيق</div>
           </div>
         </div>
       </div>

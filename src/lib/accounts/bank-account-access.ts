@@ -1,6 +1,11 @@
 /**
  * صلاحيات العمليات على الحساب البنكي عبر bank_account_users (4.B).
- * Accounts Admin / Super Admin (usernames موثّقة) يتجاوز التخصيص.
+ *
+ * تجاوز الإدارة:
+ * لا يوجد حالياً Role رسمي خاص بـ «Accounts Admin» مربوط بنظام ACCOUNTS
+ * (platform.user_system_roles فارغ لـ ACCOUNTS؛ أدوار student_affairs عامة فقط).
+ * لذلك التجاوز مؤقت ومركزي هنا فقط عبر مطابقة دقيقة لـ username من قاعدة البيانات.
+ * يجب استبداله لاحقاً بصلاحية/دور رسمي دون الاعتماد على أسماء المستخدمين.
  */
 import { AccountsHttpError } from './auth';
 import type { TxClient } from './with-transaction';
@@ -13,19 +18,34 @@ export type BankAccountPermissionFlag =
   | 'can_approve'
   | 'can_reconcile';
 
-/** مستخدمون نظاميون يُعتبرون حسابات Admin ويتجاوزون تخصيص البنك */
-export function isPrivilegedAccountsUsername(username: string | null | undefined): boolean {
+/** قائمة مؤقتة — مطابقة دقيقة بعد trim + lower للحقل المخزّن فقط */
+const PRIVILEGED_ACCOUNTS_USERNAMES = new Set([
+  'accounts',
+  'admin',
+  'superadmin',
+  'super_admin',
+]);
+
+/** مستخدمون نظاميون يُعتبرون حسابات Admin ويتجاوزون تخصيص البنك (حل مؤقت). */
+export function isPrivilegedAccountsUsername(
+  username: string | null | undefined
+): boolean {
   const u = String(username ?? '').trim().toLowerCase();
-  return u === 'accounts' || u === 'admin' || u === 'superadmin' || u === 'super_admin';
+  if (!u) return false;
+  return PRIVILEGED_ACCOUNTS_USERNAMES.has(u);
 }
 
+/**
+ * يقرأ username من DB بالمعرّف فقط — لا يعتمد على JWT display name أو قيمة عميل.
+ */
 export async function isAccountsPrivilegedUser(
   client: TxClient,
   userId: string
 ): Promise<boolean> {
   const r = await txQuery<{ username: string }>(
     client,
-    `SELECT username FROM student_affairs.users WHERE id = $1::uuid AND is_active`,
+    `SELECT username FROM student_affairs.users
+     WHERE id = $1::uuid AND is_active = TRUE`,
     [userId]
   );
   if (!r.rows[0]) return false;
@@ -38,9 +58,17 @@ async function loadAssignmentFlag(
   userId: string,
   flag: BankAccountPermissionFlag
 ): Promise<boolean> {
+  const allowedCols: Record<BankAccountPermissionFlag, string> = {
+    can_view: 'can_view',
+    can_prepare: 'can_prepare',
+    can_post: 'can_post',
+    can_approve: 'can_approve',
+    can_reconcile: 'can_reconcile',
+  };
+  const col = allowedCols[flag];
   const r = await txQuery(
     client,
-    `SELECT ${flag} AS allowed
+    `SELECT ${col} AS allowed
      FROM accounts.bank_account_users
      WHERE bank_account_id = $1::uuid AND user_id = $2::uuid
      LIMIT 1`,
@@ -103,6 +131,6 @@ export async function assertCanPostBankAccount(
   await assertBankAccountPermission(client, {
     ...params,
     flag: 'can_post',
-    actionLabel: 'ترحيل',
+    actionLabel: 'ترحيل/إلغاء مرحّل',
   });
 }
