@@ -6,6 +6,7 @@ import { AccountsHttpError } from './auth';
 import { loadBank } from './banks';
 import { loadBankBranch } from './bank-branches';
 import { assertCashSessionOptimisticConcurrency } from './cash-session-concurrency';
+import { normalizeCurrencyCode } from './currency';
 import {
   moneyEquals,
   normalizeSignedMoneyInput,
@@ -125,12 +126,9 @@ export function formatIbanDisplay(iban: string | null | undefined): string | nul
   return n.replace(/(.{4})/g, '$1 ').trim();
 }
 
+/** تطبيع عملة — يفوّض إلى helper موحّد Sprint A */
 function normalizeCurrency(value: unknown): string {
-  const s = String(value ?? 'IQD').trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(s)) {
-    throw new AccountsHttpError('رمز العملة يجب أن يكون 3 أحرف (ISO)', 400);
-  }
-  return s;
+  return normalizeCurrencyCode(value, 'IQD');
 }
 
 function normalizeCode(value: unknown): string {
