@@ -253,3 +253,258 @@ export function formatDateOnly(value: string | null | undefined): string {
   if (!value) return '—';
   return String(value).slice(0, 10);
 }
+
+// ——— المرحلة 5.B: خطط الرسوم والأقساط والتحصيل ———
+
+export type StudentBillingPlanStatus =
+  | 'DRAFT'
+  | 'ACTIVE'
+  | 'COMPLETED'
+  | 'CANCELLED';
+
+export type StudentInstallmentStatus =
+  | 'PENDING'
+  | 'DUE'
+  | 'PARTIALLY_PAID'
+  | 'PAID'
+  | 'CANCELLED';
+
+export type StudentCollectionStatus = 'DRAFT' | 'POSTED' | 'VOID';
+export type StudentCollectionPaymentMethod = 'CASH' | 'BANK';
+
+export type StudentBillingPlanListItem = {
+  id: string;
+  plan_number: string;
+  student_account_id: string;
+  student_id: string;
+  fee_type_id: string;
+  academic_year_id: string | null;
+  academic_year: string | null;
+  fiscal_year_id: string;
+  currency_code: string;
+  total_amount: string;
+  installment_count: number;
+  status: StudentBillingPlanStatus;
+  description: string;
+  external_reference: string | null;
+  activated_at: string | null;
+  activated_by: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  cancellation_reason: string | null;
+  created_by: string;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  fee_type_code?: string | null;
+  fee_type_name_ar?: string | null;
+  account_number?: string | null;
+  student_full_name_ar?: string | null;
+};
+
+export type StudentInstallmentItem = {
+  id: string;
+  billing_plan_id: string;
+  student_account_id: string;
+  installment_number: number;
+  due_date: string;
+  amount: string;
+  paid_amount: string;
+  outstanding_amount: string;
+  status: StudentInstallmentStatus;
+  student_charge_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  plan_number?: string | null;
+  charge_number?: string | null;
+  account_number?: string | null;
+  student_full_name_ar?: string | null;
+};
+
+export type StudentBillingPlanDetail = StudentBillingPlanListItem & {
+  student_university_id?: string | null;
+  installments: StudentInstallmentItem[];
+};
+
+export type StudentCollectionListItem = {
+  id: string;
+  collection_number: string;
+  student_account_id: string;
+  student_id: string;
+  collection_date: string;
+  amount: string;
+  currency_code: string;
+  payment_method: StudentCollectionPaymentMethod;
+  cash_box_id: string | null;
+  cash_box_session_id: string | null;
+  bank_account_id: string | null;
+  cash_voucher_id: string | null;
+  bank_voucher_id: string | null;
+  external_reference: string | null;
+  payer_name: string | null;
+  description: string;
+  status: StudentCollectionStatus;
+  fiscal_year_id: string | null;
+  fiscal_period_id: string | null;
+  posted_at: string | null;
+  posted_by: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  created_by: string;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  account_number?: string | null;
+  student_full_name_ar?: string | null;
+};
+
+export type StudentCollectionAllocation = {
+  id: string;
+  collection_id: string;
+  student_installment_id: string | null;
+  student_charge_id: string;
+  allocated_amount: string;
+  created_by: string;
+  created_at: string;
+  charge_number?: string | null;
+  installment_number?: number | null;
+  installment_due_date?: string | null;
+};
+
+export type StudentCollectionDetail = StudentCollectionListItem & {
+  student_university_id?: string | null;
+  cash_voucher_number?: string | null;
+  bank_voucher_number?: string | null;
+  allocations: StudentCollectionAllocation[];
+};
+
+export type AllocationPreviewRow = {
+  student_charge_id: string;
+  student_installment_id: string | null;
+  charge_number: string | null;
+  installment_number: number | null;
+  due_date: string | null;
+  charge_outstanding: string;
+  allocated_amount: string;
+};
+
+export type CollectionOptions = {
+  cash_boxes: Array<{
+    id: string;
+    code: string;
+    name_ar: string;
+    status: string;
+    currency_code: string;
+  }>;
+  open_sessions: Array<{
+    id: string;
+    cash_box_id: string;
+    session_date: string;
+    status: string;
+    fiscal_year_id: string;
+    fiscal_period_id: string;
+    cash_box_code: string;
+    cash_box_name_ar: string;
+  }>;
+  bank_accounts: Array<{
+    id: string;
+    code: string;
+    account_name_ar: string;
+    bank_id: string;
+    bank_code: string;
+    bank_name_ar: string;
+    currency_code: string;
+    allows_receipts: boolean;
+    status: string;
+  }>;
+  payment_methods: Array<{ code: string; name_ar: string }>;
+  collection_statuses: Array<{ code: string; name_ar: string }>;
+};
+
+export const BILLING_PLAN_API = '/api/accounts/student-billing-plans';
+export const COLLECTIONS_API = '/api/accounts/student-collections';
+export const COLLECTION_OPTIONS_API = '/api/accounts/student-collections/options';
+
+export const BILLING_PLAN_STATUS_LABEL: Record<StudentBillingPlanStatus, string> = {
+  DRAFT: 'مسودة',
+  ACTIVE: 'فعّالة',
+  COMPLETED: 'مكتملة',
+  CANCELLED: 'ملغاة',
+};
+
+export const INSTALLMENT_STATUS_LABEL: Record<StudentInstallmentStatus, string> = {
+  PENDING: 'قادم',
+  DUE: 'مستحق',
+  PARTIALLY_PAID: 'مسدد جزئياً',
+  PAID: 'مسدد',
+  CANCELLED: 'ملغى',
+};
+
+export const COLLECTION_STATUS_LABEL: Record<StudentCollectionStatus, string> = {
+  DRAFT: 'مسودة',
+  POSTED: 'مرحّل',
+  VOID: 'ملغى',
+};
+
+export const PAYMENT_METHOD_LABEL: Record<StudentCollectionPaymentMethod, string> = {
+  CASH: 'نقدي',
+  BANK: 'مصرفي',
+};
+
+export function billingPlanStatusBadge(status: string): string {
+  switch (status) {
+    case 'DRAFT':
+      return 'bg-yellow-100 text-yellow-900';
+    case 'ACTIVE':
+      return 'bg-green-100 text-green-800';
+    case 'COMPLETED':
+      return 'bg-emerald-100 text-emerald-800';
+    case 'CANCELLED':
+      return 'bg-gray-200 text-gray-700';
+    default:
+      return 'bg-gray-100 text-gray-700';
+  }
+}
+
+export function installmentStatusBadge(status: string): string {
+  switch (status) {
+    case 'PENDING':
+      return 'bg-blue-100 text-blue-800';
+    case 'DUE':
+      return 'bg-orange-100 text-orange-900';
+    case 'PARTIALLY_PAID':
+      return 'bg-amber-100 text-amber-900';
+    case 'PAID':
+      return 'bg-emerald-100 text-emerald-800';
+    case 'CANCELLED':
+      return 'bg-gray-200 text-gray-700';
+    default:
+      return 'bg-gray-100 text-gray-700';
+  }
+}
+
+export function collectionStatusBadge(status: string): string {
+  switch (status) {
+    case 'DRAFT':
+      return 'bg-yellow-100 text-yellow-900';
+    case 'POSTED':
+      return 'bg-green-100 text-green-800';
+    case 'VOID':
+      return 'bg-gray-200 text-gray-700';
+    default:
+      return 'bg-gray-100 text-gray-700';
+  }
+}
+
+export function sumMoneyValues(values: Array<string | number | null | undefined>): number {
+  let total = 0;
+  for (const v of values) {
+    const n = Number(v ?? 0);
+    if (Number.isFinite(n)) total += n;
+  }
+  return total;
+}

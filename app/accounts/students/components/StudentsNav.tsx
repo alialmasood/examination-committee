@@ -6,6 +6,9 @@ import { usePathname } from 'next/navigation';
 const TABS: Array<{ href: string; label: string; exact?: boolean }> = [
   { href: '/accounts/students', label: 'الملخص', exact: true },
   { href: '/accounts/students/accounts', label: 'الحسابات' },
+  { href: '/accounts/students/billing-plans', label: 'خطط الرسوم' },
+  { href: '/accounts/students/installments', label: 'الأقساط' },
+  { href: '/accounts/students/collections', label: 'التحصيلات' },
   { href: '/accounts/students/charges', label: 'المطالبات' },
   { href: '/accounts/students/fee-types', label: 'أنواع الرسوم' },
 ];
