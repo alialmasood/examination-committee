@@ -29,10 +29,14 @@ async function main(): Promise<void> {
     `حسابات GL الذمم المستخدمة: ${result.details.receivable_gl_account_ids.length}`
   );
   console.log(`Subledger (B): ${result.total_student_subledger}`);
-  console.log(`GL مطالبات (A): ${result.charge_sourced_gl_balance}`);
+  console.log(
+    `GL عمليات الذمم (A): ${result.charge_sourced_gl_balance} (مطالبات + تحصيلات)`
+  );
   console.log(`الفرق (B − A): ${result.difference}`);
   console.log(`إجمالي GL على الذمم: ${result.total_gl_balance}`);
   console.log(`نشاط GL غير مفسَّر: ${result.unexplained_gl_activity}`);
+  console.log(`تحصيلات مرحّلة: ${result.details.collections_posted_count}`);
+  console.log(`allocations_sum_ok: ${result.details.allocations_sum_ok}`);
   console.log(`charge_subledger_match: ${result.charge_subledger_match}`);
   console.log(`ok: ${result.ok}`);
 
@@ -43,19 +47,21 @@ async function main(): Promise<void> {
 
   for (const g of result.details.gl_accounts) {
     console.log(
-      `  - ${g.code ?? g.account_id}: مطالبات=${g.charge_sourced_balance} · كامل=${g.full_gl_balance}`
+      `  - ${g.code ?? g.account_id}: عمليات=${g.charge_sourced_balance} · كامل=${g.full_gl_balance}`
     );
   }
 
   if (!result.ok || !result.charge_subledger_match) {
-    console.error('❌ عدم تطابق A↔B (قيود المطالبات ↔ الدفتر الفرعي) أو أيتام/فروق.');
+    console.error(
+      '❌ عدم تطابق A↔B (عمليات الذمم ↔ الدفتر الفرعي) أو أيتام/فروق/تخصيصات.'
+    );
     process.exitCode = 1;
     return;
   }
 
   if (strict && hasUnexplainedGlActivity(result)) {
     console.error(
-      '❌ --strict: يوجد نشاط GL غير مفسَّر على حسابات الذمم (قيود غير مطالبات).'
+      '❌ --strict: يوجد نشاط GL غير مفسَّر على حسابات الذمم (قيود غير عمليات الطلبة).'
     );
     process.exitCode = 1;
     return;
@@ -63,11 +69,13 @@ async function main(): Promise<void> {
 
   if (hasUnexplainedGlActivity(result)) {
     console.log(
-      '⚠️ توجد قيود غير مطالبات على نفس GL الذمم (unexplained) — الوضع العادي يعتبر A↔B ناجحاً.'
+      '⚠️ توجد قيود غير عمليات طلبة على نفس GL الذمم (unexplained) — الوضع العادي يعتبر A↔B ناجحاً.'
     );
   }
 
-  console.log('✅ Subledger متطابق مع قيود STUDENT_CHARGE على GL الذمم.');
+  console.log(
+    '✅ Subledger متطابق مع قيود المطالبات وتحصيلات الطلبة على GL الذمم.'
+  );
 }
 
 main()

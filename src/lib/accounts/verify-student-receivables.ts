@@ -1,15 +1,15 @@
 /**
- * التحقق من تطابق Student Subledger مع أثر قيود المطالبات على GL الذمم.
+ * التحقق من تطابق Student Subledger مع عمليات الذمم على GL.
  *
- * مقارنة A↔B:
- * - A = مجموع خطوط JE المرحّلة على حسابات الذمم بمصادر
- *   STUDENT_CHARGE / STUDENT_CHARGE_REVERSAL
+ * مقارنة A↔B (5.A + 5.B):
+ * - A = مجموع خطوط JE المرحّلة على حسابات الذمم من:
+ *   • STUDENT_CHARGE / STUDENT_CHARGE_REVERSAL
+ *   • قيود سندات قبض/عكس مرتبطة بتحصيلات الطلبة (cash/bank voucher)
  * - B = مجموع الدفتر الفرعي (باستثناء OPENING_REFERENCE)
+ *   يشمل CHARGE / CHARGE_REVERSAL / COLLECTION / COLLECTION_REVERSAL
  *
- * يتتبع أيضاً الأيتام (قيد بلا دفتر / دفتر بلا قيد) وفروق المبالغ لكل مصدر،
- * ونشاط GL غير مفسَّر (قيود أخرى على نفس حسابات الذمم).
- *
- * لا يستثني أي كود حساب نقدي من التقرير — يُبلَّغ كله في unexplained.
+ * unexplained = كامل GL على الذمم − A (يشمل Legacy مثل نشاط نقدي على 1111).
+ * لا استثناء عام لأي كود حساب.
  */
 import {
   moneyEquals,
@@ -46,16 +46,15 @@ export type StudentReceivablesAmountMismatch = {
 };
 
 export type StudentReceivablesVerifyResult = {
-  /** تطابق A↔B بدون أيتام أو فروق مبالغ */
   ok: boolean;
-  /** تطابق مجاميع A (قيود المطالبات) مع B (الدفتر الفرعي) */
+  /** تطابق مجاميع A (عمليات الذمم) مع B (الدفتر الفرعي) */
   charge_subledger_match: boolean;
   unexplained_gl_activity: string;
-  /** كامل رصيد GL المرحّل على حسابات الذمم المستخدمة */
   total_gl_balance: string;
   total_student_subledger: string;
+  /** رصيد GL من عمليات الطلبة فقط (مطالبات + تحصيلات عبر السندات) */
   charge_sourced_gl_balance: string;
-  /** Subledger − charge-sourced GL */
+  /** Subledger − operations-sourced GL */
   difference: string;
   orphans: {
     journal_without_ledger: StudentReceivablesOrphanJournal[];
@@ -66,6 +65,8 @@ export type StudentReceivablesVerifyResult = {
     receivable_gl_account_ids: string[];
     student_accounts_count: number;
     ledger_entries_count: number;
+    collections_posted_count: number;
+    allocations_sum_ok: boolean;
     gl_accounts: Array<{
       account_id: string;
       code: string | null;
@@ -75,7 +76,7 @@ export type StudentReceivablesVerifyResult = {
   };
 };
 
-function expectedLedgerEntryType(jeSourceType: string): string {
+function expectedChargeLedgerEntryType(jeSourceType: string): string {
   if (jeSourceType === 'STUDENT_CHARGE_REVERSAL') return 'CHARGE_REVERSAL';
   return 'CHARGE';
 }
@@ -83,6 +84,55 @@ function expectedLedgerEntryType(jeSourceType: string): string {
 function sourceKey(entryType: string, sourceId: string): string {
   return `${entryType}::${sourceId}`;
 }
+
+/**
+ * أثر تحصيلات الطلبة على GL الذمم: أسطر القيد على receivable_gl
+ * الخاص بحساب الطالب فقط (لا تُخلط مع 1111 إن وُجد خطأً كذمم).
+ */
+const COLLECTION_RECV_NET_SQL = `
+  SELECT COALESCE(SUM(x.net), 0)
+  FROM (
+    SELECT SUM(l.debit_amount - l.credit_amount) AS net
+    FROM accounts.student_collections sc
+    JOIN accounts.student_accounts sa ON sa.id = sc.student_account_id
+    JOIN accounts.cash_vouchers cv ON cv.id = sc.cash_voucher_id
+    JOIN accounts.journal_entries e ON e.id = cv.journal_entry_id AND e.status = 'POSTED'
+    JOIN accounts.journal_entry_lines l
+      ON l.journal_entry_id = e.id
+     AND l.account_id = sa.receivable_gl_account_id
+    WHERE sa.receivable_gl_account_id = a.id
+    UNION ALL
+    SELECT SUM(l.debit_amount - l.credit_amount)
+    FROM accounts.student_collections sc
+    JOIN accounts.student_accounts sa ON sa.id = sc.student_account_id
+    JOIN accounts.cash_vouchers cv ON cv.id = sc.cash_voucher_id
+    JOIN accounts.journal_entries e ON e.id = cv.reversal_journal_entry_id AND e.status = 'POSTED'
+    JOIN accounts.journal_entry_lines l
+      ON l.journal_entry_id = e.id
+     AND l.account_id = sa.receivable_gl_account_id
+    WHERE sa.receivable_gl_account_id = a.id
+    UNION ALL
+    SELECT SUM(l.debit_amount - l.credit_amount)
+    FROM accounts.student_collections sc
+    JOIN accounts.student_accounts sa ON sa.id = sc.student_account_id
+    JOIN accounts.bank_vouchers bv ON bv.id = sc.bank_voucher_id
+    JOIN accounts.journal_entries e ON e.id = bv.journal_entry_id AND e.status = 'POSTED'
+    JOIN accounts.journal_entry_lines l
+      ON l.journal_entry_id = e.id
+     AND l.account_id = sa.receivable_gl_account_id
+    WHERE sa.receivable_gl_account_id = a.id
+    UNION ALL
+    SELECT SUM(l.debit_amount - l.credit_amount)
+    FROM accounts.student_collections sc
+    JOIN accounts.student_accounts sa ON sa.id = sc.student_account_id
+    JOIN accounts.bank_vouchers bv ON bv.id = sc.bank_voucher_id
+    JOIN accounts.journal_entries e ON e.id = bv.reversal_journal_entry_id AND e.status = 'POSTED'
+    JOIN accounts.journal_entry_lines l
+      ON l.journal_entry_id = e.id
+     AND l.account_id = sa.receivable_gl_account_id
+    WHERE sa.receivable_gl_account_id = a.id
+  ) x
+`;
 
 export async function verifyStudentReceivables(
   client: TxClient
@@ -108,6 +158,25 @@ export async function verifyStudentReceivables(
     `SELECT COUNT(*)::int AS n FROM accounts.student_ledger_entries
      WHERE entry_type <> 'OPENING_REFERENCE'`
   );
+  const collCount = await txQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int AS n FROM accounts.student_collections WHERE status = 'POSTED'`
+  );
+
+  const allocCheck = await txQuery<{ bad: number }>(
+    client,
+    `SELECT COUNT(*)::int AS bad
+     FROM accounts.student_collections sc
+     WHERE sc.status IN ('DRAFT', 'POSTED')
+       AND ABS(
+         sc.amount - COALESCE((
+           SELECT SUM(a.allocated_amount)
+           FROM accounts.student_collection_allocations a
+           WHERE a.collection_id = sc.id
+         ), 0)
+       ) > 0.0005`
+  );
+  const allocationsSumOk = (allocCheck.rows[0]?.bad ?? 0) === 0;
 
   const sub = await txQuery<{ balance: string }>(
     client,
@@ -119,7 +188,7 @@ export async function verifyStudentReceivables(
     sub.rows[0]?.balance ?? '0'
   );
 
-  let chargeGlMillis = BigInt(0);
+  let opsGlMillis = BigInt(0);
   let fullGlMillis = BigInt(0);
   const glAccounts: StudentReceivablesVerifyResult['details']['gl_accounts'] =
     [];
@@ -128,20 +197,23 @@ export async function verifyStudentReceivables(
     const gl = await txQuery<{
       account_id: string;
       code: string | null;
-      charge_net: string;
+      ops_net: string;
       full_net: string;
     }>(
       client,
       `SELECT a.id::text AS account_id,
               a.code,
-              COALESCE((
-                SELECT SUM(l.debit_amount - l.credit_amount)
-                FROM accounts.journal_entry_lines l
-                INNER JOIN accounts.journal_entries e ON e.id = l.journal_entry_id
-                WHERE l.account_id = a.id
-                  AND e.status = 'POSTED'
-                  AND e.source_type IN ('STUDENT_CHARGE', 'STUDENT_CHARGE_REVERSAL')
-              ), 0)::text AS charge_net,
+              (
+                COALESCE((
+                  SELECT SUM(l.debit_amount - l.credit_amount)
+                  FROM accounts.journal_entry_lines l
+                  INNER JOIN accounts.journal_entries e ON e.id = l.journal_entry_id
+                  WHERE l.account_id = a.id
+                    AND e.status = 'POSTED'
+                    AND e.source_type IN ('STUDENT_CHARGE', 'STUDENT_CHARGE_REVERSAL')
+                ), 0)
+                + COALESCE((${COLLECTION_RECV_NET_SQL}), 0)
+              )::text AS ops_net,
               COALESCE((
                 SELECT SUM(l.debit_amount - l.credit_amount)
                 FROM accounts.journal_entry_lines l
@@ -155,14 +227,14 @@ export async function verifyStudentReceivables(
     );
 
     for (const row of gl.rows) {
-      const chargeBal = normalizeSignedMoneyInput(row.charge_net);
+      const opsBal = normalizeSignedMoneyInput(row.ops_net);
       const fullBal = normalizeSignedMoneyInput(row.full_net);
-      chargeGlMillis += moneyToMillisSigned(chargeBal);
+      opsGlMillis += moneyToMillisSigned(opsBal);
       fullGlMillis += moneyToMillisSigned(fullBal);
       glAccounts.push({
         account_id: row.account_id,
         code: row.code,
-        charge_sourced_balance: chargeBal,
+        charge_sourced_balance: opsBal,
         full_gl_balance: fullBal,
       });
     }
@@ -179,18 +251,17 @@ export async function verifyStudentReceivables(
     }
   }
 
-  const chargeSourcedGlBalance = millisToMoney(chargeGlMillis);
+  const opsSourcedGlBalance = millisToMoney(opsGlMillis);
   const totalGlBalance = millisToMoney(fullGlMillis);
   const difference = millisToMoney(
     moneyToMillisSigned(totalStudentSubledger) -
-      moneyToMillisSigned(chargeSourcedGlBalance)
+      moneyToMillisSigned(opsSourcedGlBalance)
   );
   const unexplainedGlActivity = millisToMoney(
     moneyToMillisSigned(totalGlBalance) -
-      moneyToMillisSigned(chargeSourcedGlBalance)
+      moneyToMillisSigned(opsSourcedGlBalance)
   );
 
-  // —— Orphans & per-source amount match (charge-sourced JE ↔ subledger) ——
   type GlSrc = {
     journal_entry_id: string;
     source_type: string;
@@ -203,6 +274,7 @@ export async function verifyStudentReceivables(
     source_type: string;
     source_id: string;
     ledger_net: string;
+    journal_entry_id: string | null;
   };
 
   const glBySource = new Map<
@@ -211,7 +283,13 @@ export async function verifyStudentReceivables(
   >();
   const ledBySource = new Map<
     string,
-    { ledger_entry_id: string; entry_type: string; source_type: string; source_id: string; netMillis: bigint }
+    {
+      ledger_entry_id: string;
+      entry_type: string;
+      source_type: string;
+      source_id: string;
+      netMillis: bigint;
+    }
   >();
 
   if (glIds.length > 0) {
@@ -232,7 +310,7 @@ export async function verifyStudentReceivables(
     );
 
     for (const row of jeSources.rows) {
-      const entryType = expectedLedgerEntryType(row.source_type);
+      const entryType = expectedChargeLedgerEntryType(row.source_type);
       const key = sourceKey(entryType, row.source_id);
       const prev = glBySource.get(key);
       const add = moneyToMillisSigned(normalizeSignedMoneyInput(row.gl_net));
@@ -255,26 +333,34 @@ export async function verifyStudentReceivables(
             le.entry_type,
             le.source_type,
             le.source_id::text AS source_id,
-            (le.debit_amount - le.credit_amount)::text AS ledger_net
+            (le.debit_amount - le.credit_amount)::text AS ledger_net,
+            le.journal_entry_id::text AS journal_entry_id
      FROM accounts.student_ledger_entries le
-     WHERE le.entry_type IN ('CHARGE', 'CHARGE_REVERSAL')
+     WHERE le.entry_type IN (
+       'CHARGE', 'CHARGE_REVERSAL', 'COLLECTION', 'COLLECTION_REVERSAL'
+     )
        AND le.source_id IS NOT NULL`
   );
 
   for (const row of ledSources.rows) {
-    const key = sourceKey(row.entry_type, row.source_id);
-    const prev = ledBySource.get(key);
-    const add = moneyToMillisSigned(normalizeSignedMoneyInput(row.ledger_net));
-    if (prev) {
-      prev.netMillis += add;
-    } else {
-      ledBySource.set(key, {
-        ledger_entry_id: row.ledger_entry_id,
-        entry_type: row.entry_type,
-        source_type: row.source_type,
-        source_id: row.source_id,
-        netMillis: add,
-      });
+    if (
+      row.entry_type === 'CHARGE' ||
+      row.entry_type === 'CHARGE_REVERSAL'
+    ) {
+      const key = sourceKey(row.entry_type, row.source_id);
+      const prev = ledBySource.get(key);
+      const add = moneyToMillisSigned(normalizeSignedMoneyInput(row.ledger_net));
+      if (prev) {
+        prev.netMillis += add;
+      } else {
+        ledBySource.set(key, {
+          ledger_entry_id: row.ledger_entry_id,
+          entry_type: row.entry_type,
+          source_type: row.source_type,
+          source_id: row.source_id,
+          netMillis: add,
+        });
+      }
     }
   }
 
@@ -284,7 +370,7 @@ export async function verifyStudentReceivables(
 
   for (const [key, gl] of glBySource) {
     const led = ledBySource.get(key);
-    const entryType = expectedLedgerEntryType(gl.source_type);
+    const entryType = expectedChargeLedgerEntryType(gl.source_type);
     if (!led) {
       journalWithoutLedger.push({
         journal_entry_id: gl.journal_entry_id,
@@ -319,15 +405,85 @@ export async function verifyStudentReceivables(
     }
   }
 
+  // تطابق تحصيلات: دفتر COLLECTION* ↔ أسطر القيد على receivable_gl لحساب الطالب فقط
+  const collLed = await txQuery<{
+    ledger_entry_id: string;
+    entry_type: string;
+    source_type: string;
+    source_id: string;
+    ledger_net: string;
+    journal_entry_id: string | null;
+    receivable_gl_account_id: string | null;
+  }>(
+    client,
+    `SELECT le.id::text AS ledger_entry_id,
+            le.entry_type,
+            le.source_type,
+            le.source_id::text AS source_id,
+            (le.debit_amount - le.credit_amount)::text AS ledger_net,
+            le.journal_entry_id::text AS journal_entry_id,
+            sa.receivable_gl_account_id::text AS receivable_gl_account_id
+     FROM accounts.student_ledger_entries le
+     JOIN accounts.student_collections sc ON sc.id = le.source_id
+     JOIN accounts.student_accounts sa ON sa.id = sc.student_account_id
+     WHERE le.entry_type IN ('COLLECTION', 'COLLECTION_REVERSAL')`
+  );
+
+  for (const row of collLed.rows) {
+    if (!row.journal_entry_id || !row.receivable_gl_account_id) {
+      ledgerWithoutJournal.push({
+        ledger_entry_id: row.ledger_entry_id,
+        entry_type: row.entry_type,
+        source_type: row.source_type,
+        source_id: row.source_id,
+        ledger_net: normalizeSignedMoneyInput(row.ledger_net),
+      });
+      continue;
+    }
+
+    const glNet = await txQuery<{ gl_net: string }>(
+      client,
+      `SELECT COALESCE(SUM(l.debit_amount - l.credit_amount), 0)::text AS gl_net
+       FROM accounts.journal_entry_lines l
+       JOIN accounts.journal_entries e ON e.id = l.journal_entry_id
+       WHERE e.id = $1::uuid
+         AND e.status = 'POSTED'
+         AND l.account_id = $2::uuid`,
+      [row.journal_entry_id, row.receivable_gl_account_id]
+    );
+    const g = moneyToMillisSigned(
+      normalizeSignedMoneyInput(glNet.rows[0]?.gl_net ?? '0')
+    );
+    const lNet = moneyToMillisSigned(normalizeSignedMoneyInput(row.ledger_net));
+    if (g === BigInt(0) && lNet !== BigInt(0)) {
+      ledgerWithoutJournal.push({
+        ledger_entry_id: row.ledger_entry_id,
+        entry_type: row.entry_type,
+        source_type: row.source_type,
+        source_id: row.source_id,
+        ledger_net: millisToMoney(lNet),
+      });
+    } else if (g !== lNet) {
+      amountMismatches.push({
+        source_type: row.source_type,
+        source_id: row.source_id,
+        entry_type: row.entry_type,
+        gl_net: millisToMoney(g),
+        ledger_net: millisToMoney(lNet),
+        difference: millisToMoney(lNet - g),
+      });
+    }
+  }
+
   const chargeSubledgerMatch = moneyEquals(
     totalStudentSubledger,
-    chargeSourcedGlBalance
+    opsSourcedGlBalance
   );
   const noOrphans =
     journalWithoutLedger.length === 0 &&
     ledgerWithoutJournal.length === 0 &&
     amountMismatches.length === 0;
-  const ok = chargeSubledgerMatch && noOrphans;
+  const ok = chargeSubledgerMatch && noOrphans && allocationsSumOk;
 
   return {
     ok,
@@ -335,7 +491,7 @@ export async function verifyStudentReceivables(
     unexplained_gl_activity: unexplainedGlActivity,
     total_gl_balance: totalGlBalance,
     total_student_subledger: totalStudentSubledger,
-    charge_sourced_gl_balance: chargeSourcedGlBalance,
+    charge_sourced_gl_balance: opsSourcedGlBalance,
     difference,
     orphans: {
       journal_without_ledger: journalWithoutLedger,
@@ -346,12 +502,13 @@ export async function verifyStudentReceivables(
       receivable_gl_account_ids: glIds,
       student_accounts_count: accountsCount.rows[0]?.n ?? 0,
       ledger_entries_count: ledgerCount.rows[0]?.n ?? 0,
+      collections_posted_count: collCount.rows[0]?.n ?? 0,
+      allocations_sum_ok: allocationsSumOk,
       gl_accounts: glAccounts,
     },
   };
 }
 
-/** هل unexplained_gl_activity صفري؟ */
 export function hasUnexplainedGlActivity(
   result: StudentReceivablesVerifyResult
 ): boolean {
