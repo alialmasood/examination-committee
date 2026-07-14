@@ -51,6 +51,7 @@ import {
 } from '../lib/accounts/cash-settings';
 import { createDefaultSequencesForYear, pgDateOnly } from '../lib/accounts/document-sequences';
 import { seedBankReconciliationDemo } from './seed-accounts-reconciliation-demo';
+import { seedStudentReceivablesDemo } from './seed-accounts-student-receivables-demo';
 import {
   allocateJournalEntryNumber,
   assertFiscalContextForEntry,
@@ -1465,6 +1466,16 @@ async function main() {
     console.log('⚠ 4.D seed:', e instanceof Error ? e.message : e);
   }
 
+  try {
+    await seedStudentReceivablesDemo({
+      userId,
+      entryDate,
+      ensureAccount,
+    });
+  } catch (e) {
+    console.log('⚠ 5.A seed:', e instanceof Error ? e.message : e);
+  }
+
   console.log('\n——— ملخص العرض ———');
   console.log(`صناديق: ${DEMO.cashBox} → ${DEMO.cashBoxDest}`);
   console.log(
@@ -1483,7 +1494,7 @@ async function main() {
     `حسابات: ${DEMO.cashAccount} / ${DEMO.citAccount} / ${DEMO.bankGl} / ${DEMO.bankFeeAccount}`
   );
   console.log(
-    'صفحات: /accounts/cashbox · /accounts/cashbox/transfers · /accounts/banks · /accounts/banks/vouchers · /accounts/banks/transfers · /accounts/banks/reconciliation'
+    'صفحات: /accounts/cashbox · /accounts/cashbox/transfers · /accounts/banks · /accounts/banks/vouchers · /accounts/banks/transfers · /accounts/banks/reconciliation · /accounts/students'
   );
   console.log(
     yearCreated
