@@ -31,6 +31,7 @@
     "test:bank-accounts": "tsx src/scripts/test-bank-accounts.ts",
     "test:bank-vouchers": "tsx src/scripts/test-bank-vouchers.ts",
     "test:bank-transfers": "tsx src/scripts/test-bank-transfers.ts",
+    "test:bank-reconciliation": "tsx src/scripts/test-bank-reconciliation.ts",
     "test:accounts-access": "tsx src/scripts/test-accounts-access.ts",
     "test:accounting-locks": "tsx src/scripts/test-accounting-resource-locks.ts",
     "accounts:rebuild-balances": "tsx src/scripts/rebuild-gl-balances.ts",

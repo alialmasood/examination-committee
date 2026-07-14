@@ -50,6 +50,7 @@ import {
   setCashInTransitAccount,
 } from '../lib/accounts/cash-settings';
 import { createDefaultSequencesForYear, pgDateOnly } from '../lib/accounts/document-sequences';
+import { seedBankReconciliationDemo } from './seed-accounts-reconciliation-demo';
 import {
   allocateJournalEntryNumber,
   assertFiscalContextForEntry,
@@ -89,6 +90,11 @@ const DEMO = {
   bankTransferPlain: 'DEMO-BT-PLAIN',
   bankTransferFee: 'DEMO-BT-FEE',
   bankTransferDraft: 'DEMO-BT-DRAFT',
+  bankAccountRecon: 'DEMO-BA-RECON',
+  bankGlRecon: 'DEMO-BANK-GL-RECON',
+  bankStmtDraft: 'DEMO-BST-DRAFT',
+  bankStmtProgress: 'DEMO-BST-PROGRESS',
+  bankStmtClosed: 'DEMO-BST-CLOSED',
   sessionZeroNotes: 'DEMO-SESSION-ZERO',
   sessionGainNotes: 'DEMO-SESSION-GAIN',
   sessionOpenNotes: 'DEMO-SESSION-OPEN',
@@ -1077,6 +1083,7 @@ async function main() {
               can_view: true,
               can_prepare: true,
               can_post: true,
+              can_reconcile: true,
               created_by: userId,
             });
           });
@@ -1084,7 +1091,7 @@ async function main() {
           console.log('⚠ تعيين مستخدم بنك:', e instanceof Error ? e.message : e);
         }
       }
-      console.log('✓ تعيين مستخدمي الحساب البنكي DEMO (view/prepare/post)');
+      console.log('✓ تعيين مستخدمي الحساب البنكي DEMO (view/prepare/post/reconcile)');
 
       // مقابل القبض: DEMO-GAIN · مقابل الصرف: DEMO-LOSS
       const gainAcc = await ensureAccount({
@@ -1301,6 +1308,7 @@ async function main() {
                   can_view: true,
                   can_prepare: true,
                   can_post: true,
+                  can_reconcile: true,
                   created_by: userId,
                 });
               });
@@ -1427,6 +1435,36 @@ async function main() {
     }
   }
 
+  // ——— 4.D: كشوف وتسوية ———
+  try {
+    const bankRow = await query(
+      `SELECT id FROM accounts.banks WHERE LOWER(code)=LOWER($1)`,
+      [DEMO.bank]
+    );
+    const branchRow = await query(
+      `SELECT id FROM accounts.bank_branches WHERE LOWER(code)=LOWER($1)`,
+      [DEMO.bankBranch]
+    );
+    const contra = await ensureAccount({
+      code: DEMO.contraAccount,
+      nameAr: 'حساب مقابل DEMO',
+      typeCode: 'REVENUE',
+      userId,
+    });
+    if (bankRow.rows[0] && branchRow.rows[0]) {
+      await seedBankReconciliationDemo({
+        userId,
+        entryDate,
+        bankId: bankRow.rows[0].id as string,
+        branchId: branchRow.rows[0].id as string,
+        ensureAccount,
+        contraAccountId: contra.id,
+      });
+    }
+  } catch (e) {
+    console.log('⚠ 4.D seed:', e instanceof Error ? e.message : e);
+  }
+
   console.log('\n——— ملخص العرض ———');
   console.log(`صناديق: ${DEMO.cashBox} → ${DEMO.cashBoxDest}`);
   console.log(
@@ -1439,10 +1477,13 @@ async function main() {
     `تحويلات بنكية: ${DEMO.bankTransferPlain} · ${DEMO.bankTransferFee} · ${DEMO.bankTransferDraft}`
   );
   console.log(
+    `تسوية: ${DEMO.bankStmtDraft} · ${DEMO.bankStmtProgress} · ${DEMO.bankStmtClosed} (${DEMO.bankAccountRecon})`
+  );
+  console.log(
     `حسابات: ${DEMO.cashAccount} / ${DEMO.citAccount} / ${DEMO.bankGl} / ${DEMO.bankFeeAccount}`
   );
   console.log(
-    'صفحات: /accounts/cashbox · /accounts/cashbox/transfers · /accounts/banks · /accounts/banks/vouchers · /accounts/banks/transfers'
+    'صفحات: /accounts/cashbox · /accounts/cashbox/transfers · /accounts/banks · /accounts/banks/vouchers · /accounts/banks/transfers · /accounts/banks/reconciliation'
   );
   console.log(
     yearCreated
