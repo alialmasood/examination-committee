@@ -22,7 +22,10 @@ export type AccountingLockDomain =
   | 'CASH_SESSION'
   | 'DOCUMENT_SEQUENCE'
   | 'JOURNAL_SOURCE'
-  | 'CHART_ACCOUNT';
+  | 'CHART_ACCOUNT'
+  | 'STUDENT_ACCOUNT'
+  | 'STUDENT_CHARGE'
+  | 'STUDENT_LEDGER';
 
 export type AccountingLockResource = {
   domain: AccountingLockDomain;
@@ -120,4 +123,13 @@ export function journalSourceLock(
     domain: 'JOURNAL_SOURCE',
     resourceId: `${sourceType}:${sourceId}`,
   };
+}
+export function studentAccountLock(id: string): AccountingLockResource {
+  return { domain: 'STUDENT_ACCOUNT', resourceId: id };
+}
+export function studentChargeLock(id: string): AccountingLockResource {
+  return { domain: 'STUDENT_CHARGE', resourceId: id };
+}
+export function studentLedgerLock(studentAccountId: string): AccountingLockResource {
+  return { domain: 'STUDENT_LEDGER', resourceId: studentAccountId };
 }

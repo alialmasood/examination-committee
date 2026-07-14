@@ -101,7 +101,19 @@ export type AuditAction =
   | 'bank_statement.line_unexcluded'
   | 'bank_reconciliation.matched'
   | 'bank_reconciliation.match_removed'
-  | 'bank_reconciliation.adjustment_posted';
+  | 'bank_reconciliation.adjustment_posted'
+  | 'student_account.created'
+  | 'student_account.updated'
+  | 'student_account.suspended'
+  | 'student_account.activated'
+  | 'student_account.closed'
+  | 'student_fee_type.created'
+  | 'student_fee_type.updated'
+  | 'student_fee_type.deactivated'
+  | 'student_charge.created'
+  | 'student_charge.updated'
+  | 'student_charge.posted'
+  | 'student_charge.voided';
 
 export async function writeFinancialAudit(
   client: TxClient,

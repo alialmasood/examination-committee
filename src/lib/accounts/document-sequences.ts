@@ -18,6 +18,8 @@ export const DOCUMENT_SEQUENCE_DEFAULTS = [
   { document_type: 'BANK_PAYMENT_VOUCHER', prefix: 'BPV' },
   { document_type: 'BANK_TRANSFER_VOUCHER', prefix: 'BTR' },
   { document_type: 'BANK_STATEMENT', prefix: 'BST' },
+  { document_type: 'STUDENT_ACCOUNT', prefix: 'STA' },
+  { document_type: 'STUDENT_CHARGE', prefix: 'SCH' },
 ] as const;
 
 export type DocumentType = (typeof DOCUMENT_SEQUENCE_DEFAULTS)[number]['document_type'];
