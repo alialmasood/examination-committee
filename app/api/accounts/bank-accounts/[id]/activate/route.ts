@@ -10,6 +10,7 @@ import {
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
 import {
   activateBankAccount,
+  loadBankAccount,
   serializeBankAccount,
 } from '@/src/lib/accounts/bank-accounts';
 import {
@@ -29,6 +30,7 @@ export async function POST(request: NextRequest, context: Ctx) {
 
     const activated = await withTransaction(async (client) => {
       await acquireBanksLock(client);
+      const before = await loadBankAccount(client, id);
       const row = await activateBankAccount(client, {
         id,
         userId: auth.user.id,
@@ -40,6 +42,7 @@ export async function POST(request: NextRequest, context: Ctx) {
         action: 'bank_account.activated',
         entityType: 'bank_account',
         entityId: row.id,
+        oldValues: serializeBankAccount(before),
         newValues: serializeBankAccount(row),
         description: `تفعيل حساب مصرفي ${row.code}`,
         ipAddress: auth.ipAddress,

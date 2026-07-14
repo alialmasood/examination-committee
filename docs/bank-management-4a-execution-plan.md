@@ -59,6 +59,11 @@
 ## الصلاحيات
 `requireAccountsAccess` على جميع APIs. Super Admin / Accounts Admin يريان الجميع.
 `bank_account_users` تمهيدي للعرض/الإدارة مع صلاحيات `can_view|prepare|post|approve|reconcile`.
+الحماية الحالية لا تُستبدل بجدول المخولين وحده — الأعلام تمهيدية للمراحل القادمة.
+
+## خيارات العمليات
+`GET /api/accounts/bank-accounts/options` يعيد `operational_bank_accounts` بحالة **ACTIVE فقط**.
+`SUSPENDED` و`CLOSED` لا يظهران في قائمة الاستخدام التشغيلي المستقبلي.
 
 ## APIs
 - `/api/accounts/banks` · `/api/accounts/banks/[id]` · `.../deactivate`

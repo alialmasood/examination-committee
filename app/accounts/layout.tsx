@@ -110,13 +110,13 @@ export default function AccountsLayout({
       {/* Overlay for Mobile */}
       {sidebarOpen && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden print:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
       
       {/* Sidebar */}
-      <div className={`${sidebarOpen ? 'block' : 'hidden'} lg:w-64 bg-red-950 shadow-sm border-r border-red-900 min-h-screen fixed top-0 right-0 z-50`}>
+      <div className={`${sidebarOpen ? 'block' : 'hidden'} lg:w-64 bg-red-950 shadow-sm border-r border-red-900 min-h-screen fixed top-0 right-0 z-50 print:hidden`}>
         {/* Close Button for Mobile */}
         <div className="lg:hidden flex justify-end p-4">
           <button
@@ -450,7 +450,7 @@ export default function AccountsLayout({
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className={`shadow-sm border-b border-gray-600 fixed top-0 left-0 z-40 transition-all duration-300 ${sidebarOpen ? 'right-64' : 'right-0'}`} style={{backgroundColor: '#1C4760'}}>
+        <header className={`shadow-sm border-b border-gray-600 fixed top-0 left-0 z-40 transition-all duration-300 print:hidden ${sidebarOpen ? 'right-64' : 'right-0'}`} style={{backgroundColor: '#1C4760'}}>
           <div className="px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center h-20">
               {/* Menu Button and Title */}

@@ -4,7 +4,9 @@
  */
 import { NextRequest } from 'next/server';
 import { closePool, query } from '../lib/db';
+import { generateAccessToken } from '../lib/auth';
 import { AccountsHttpError, requireAccountsAccess } from '../lib/accounts/auth';
+import { writeFinancialAudit } from '../lib/accounts/audit';
 import {
   createBank,
   deactivateBank,
@@ -26,7 +28,14 @@ import {
   updateBankAccount,
 } from '../lib/accounts/bank-accounts';
 import {
+  allocateJournalEntryNumber,
+  assertFiscalContextForEntry,
+  normalizeAndValidateLines,
+  replaceJournalLines,
+} from '../lib/accounts/journal-entries';
+import {
   acquireBanksLock,
+  acquireJournalEntriesLock,
   txQuery,
   withTransaction,
 } from '../lib/accounts/with-transaction';
@@ -100,12 +109,97 @@ async function ensureFreeAsset(code: string, nameAr: string, userId: string) {
   return ins.rows[0].id as string;
 }
 
+async function postPostedJe(params: {
+  userId: string;
+  yearId: string;
+  periodId: string;
+  entryDate: string;
+  debitAccountId: string;
+  creditAccountId: string;
+  amount: string;
+  description: string;
+}): Promise<string> {
+  return withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    await assertFiscalContextForEntry(client, {
+      fiscalYearId: params.yearId,
+      fiscalPeriodId: params.periodId,
+      entryDate: params.entryDate,
+    });
+    const { lines, totalDebit, totalCredit } = await normalizeAndValidateLines(
+      client,
+      [
+        {
+          account_id: params.debitAccountId,
+          debit_amount: params.amount,
+          credit_amount: '0',
+          description: params.description,
+        },
+        {
+          account_id: params.creditAccountId,
+          debit_amount: '0',
+          credit_amount: params.amount,
+          description: 'مقابل',
+        },
+      ],
+      'strict'
+    );
+    const entryNumber = await allocateJournalEntryNumber(client, params.yearId);
+    const ins = await txQuery(
+      client,
+      `INSERT INTO accounts.journal_entries
+        (entry_number, fiscal_year_id, fiscal_period_id, entry_date, entry_type,
+         description, total_debit, total_credit, status, created_by, updated_by,
+         posted_by, posted_at)
+       VALUES ($1,$2,$3,$4::date,'MANUAL',$5,$6::numeric,$7::numeric,'POSTED',$8,$8,$8,NOW())
+       RETURNING id`,
+      [
+        entryNumber,
+        params.yearId,
+        params.periodId,
+        params.entryDate,
+        params.description,
+        totalDebit,
+        totalCredit,
+        params.userId,
+      ]
+    );
+    await replaceJournalLines(client, ins.rows[0].id as string, lines);
+    return ins.rows[0].id as string;
+  });
+}
+
 async function main() {
   {
     const req = new NextRequest('http://localhost/api/accounts/banks');
     const a = await requireAccountsAccess(req);
     if ('response' in a && a.response.status === 401) ok('28) 401 بدون توكن');
     else fail('28) 401', a);
+  }
+
+  {
+    const other = await query(
+      `SELECT u.id, u.username FROM student_affairs.users u
+       WHERE u.is_active
+         AND NOT EXISTS (
+           SELECT 1 FROM student_affairs.user_systems us
+           JOIN student_affairs.systems s ON s.id = us.system_id
+           WHERE us.user_id = u.id AND s.code = 'ACCOUNTS'
+         )
+       LIMIT 1`
+    );
+    if (other.rows[0]) {
+      const token = generateAccessToken(
+        other.rows[0].id as string,
+        other.rows[0].username as string
+      );
+      const req = new NextRequest('http://localhost/api/accounts/banks', {
+        headers: { cookie: `access_token=${token}` },
+      });
+      const a = await requireAccountsAccess(req);
+      if ('response' in a && a.response.status === 403) ok('28b) 403 دون صلاحية ACCOUNTS');
+      else fail('28b) 403', a);
+    } else ok('28b) تخطّي 403 (لا مستخدم بلا ACCOUNTS)');
   }
 
   const user = await query(
@@ -459,6 +553,244 @@ async function main() {
     createdAccountIds.push(accUsd.id);
     ok('19b) أساسي USD منفصل عن IQD');
 
+    // نفس رقم الحساب في مصرف آخر مسموح (unique على bank_id + normalized)
+    const glSameNum = await ensureFreeAsset(`BA-GLSN-${suffix}`, 'GL رقم مشترك', userId);
+    const sameNumOtherBank = await withTransaction(async (client) => {
+      await acquireBanksLock(client);
+      return createBankAccount(client, {
+        code: `BA-SN-${suffix}`,
+        bank_id: bank2.id,
+        account_name_ar: 'رقم مكرر عبر مصارف',
+        account_number: '1234-5678',
+        gl_account_id: glSameNum,
+        currency_code: 'IQD',
+        created_by: userId,
+      });
+    });
+    createdAccountIds.push(sameNumOtherBank.id);
+    ok('16b) السماح بنفس رقم الحساب في مصرف مختلف');
+
+    // فرع غير فعّال
+    const inactiveBranch = await withTransaction(async (client) => {
+      await acquireBanksLock(client);
+      return createBankBranch(client, {
+        bank_id: bank.id,
+        code: `BR-OFF-${suffix}`,
+        name_ar: 'فرع معطّل',
+        is_active: false,
+        created_by: userId,
+      });
+    });
+    createdBranchIds.push(inactiveBranch.id);
+    const glInactiveBr = await ensureFreeAsset(
+      `BA-GLIB-${suffix}`,
+      'GL فرع معطّل',
+      userId
+    );
+    await expectHttp(
+      '4b) منع حساب على فرع غير فعّال',
+      () =>
+        withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          return createBankAccount(client, {
+            code: `BA-IB-${suffix}`,
+            bank_id: bank.id,
+            bank_branch_id: inactiveBranch.id,
+            account_name_ar: 'خطأ فرع معطّل',
+            account_number: '19191919',
+            gl_account_id: glInactiveBr,
+            created_by: userId,
+          });
+        }),
+      409
+    );
+
+    // رصيد افتتاحي مرجعي لا ينشئ قيوداً
+    const glOpen = await ensureFreeAsset(`BA-GLOP-${suffix}`, 'GL رصيد مرجعي', userId);
+    const openAcc = await withTransaction(async (client) => {
+      await acquireBanksLock(client);
+      return createBankAccount(client, {
+        code: `BA-OP-${suffix}`,
+        bank_id: bank.id,
+        account_name_ar: 'حساب رصيد مرجعي',
+        account_number: '20202020',
+        gl_account_id: glOpen,
+        opening_balance_reference: '1500.000',
+        opening_balance_date: '2026-01-01',
+        created_by: userId,
+      });
+    });
+    createdAccountIds.push(openAcc.id);
+    const openJe = await query(
+      `SELECT COUNT(*)::int AS n
+       FROM accounts.journal_entry_lines l
+       WHERE l.account_id = $1::uuid`,
+      [glOpen]
+    );
+    if (openJe.rows[0].n === 0) ok('9b) opening_balance_reference لا ينشئ قيداً');
+    else fail('9b', openJe.rows[0].n);
+
+    // تزامن أساسي لنفس العملة
+    const glP1 = await ensureFreeAsset(`BA-GLP1-${suffix}`, 'GL primary1', userId);
+    const glP2 = await ensureFreeAsset(`BA-GLP2-${suffix}`, 'GL primary2', userId);
+    const primaryRace = await Promise.allSettled([
+      withTransaction(async (client) => {
+        await acquireBanksLock(client);
+        return createBankAccount(client, {
+          code: `BA-P1-${suffix}`,
+          bank_id: bank.id,
+          account_name_ar: 'أساسي متزامن 1',
+          account_number: '301301301',
+          currency_code: 'EUR',
+          gl_account_id: glP1,
+          is_primary: true,
+          created_by: userId,
+        });
+      }),
+      withTransaction(async (client) => {
+        await acquireBanksLock(client);
+        return createBankAccount(client, {
+          code: `BA-P2-${suffix}`,
+          bank_id: bank.id,
+          account_name_ar: 'أساسي متزامن 2',
+          account_number: '302302302',
+          currency_code: 'EUR',
+          gl_account_id: glP2,
+          is_primary: true,
+          created_by: userId,
+        });
+      }),
+    ]);
+    for (const r of primaryRace) {
+      if (r.status === 'fulfilled') createdAccountIds.push(r.value.id);
+    }
+    const eurPrimaries = await query(
+      `SELECT id FROM accounts.bank_accounts
+       WHERE currency_code='EUR' AND is_primary AND status<>'CLOSED'
+         AND id = ANY($1::uuid[])`,
+      [createdAccountIds]
+    );
+    if (eurPrimaries.rows.length === 1) ok('19c) تزامن: أساسي واحد فقط لكل عملة');
+    else fail('19c', eurPrimaries.rows);
+
+    // منع إغلاق برصيد غير صفري (POSTED فقط)
+    const fy = await query(
+      `SELECT y.id AS year_id, p.id AS period_id, p.start_date::text AS entry_date
+       FROM accounts.fiscal_years y
+       JOIN accounts.fiscal_periods p ON p.fiscal_year_id = y.id
+       WHERE y.status = 'ACTIVE' AND p.status = 'OPEN'
+       ORDER BY p.start_date LIMIT 1`
+    );
+    const glNz = await ensureFreeAsset(`BA-GLNZ-${suffix}`, 'GL رصيد غير صفري', userId);
+    const contraGl = await query(
+      `SELECT a.id FROM accounts.chart_of_accounts a
+       JOIN accounts.account_types t ON t.id = a.account_type_id
+       WHERE t.code IN ('REVENUE','LIABILITY','EQUITY')
+         AND NOT a.is_group AND a.allow_posting AND a.is_active
+       LIMIT 1`
+    );
+    let nzAccountId: string | null = null;
+    let nzJeId: string | null = null;
+    if (fy.rows[0] && contraGl.rows[0]) {
+      const nzAcc = await withTransaction(async (client) => {
+        await acquireBanksLock(client);
+        return createBankAccount(client, {
+          code: `BA-NZ-${suffix}`,
+          bank_id: bank.id,
+          account_name_ar: 'حساب برصيد',
+          account_number: '40404040',
+          gl_account_id: glNz,
+          created_by: userId,
+        });
+      });
+      createdAccountIds.push(nzAcc.id);
+      nzAccountId = nzAcc.id;
+      nzJeId = await postPostedJe({
+        userId,
+        yearId: fy.rows[0].year_id,
+        periodId: fy.rows[0].period_id,
+        entryDate: fy.rows[0].entry_date,
+        debitAccountId: glNz,
+        creditAccountId: contraGl.rows[0].id,
+        amount: '25.000',
+        description: `TEST-BANK-NZ-${suffix}`,
+      });
+      // قيد DRAFT يجب ألا يؤثر
+      await withTransaction(async (client) => {
+        await acquireJournalEntriesLock(client);
+        const entryNumber = await allocateJournalEntryNumber(
+          client,
+          fy.rows[0].year_id
+        );
+        await txQuery(
+          client,
+          `INSERT INTO accounts.journal_entries
+            (entry_number, fiscal_year_id, fiscal_period_id, entry_date, entry_type,
+             description, total_debit, total_credit, status, created_by, updated_by)
+           VALUES ($1,$2,$3,$4::date,'MANUAL',$5,0,0,'DRAFT',$6,$6)`,
+          [
+            entryNumber,
+            fy.rows[0].year_id,
+            fy.rows[0].period_id,
+            fy.rows[0].entry_date,
+            `TEST-BANK-DRAFT-${suffix}`,
+            userId,
+          ]
+        );
+      });
+      await expectHttp(
+        '22b) منع إغلاق حساب برصيد GL غير صفري',
+        () =>
+          withTransaction(async (client) => {
+            await acquireBanksLock(client);
+            const fresh = await txQuery(
+              client,
+              `SELECT version, updated_at::text AS updated_at FROM accounts.bank_accounts WHERE id=$1`,
+              [nzAcc.id]
+            );
+            return closeBankAccount(client, {
+              id: nzAcc.id,
+              userId,
+              version: fresh.rows[0].version,
+              updated_at: fresh.rows[0].updated_at,
+            });
+          }),
+        409
+      );
+      // تصفير الرصيد ثم إغلاق (اختبار السماح عند الصفر)
+      await postPostedJe({
+        userId,
+        yearId: fy.rows[0].year_id,
+        periodId: fy.rows[0].period_id,
+        entryDate: fy.rows[0].entry_date,
+        debitAccountId: contraGl.rows[0].id,
+        creditAccountId: glNz,
+        amount: '25.000',
+        description: `TEST-BANK-NZ-REV-${suffix}`,
+      });
+      const closedNz = await withTransaction(async (client) => {
+        await acquireBanksLock(client);
+        const fresh = await txQuery(
+          client,
+          `SELECT version, updated_at::text AS updated_at FROM accounts.bank_accounts WHERE id=$1`,
+          [nzAcc.id]
+        );
+        return closeBankAccount(client, {
+          id: nzAcc.id,
+          userId,
+          version: fresh.rows[0].version,
+          updated_at: fresh.rows[0].updated_at,
+        });
+      });
+      if (closedNz.status === 'CLOSED') ok('22c) السماح بإغلاق حساب برصيد صفري');
+      else fail('22c', closedNz.status);
+    } else {
+      ok('22b) تخطّي (لا فترة مفتوحة/مقابل)');
+      ok('22c) تخطّي');
+    }
+    void nzAccountId;
+    void nzJeId;
+
     // 20) تعليق
     account = await withTransaction(async (client) => {
       await acquireBanksLock(client);
@@ -476,6 +808,16 @@ async function main() {
     });
     if (account.status === 'SUSPENDED') ok('20) تعليق الحساب');
     else fail('20', account.status);
+
+    // SUSPENDED خارج خيارات العمليات
+    const opsAfterSuspend = await query(
+      `SELECT id FROM accounts.bank_accounts
+       WHERE id = $1::uuid AND status = 'ACTIVE'`,
+      [account.id]
+    );
+    if (!opsAfterSuspend.rows[0]) {
+      ok('8b) SUSPENDED مستبعد من الخيارات التشغيلية (ACTIVE فقط)');
+    } else fail('8b');
 
     // 21) إعادة تفعيل
     account = await withTransaction(async (client) => {
@@ -502,6 +844,21 @@ async function main() {
       });
     });
     ok('25) تعيين مستخدم مخول');
+
+    await expectHttp(
+      '25c) منع تكرار مستخدم غير نشط',
+      () =>
+        withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          return assignBankAccountUser(client, {
+            bank_account_id: account.id,
+            user_id: '00000000-0000-0000-0000-000000000001',
+            can_view: true,
+            created_by: userId,
+          });
+        }),
+      404
+    );
 
     await withTransaction(async (client) => {
       await acquireBanksLock(client);
@@ -547,6 +904,36 @@ async function main() {
       409
     );
 
+    await expectHttp(
+      '23b) منع تعليق CLOSED',
+      () =>
+        withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          return suspendBankAccount(client, {
+            id: account.id,
+            userId,
+            version: account.version,
+            updated_at: account.updated_at,
+          });
+        }),
+      409
+    );
+
+    await expectHttp(
+      '23c) منع إعادة تفعيل CLOSED',
+      () =>
+        withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          return activateBankAccount(client, {
+            id: account.id,
+            userId,
+            version: account.version,
+            updated_at: account.updated_at,
+          });
+        }),
+      409
+    );
+
     // 24) الخيارات لاحقاً تستبعد CLOSED — تحقق عبر إنشاء قائمة
     const activeOnly = await query(
       `SELECT id FROM accounts.bank_accounts WHERE id=$1 AND status='ACTIVE'`,
@@ -555,9 +942,18 @@ async function main() {
     if (!activeOnly.rows[0]) ok('24) CLOSED خارج الاستخدام الفعّال');
     else fail('24');
 
+    const opsClosed = await query(
+      `SELECT ba.id FROM accounts.bank_accounts ba
+       JOIN accounts.banks b ON b.id = ba.bank_id AND b.is_active = TRUE
+       WHERE ba.status = 'ACTIVE' AND ba.id = $1::uuid`,
+      [account.id]
+    );
+    if (!opsClosed.rows[0]) ok('24b) CLOSED مستبعد من operational_bank_accounts');
+    else fail('24b');
+
     // 4) تعطيل مصرف — يحتاج لا حسابات ACTIVE
     // علّق/أغلق الباقي غير المغلق
-    for (const id of [acc2.id, accUsd.id]) {
+    for (const id of createdAccountIds) {
       await withTransaction(async (client) => {
         await acquireBanksLock(client);
         const fresh = await txQuery(
@@ -565,9 +961,9 @@ async function main() {
           `SELECT status, version, updated_at::text AS updated_at FROM accounts.bank_accounts WHERE id=$1`,
           [id]
         );
+        if (!fresh.rows[0] || fresh.rows[0].status === 'CLOSED') return;
         let version = fresh.rows[0].version;
         let updatedAt = fresh.rows[0].updated_at;
-        if (fresh.rows[0].status === 'CLOSED') return;
         if (fresh.rows[0].status === 'ACTIVE') {
           const sus = await suspendBankAccount(client, {
             id,
@@ -692,28 +1088,43 @@ async function main() {
     } else ok('13) تخطّي GL غير ترحيلي');
 
     // 26) صلاحيات — requireAccountsAccess يغطي؛ تعيين المخولين موجود
-    ok('26) Backend auth عبر requireAccountsAccess + تعيين مخولين');
+    ok('26) Backend auth عبر requireAccountsAccess + تعيين مخولين (تمهيدي)');
 
-    // 27) أحداث التدقيق — أعمدة الإجراءات موجودة في نوع AuditAction
-    const auditActions = await query(
-      `SELECT DISTINCT action FROM accounts.financial_audit_log
-       WHERE action LIKE 'bank%' OR action LIKE 'bank_%'
-       LIMIT 5`
-    ).catch(() => ({ rows: [] as Array<{ action: string }> }));
-    void auditActions;
-    ok('27) أحداث التدقيق البنكية معرّفة في النظام (تُكتب من APIs)');
+    // 27) تدقيق فعلي
+    await withTransaction(async (client) => {
+      await writeFinancialAudit(client, {
+        userId,
+        action: 'bank_account.updated',
+        entityType: 'bank_account',
+        entityId: account.id,
+        oldValues: { status: 'ACTIVE', code: account.code },
+        newValues: { status: 'CLOSED', code: account.code, gl_account_id: account.gl_account_id },
+        description: `اختبار تدقيق بنك ${suffix}`,
+      });
+    });
+    const auditRow = await query(
+      `SELECT action, old_values, new_values FROM accounts.financial_audit_log
+       WHERE description = $1 LIMIT 1`,
+      [`اختبار تدقيق بنك ${suffix}`]
+    );
+    if (
+      auditRow.rows[0]?.action === 'bank_account.updated' &&
+      auditRow.rows[0]?.old_values &&
+      auditRow.rows[0]?.new_values
+    ) {
+      ok('27) Audit يسجّل الحالة السابقة والجديدة');
+    } else fail('27', auditRow.rows[0]);
 
     // 29) seed idempotent — أكواد DEMO إن وُجدت لا تُكسر
     const demoBank = await query(
-      `SELECT id FROM accounts.banks WHERE LOWER(code)=LOWER('DEMO-BANK')`
+      `SELECT COUNT(*)::int AS n FROM accounts.banks WHERE LOWER(code)=LOWER('DEMO-BANK')`
     );
-    if (demoBank.rows[0]) {
-      const again = await query(
-        `SELECT id FROM accounts.banks WHERE LOWER(code)=LOWER('DEMO-BANK')`
-      );
-      if (again.rows.length === 1) ok('29) DEMO-BANK فريد (idempotent-ready)');
-      else fail('29', again.rows.length);
-    } else ok('29) لا DEMO بعد — seed منفصل يتحقق');
+    const demoBa = await query(
+      `SELECT COUNT(*)::int AS n FROM accounts.bank_accounts WHERE LOWER(code)=LOWER('DEMO-BA-IQD')`
+    );
+    if (demoBank.rows[0].n <= 1 && demoBa.rows[0].n <= 1) {
+      ok('29) DEMO bank codes فريدة (idempotent-ready)');
+    } else fail('29', { banks: demoBank.rows[0].n, accounts: demoBa.rows[0].n });
 
     // 30–33) عدم كسر وحدات النقد السابقة
     const cashSmoke = await query(`

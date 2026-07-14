@@ -77,6 +77,7 @@ export async function POST(request: NextRequest, context: Ctx) {
     const result = await withTransaction(async (client) => {
       await acquireBanksLock(client);
       const acc = await loadBankAccount(client, id);
+      const beforeUsers = await listBankAccountUsers(client, id);
       const assigned = await assignBankAccountUser(client, {
         bank_account_id: id,
         user_id: body.user_id,
@@ -87,11 +88,13 @@ export async function POST(request: NextRequest, context: Ctx) {
         can_reconcile: body.can_reconcile,
         created_by: auth.user.id,
       });
+      const previous = beforeUsers.find((u) => u.user_id === assigned.user_id) ?? null;
       await writeFinancialAudit(client, {
         userId: auth.user.id,
         action: 'bank_account.user_assigned',
         entityType: 'bank_account_user',
         entityId: assigned.id,
+        oldValues: previous,
         newValues: assigned,
         description: `تعيين مستخدم على الحساب المصرفي ${acc.code}`,
         ipAddress: auth.ipAddress,

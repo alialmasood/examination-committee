@@ -29,7 +29,7 @@ export async function DELETE(request: NextRequest, context: Ctx) {
     await withTransaction(async (client) => {
       await acquireBanksLock(client);
       const acc = await loadBankAccount(client, id);
-      await removeBankAccountUser(client, {
+      const removed = await removeBankAccountUser(client, {
         bank_account_id: id,
         user_id: userId,
       });
@@ -37,7 +37,8 @@ export async function DELETE(request: NextRequest, context: Ctx) {
         userId: auth.user.id,
         action: 'bank_account.user_removed',
         entityType: 'bank_account_user',
-        entityId: userId,
+        entityId: removed.id,
+        oldValues: removed,
         description: `إزالة مستخدم من الحساب المصرفي ${acc.code}`,
         ipAddress: auth.ipAddress,
         userAgent: auth.userAgent,

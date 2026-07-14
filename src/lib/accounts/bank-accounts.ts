@@ -495,6 +495,9 @@ export async function updateBankAccount(
       if (branch.bank_id !== acc.bank_id) {
         throw new AccountsHttpError('الفرع لا يتبع المصرف المختار', 409);
       }
+      if (!branch.is_active) {
+        throw new AccountsHttpError('الفرع غير فعّال', 409);
+      }
     }
   }
 
@@ -817,18 +820,19 @@ export async function assignBankAccountUser(
 export async function removeBankAccountUser(
   client: TxClient,
   params: { bank_account_id: string; user_id: string }
-): Promise<void> {
+): Promise<BankAccountUserRow> {
   await loadBankAccount(client, params.bank_account_id, true);
-  const del = await txQuery(
+  const del = await txQuery<BankAccountUserRow>(
     client,
     `DELETE FROM accounts.bank_account_users
      WHERE bank_account_id = $1::uuid AND user_id = $2::uuid
-     RETURNING id`,
+     RETURNING *`,
     [params.bank_account_id, params.user_id]
   );
   if (!del.rows[0]) {
     throw new AccountsHttpError('تعيين المستخدم غير موجود', 404);
   }
+  return del.rows[0];
 }
 
 /** هل المستخدم مخول على الحساب (أو لديه وصول نظامي عام عبر Accounts) */

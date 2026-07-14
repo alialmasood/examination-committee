@@ -9,6 +9,7 @@ import {
 } from '@/src/lib/accounts/auth';
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
 import {
+  loadBankAccount,
   serializeBankAccount,
   suspendBankAccount,
 } from '@/src/lib/accounts/bank-accounts';
@@ -29,6 +30,7 @@ export async function POST(request: NextRequest, context: Ctx) {
 
     const suspended = await withTransaction(async (client) => {
       await acquireBanksLock(client);
+      const before = await loadBankAccount(client, id);
       const row = await suspendBankAccount(client, {
         id,
         userId: auth.user.id,
@@ -40,6 +42,7 @@ export async function POST(request: NextRequest, context: Ctx) {
         action: 'bank_account.suspended',
         entityType: 'bank_account',
         entityId: row.id,
+        oldValues: serializeBankAccount(before),
         newValues: serializeBankAccount(row),
         description: `تعليق حساب مصرفي ${row.code}`,
         ipAddress: auth.ipAddress,

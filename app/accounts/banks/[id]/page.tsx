@@ -253,10 +253,18 @@ export default function BankAccountDetailPage() {
         )}
 
         {/* Print card */}
-        <div className="border border-gray-300 rounded-md p-4 space-y-3 print:border-black">
+        <div className="print-container border border-gray-300 rounded-md p-4 space-y-3 print:border-black">
           <div className="text-center border-b pb-3">
             <div className="text-lg font-bold text-gray-900">كلية الشرق</div>
             <div className="text-xs text-gray-600">للعلوم التقنية التخصصية — الحسابات المصرفية</div>
+            <div className="text-xs text-gray-500 mt-1">
+              تاريخ الطباعة:{' '}
+              {new Date().toLocaleDateString('ar-IQ', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              })}
+            </div>
           </div>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
             <Info label="الكود" value={account.code} />
@@ -292,6 +300,7 @@ export default function BankAccountDetailPage() {
                   : '—'
               }
             />
+            <Info label="الحالة" value={STATUS_LABEL[account.status] || account.status} />
             <Info
               label="الرصيد الافتتاحي المرجعي"
               value={formatMoney(
@@ -304,7 +313,7 @@ export default function BankAccountDetailPage() {
               value={account.opening_balance_date || '—'}
             />
             <Info
-              label="الصلاحيات"
+              label="الصلاحيات التشغيلية"
               value={[
                 account.allows_receipts && 'قبض',
                 account.allows_payments && 'صرف',
@@ -318,14 +327,27 @@ export default function BankAccountDetailPage() {
           <p className="text-xs text-amber-950 bg-amber-50 border border-amber-200 rounded px-3 py-2">
             {OPENING_BALANCE_NOTE}
           </p>
+          <div className="hidden print:grid grid-cols-2 gap-10 pt-10 text-sm text-center">
+            <div>
+              <div className="border-t border-gray-800 pt-2">اعتماد المحاسب</div>
+            </div>
+            <div>
+              <div className="border-t border-gray-800 pt-2">اعتماد المدير المالي</div>
+            </div>
+          </div>
         </div>
       </div>
 
       {/* Users management */}
       {account.status !== 'CLOSED' && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 md:p-6 space-y-4 print:hidden">
-          <h2 className="text-base font-semibold text-gray-900">مستخدمو الحساب</h2>
-
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">مستخدمو الحساب</h2>
+            <p className="text-xs text-amber-900 mt-1 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+              الصلاحيات التشغيلية (عرض/إعداد/ترحيل/اعتماد/مطابقة) تمهيدية للمراحل القادمة.
+              الحماية الحالية تعتمد على صلاحية نظام الحسابات (requireAccountsAccess)، ولا تُستبدل بجدول المخولين وحده.
+            </p>
+          </div>
           <div className="grid md:grid-cols-2 gap-3 items-end">
             <label className="block space-y-1">
               <span className="text-xs text-gray-600">المستخدم</span>
