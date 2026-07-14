@@ -130,6 +130,74 @@ export type BankReconciliationSummary = {
   within_tolerance: boolean;
 };
 
+/** لقطة نهائية تُحفظ عند CLOSED ولا يُعاد حسابها من الدفتر لاحقاً */
+export type ClosedStatementSnapshot = {
+  version: 1;
+  generated_at: string;
+  summary: BankReconciliationSummary;
+  outstanding_book_items: BookItem[];
+  lines: ReturnType<typeof serializeBankStatementLine>[];
+};
+
+export type BankReconciliationView = {
+  summary: BankReconciliationSummary;
+  from_snapshot: boolean;
+  outstanding_book_items?: BookItem[];
+  lines?: ReturnType<typeof serializeBankStatementLine>[];
+  generated_at?: string | null;
+};
+
+function isSummaryShape(value: unknown): value is BankReconciliationSummary {
+  if (!value || typeof value !== 'object') return false;
+  const o = value as Record<string, unknown>;
+  return typeof o.difference === 'string' && typeof o.bank_adjusted === 'string';
+}
+
+/** يستخرج ملخص التسوية من snapshot_json (صيغة v1 أو اللقطة الموروثة = الملخص مباشرة) */
+export function parseClosedStatementSnapshot(
+  snapshot: unknown
+): BankReconciliationView | null {
+  if (!snapshot) return null;
+  if (isSummaryShape(snapshot)) {
+    return { summary: snapshot, from_snapshot: true };
+  }
+  if (typeof snapshot === 'object' && snapshot !== null) {
+    const o = snapshot as Record<string, unknown>;
+    if (isSummaryShape(o.summary)) {
+      return {
+        summary: o.summary,
+        from_snapshot: true,
+        outstanding_book_items: Array.isArray(o.outstanding_book_items)
+          ? (o.outstanding_book_items as BookItem[])
+          : undefined,
+        lines: Array.isArray(o.lines)
+          ? (o.lines as ReturnType<typeof serializeBankStatementLine>[])
+          : undefined,
+        generated_at: typeof o.generated_at === 'string' ? o.generated_at : null,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * ملخص التسوية للعرض/الطباعة:
+ * - CLOSED + snapshot_json → اللقطة المجمدة (لا يُعاد الحساب من الدفتر)
+ * - خلاف ذلك → حساب حيّ
+ */
+export async function getBankStatementReconciliationView(
+  client: TxClient,
+  statementId: string
+): Promise<BankReconciliationView> {
+  const statement = await loadBankStatement(client, statementId);
+  if (statement.status === 'CLOSED' && statement.snapshot_json != null) {
+    const parsed = parseClosedStatementSnapshot(statement.snapshot_json);
+    if (parsed) return parsed;
+  }
+  const summary = await calculateBankReconciliation(client, statementId);
+  return { summary, from_snapshot: false };
+}
+
 /** نافذة تاريخية إضافية (قبل date_from) لالتقاط حركات الدفتر المعلّقة (outstanding) عند العرض */
 const BOOK_ITEMS_LOOKBACK_DAYS = 30;
 
@@ -354,20 +422,20 @@ async function sumMatchedForLine(client: TxClient, lineId: string): Promise<bigi
   return moneyToMillis(normalizeMoneyInput(r.rows[0]?.total ?? '0'));
 }
 
+/**
+ * سقف المطابقة على مستوى القيد كاملاً (مجموع كل المطابقات على journal_entry_id)
+ * بما يتوافق مع listBookItems / calculateBankReconciliation — حتى لو رُبط سطر قيد محدد.
+ */
 async function sumMatchedForBookSide(
   client: TxClient,
-  params: { journalEntryId: string; journalEntryLineId: string | null }
+  params: { journalEntryId: string }
 ): Promise<bigint> {
   const r = await txQuery<{ total: string }>(
     client,
-    params.journalEntryLineId
-      ? `SELECT COALESCE(SUM(matched_amount), 0)::text AS total
-         FROM accounts.bank_reconciliation_matches
-         WHERE journal_entry_line_id = $1::uuid`
-      : `SELECT COALESCE(SUM(matched_amount), 0)::text AS total
-         FROM accounts.bank_reconciliation_matches
-         WHERE journal_entry_id = $1::uuid AND journal_entry_line_id IS NULL`,
-    [params.journalEntryLineId ?? params.journalEntryId]
+    `SELECT COALESCE(SUM(matched_amount), 0)::text AS total
+     FROM accounts.bank_reconciliation_matches
+     WHERE journal_entry_id = $1::uuid`,
+    [params.journalEntryId]
   );
   return moneyToMillis(normalizeMoneyInput(r.rows[0]?.total ?? '0'));
 }
@@ -426,8 +494,7 @@ export async function createReconciliationMatch(
     ? String(params.journalEntryLineId).trim()
     : null;
 
-  let bookSide: 'DEBIT' | 'CREDIT';
-  let bookAmount: string;
+  // إن وُجد سطر قيد محدد: التحقق من تبعيته وحساب البنك GL، ثم السعة تُحسب على مستوى القيد كاملاً
   if (journalEntryLineId) {
     const jelRes = await txQuery<{
       id: string;
@@ -449,27 +516,26 @@ export async function createReconciliationMatch(
     if (jel.account_id !== bankAccPeek.gl_account_id) {
       throw new AccountsHttpError('سطر القيد المحدد لا يقع على حساب البنك GL', 409);
     }
-    const debit = normalizeMoneyInput(jel.debit_amount);
-    bookSide = moneyIsPositive(debit) ? 'DEBIT' : 'CREDIT';
-    bookAmount = moneyIsPositive(debit) ? debit : normalizeMoneyInput(jel.credit_amount);
-  } else {
-    const agg = await txQuery<{ debit_sum: string; credit_sum: string }>(
-      client,
-      `SELECT COALESCE(SUM(debit_amount), 0)::text AS debit_sum,
-              COALESCE(SUM(credit_amount), 0)::text AS credit_sum
-       FROM accounts.journal_entry_lines
-       WHERE journal_entry_id = $1::uuid AND account_id = $2::uuid`,
-      [params.journalEntryId, bankAccPeek.gl_account_id]
-    );
-    if (!agg.rows[0]) throw new AccountsHttpError('القيد لا يلمس حساب البنك GL', 409);
-    const debitSum = normalizeMoneyInput(agg.rows[0].debit_sum);
-    const creditSum = normalizeMoneyInput(agg.rows[0].credit_sum);
-    if (moneyIsZero(debitSum) && moneyIsZero(creditSum)) {
-      throw new AccountsHttpError('القيد لا يلمس حساب البنك GL', 409);
-    }
-    bookSide = moneyToMillis(debitSum) >= moneyToMillis(creditSum) ? 'DEBIT' : 'CREDIT';
-    bookAmount = bookSide === 'DEBIT' ? debitSum : creditSum;
   }
+
+  // سعة المطابقة = إجمالي أثر Account Bank GL على القيد (متوافق مع listBookItems)
+  const agg = await txQuery<{ debit_sum: string; credit_sum: string }>(
+    client,
+    `SELECT COALESCE(SUM(debit_amount), 0)::text AS debit_sum,
+            COALESCE(SUM(credit_amount), 0)::text AS credit_sum
+     FROM accounts.journal_entry_lines
+     WHERE journal_entry_id = $1::uuid AND account_id = $2::uuid`,
+    [params.journalEntryId, bankAccPeek.gl_account_id]
+  );
+  if (!agg.rows[0]) throw new AccountsHttpError('القيد لا يلمس حساب البنك GL', 409);
+  const debitSum = normalizeMoneyInput(agg.rows[0].debit_sum);
+  const creditSum = normalizeMoneyInput(agg.rows[0].credit_sum);
+  if (moneyIsZero(debitSum) && moneyIsZero(creditSum)) {
+    throw new AccountsHttpError('القيد لا يلمس حساب البنك GL', 409);
+  }
+  const bookSide: 'DEBIT' | 'CREDIT' =
+    moneyToMillis(debitSum) >= moneyToMillis(creditSum) ? 'DEBIT' : 'CREDIT';
+  const bookAmount = bookSide === 'DEBIT' ? debitSum : creditSum;
 
   const { side: statementSide, amount: lineAmount } = lineSide(line);
   const expectedSide = expectedBookSideFor(statementSide);
@@ -497,7 +563,6 @@ export async function createReconciliationMatch(
 
   const bookMatchedSoFar = await sumMatchedForBookSide(client, {
     journalEntryId: params.journalEntryId,
-    journalEntryLineId,
   });
   const bookRemaining = moneyToMillis(bookAmount) - bookMatchedSoFar;
   if (matchedMillis > bookRemaining) {
@@ -595,7 +660,7 @@ export async function createReconciliationMatch(
 
 export async function removeReconciliationMatch(
   client: TxClient,
-  params: { matchId: string; userId: string }
+  params: { matchId: string; userId: string; statementId?: string }
 ): Promise<{ removed: boolean; lineId: string }> {
   const matchRes = await txQuery<BankReconciliationMatchRow>(
     client,
@@ -604,6 +669,9 @@ export async function removeReconciliationMatch(
   );
   const match = matchRes.rows[0];
   if (!match) throw new AccountsHttpError('المطابقة غير موجودة', 404);
+  if (params.statementId && match.bank_statement_id !== params.statementId) {
+    throw new AccountsHttpError('المطابقة غير موجودة ضمن هذا الكشف', 404);
+  }
   if (match.match_type === 'ADJUSTMENT') {
     throw new AccountsHttpError(
       'لا يمكن حذف مطابقة تسوية آلية مباشرة — يجب عكس قيد التسوية أولاً',
@@ -1236,7 +1304,12 @@ export async function markBankStatementReconciled(
     action: 'bank_statement.reconciled',
     entityType: 'bank_statement',
     entityId: row.id,
-    newValues: { difference: calc.difference },
+    newValues: {
+      difference: calc.difference,
+      summary: calc,
+      within_tolerance: calc.within_tolerance,
+      statement_balance_ok: calc.statement_balance_ok,
+    },
     description: `إنهاء تسوية كشف الحساب المصرفي ${row.statement_number}`,
   });
 
@@ -1263,6 +1336,19 @@ export async function closeBankStatement(
   }
 
   const calc = await calculateBankReconciliation(client, statement.id);
+  const outstanding = await listBookItems(client, {
+    statementId: statement.id,
+    unmatchedOnly: true,
+    pageSize: 200,
+  });
+  const lines = await listBankStatementLines(client, statement.id);
+  const snapshot: ClosedStatementSnapshot = {
+    version: 1,
+    generated_at: new Date().toISOString(),
+    summary: calc,
+    outstanding_book_items: outstanding.items,
+    lines: lines.map(serializeBankStatementLine),
+  };
 
   const upd = await txQuery<BankStatementRow>(
     client,
@@ -1276,7 +1362,7 @@ export async function closeBankStatement(
        version = version + 1
      WHERE id = $1::uuid
      RETURNING *`,
-    [statement.id, JSON.stringify(calc), params.userId]
+    [statement.id, JSON.stringify(snapshot), params.userId]
   );
   const row = upd.rows[0];
 
@@ -1285,7 +1371,13 @@ export async function closeBankStatement(
     action: 'bank_statement.closed',
     entityType: 'bank_statement',
     entityId: row.id,
-    newValues: { snapshot: calc },
+    newValues: {
+      snapshot_version: 1,
+      difference: calc.difference,
+      within_tolerance: calc.within_tolerance,
+      outstanding_count: outstanding.items.length,
+      lines_count: lines.length,
+    },
     description: `إغلاق كشف الحساب المصرفي ${row.statement_number}`,
   });
 
@@ -1295,13 +1387,19 @@ export async function closeBankStatement(
 /** إعادة فتح كشف مُسوّى (وليس مغلقاً) — Accounts Admin فقط */
 export async function reopenBankStatement(
   client: TxClient,
-  params: { statementId: string; userId: string }
+  params: { statementId: string; userId: string; reason?: unknown }
 ): Promise<BankStatementRow> {
   await requireAccountsAdmin(
     client,
     params.userId,
     'إعادة فتح كشف الحساب المصرفي يتطلب صلاحية مدير الحسابات (Accounts Admin)'
   );
+
+  const reasonRaw = params.reason != null ? String(params.reason).trim() : '';
+  if (!reasonRaw) {
+    throw new AccountsHttpError('سبب إعادة الفتح مطلوب', 400);
+  }
+  const reason = reasonRaw.slice(0, 2000);
 
   const statementPeek = await loadBankStatement(client, params.statementId);
   await acquireAccountingResourceLocks(client, [bankStatementLock(statementPeek.id)]);
@@ -1335,6 +1433,7 @@ export async function reopenBankStatement(
     action: 'bank_statement.reopened',
     entityType: 'bank_statement',
     entityId: row.id,
+    newValues: { reason, previous_status: 'RECONCILED' },
     description: `إعادة فتح كشف الحساب المصرفي ${row.statement_number} للتسوية`,
   });
 

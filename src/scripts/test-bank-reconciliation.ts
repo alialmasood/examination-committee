@@ -35,6 +35,7 @@ import {
   closeBankStatement,
   createBankAdjustmentFromStatementLine,
   createReconciliationMatch,
+  getBankStatementReconciliationView,
   listBookItems,
   markBankStatementReconciled,
   removeReconciliationMatch,
@@ -1176,6 +1177,23 @@ async function main() {
     ok('34) تسوية آلية من سطر مدين (رسوم بنكية)');
   } else fail('34)', adjFee);
 
+  // ————— 34b) منع CANCELLED إن وُجدت قيود تسوية مرحّلة —————
+  await expectHttp(
+    '34b) رفض إلغاء كشف مرتبط بقيود تسوية مرحّلة',
+    () =>
+      withTransaction(async (client) => {
+        const s = await loadBankStatement(client, stmt.id);
+        return cancelBankStatement(client, {
+          id: stmt.id,
+          userId: reconUserId,
+          version: s.version,
+          updated_at: s.updated_at,
+          reason: 'محاولة إلغاء بعد تسوية آلية',
+        });
+      }),
+    409
+  );
+
   // ————— 36) رفض تسوية مكررة لنفس السطر —————
   await expectHttp(
     '36) رفض إنشاء تسوية ثانية لسطر لديه تسوية مرحّلة',
@@ -1319,7 +1337,11 @@ async function main() {
 
   // ————— 45) إعادة فتح من الإدارة قبل الإغلاق —————
   const reopened = await withTransaction(async (client) =>
-    reopenBankStatement(client, { statementId: stmt.id, userId: adminUserId })
+    reopenBankStatement(client, {
+      statementId: stmt.id,
+      userId: adminUserId,
+      reason: 'مراجعة قبول 4.D — إعادة فتح قبل الإغلاق',
+    })
   );
   if (reopened.status === 'IN_PROGRESS') ok('45) إعادة فتح كشف RECONCILED (قبل CLOSED) من الإدارة');
   else fail('45)', reopened);
@@ -1335,10 +1357,30 @@ async function main() {
     ok('46) إغلاق الكشف (CLOSED) مع حفظ لقطة snapshot_json');
   } else fail('46)', { status: stmt.status, snap: snapRow.rows[0] });
 
+  // ————— 46b) ملخص CLOSED يقرأ اللقطة وليس الحساب الحي —————
+  const closedView = await withTransaction(async (client) =>
+    getBankStatementReconciliationView(client, stmt.id)
+  );
+  if (
+    closedView.from_snapshot &&
+    closedView.summary?.within_tolerance &&
+    Array.isArray(closedView.outstanding_book_items) &&
+    Array.isArray(closedView.lines)
+  ) {
+    ok('46b) getBankStatementReconciliationView يُرجع from_snapshot مع سطور/معلّقات مجمدة');
+  } else fail('46b)', closedView);
+
   // ————— 47) رفض إعادة الفتح بعد الإغلاق —————
   await expectHttp(
     '47) رفض إعادة فتح كشف مغلق (CLOSED)',
-    () => withTransaction(async (client) => reopenBankStatement(client, { statementId: stmt.id, userId: adminUserId })),
+    () =>
+      withTransaction(async (client) =>
+        reopenBankStatement(client, {
+          statementId: stmt.id,
+          userId: adminUserId,
+          reason: 'محاولة بعد الإغلاق',
+        })
+      ),
     409
   );
 
@@ -1419,7 +1461,7 @@ async function main() {
     );
     if (fs.existsSync(printPage)) {
       const content = fs.readFileSync(printPage, 'utf8');
-      if (content.includes('print:hidden') && content.includes('تقرير تسوية كشف الحساب المصرفي')) {
+      if (content.includes('print-container') && content.includes('تقرير تسوية كشف الحساب المصرفي')) {
         ok('54) صفحة طباعة تسوية الكشف موجودة بعناصرها الأساسية');
       } else fail('54) عناصر الطباعة ناقصة');
     } else fail('54) ملف صفحة الطباعة غير موجود');
@@ -1544,8 +1586,6 @@ async function main() {
   // إبطال متغيرات غير مستخدمة صريحاً (لتفادي تحذيرات linter دون تغيير السلوك)
   void deleteBankStatementLine;
   void updateBankStatementLine;
-  void cancelBankStatement;
-  void loadBankStatement;
 
   console.log(`\n——— النتائج: ${passCount} ناجح / ${failCount} فاشل ———`);
 }

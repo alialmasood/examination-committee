@@ -19,11 +19,13 @@ export async function POST(request: NextRequest, context: Ctx) {
 
   try {
     const { id } = await context.params;
+    const body = await request.json().catch(() => ({}));
 
     const statement = await withTransaction((client) =>
       reopenBankStatement(client, {
         statementId: id,
         userId: auth.user.id,
+        reason: body.reason,
       })
     );
 

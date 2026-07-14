@@ -9,7 +9,9 @@ import {
 } from '@/src/lib/accounts/auth';
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
 import {
+  assertLineBelongsToStatement,
   excludeBankStatementLine,
+  loadBankStatementLine,
   serializeBankStatementLine,
   unexcludeBankStatementLine,
 } from '@/src/lib/accounts/bank-statements';
@@ -23,10 +25,12 @@ export async function POST(request: NextRequest, context: Ctx) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
-    const { lineId } = await context.params;
+    const { lineId, id } = await context.params;
     const body = await request.json().catch(() => ({}));
 
     const line = await withTransaction(async (client) => {
+      const existing = await loadBankStatementLine(client, lineId);
+      assertLineBelongsToStatement(existing, id);
       const excluded = await excludeBankStatementLine(client, {
         lineId,
         userId: auth.user.id,
@@ -58,9 +62,11 @@ export async function DELETE(request: NextRequest, context: Ctx) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
-    const { lineId } = await context.params;
+    const { lineId, id } = await context.params;
 
     const line = await withTransaction(async (client) => {
+      const existing = await loadBankStatementLine(client, lineId);
+      assertLineBelongsToStatement(existing, id);
       const restored = await unexcludeBankStatementLine(client, {
         lineId,
         userId: auth.user.id,

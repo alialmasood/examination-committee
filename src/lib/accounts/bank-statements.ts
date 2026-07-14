@@ -204,6 +204,16 @@ export function serializeBankStatementLine(row: BankStatementLineRow) {
   };
 }
 
+/** يفرض أن lineId يتبع كشف المسار — يمنع تمرير معرف من كشف آخر عبر URL متداخل */
+export function assertLineBelongsToStatement(
+  line: BankStatementLineRow,
+  statementId: string
+): void {
+  if (line.bank_statement_id !== statementId) {
+    throw new AccountsHttpError('سطر الكشف غير موجود ضمن هذا الكشف', 404);
+  }
+}
+
 /**
  * بصمة مستقرة (SHA-256) لسطر كشف — تُستخدم لمنع استيراد سطور مكررة (نفس المصدر).
  * تُطبّع الحقول (تاريخ ثابت الصيغة، مبالغ مطبّعة، نص بلا حساسية لحالة الأحرف/الفراغات).
@@ -666,6 +676,22 @@ export async function cancelBankStatement(
     bankAccountId: statement.bank_account_id,
     userId: params.userId,
   });
+
+  // سياسة محافظة: منع الإلغاء إن وُجدت قيود تسوية مرحّلة مرتبطة بسطور الكشف
+  const adjPosted = await txQuery<{ cnt: string }>(
+    client,
+    `SELECT COUNT(*)::text AS cnt
+     FROM accounts.bank_statement_lines
+     WHERE bank_statement_id = $1::uuid
+       AND adjustment_journal_entry_id IS NOT NULL`,
+    [statement.id]
+  );
+  if (Number(adjPosted.rows[0]?.cnt ?? 0) > 0) {
+    throw new AccountsHttpError(
+      'لا يمكن إلغاء كشف مرتبط بقيود تسوية مرحّلة — يجب عكس قيود التسوية أولاً',
+      409
+    );
+  }
 
   const upd = await txQuery<BankStatementRow>(
     client,

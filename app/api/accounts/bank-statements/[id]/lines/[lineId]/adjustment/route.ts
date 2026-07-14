@@ -8,7 +8,11 @@ import {
   requireAccountsAccess,
 } from '@/src/lib/accounts/auth';
 import { createBankAdjustmentFromStatementLine } from '@/src/lib/accounts/bank-reconciliation';
-import { serializeBankStatementLine } from '@/src/lib/accounts/bank-statements';
+import {
+  assertLineBelongsToStatement,
+  loadBankStatementLine,
+  serializeBankStatementLine,
+} from '@/src/lib/accounts/bank-statements';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
 
 type Ctx = { params: Promise<{ id: string; lineId: string }> };
@@ -19,18 +23,20 @@ export async function POST(request: NextRequest, context: Ctx) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
-    const { lineId } = await context.params;
+    const { lineId, id } = await context.params;
     const body = await request.json();
 
-    const result = await withTransaction((client) =>
-      createBankAdjustmentFromStatementLine(client, {
+    const result = await withTransaction(async (client) => {
+      const existing = await loadBankStatementLine(client, lineId);
+      assertLineBelongsToStatement(existing, id);
+      return createBankAdjustmentFromStatementLine(client, {
         lineId,
         counterAccountId: body.counter_account_id,
         costCenterId: body.cost_center_id,
         description: body.description,
         userId: auth.user.id,
-      })
-    );
+      });
+    });
 
     return jsonSuccess(
       {

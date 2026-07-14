@@ -72,6 +72,7 @@ export default function BankStatementDetailPage() {
   >(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  const [reopenReason, setReopenReason] = useState('');
 
   const [addLineOpen, setAddLineOpen] = useState(false);
   const [newLine, setNewLine] = useState({
@@ -190,16 +191,21 @@ export default function BankStatementDetailPage() {
 
   const runAction = async (action: 'start' | 'reconcile' | 'close' | 'reopen') => {
     if (!statement) return;
+    if (action === 'reopen' && !reopenReason.trim()) {
+      setActionError('سبب إعادة الفتح مطلوب');
+      return;
+    }
     setBusy(true);
     setActionError(null);
-    const needsVersion = action === 'start';
+    const body =
+      action === 'start'
+        ? { version: statement.version, updated_at: statement.updated_at }
+        : action === 'reopen'
+          ? { reason: reopenReason.trim() }
+          : {};
     const res = await bankApi(`/api/accounts/bank-statements/${id}/${action}`, {
       method: 'POST',
-      body: JSON.stringify(
-        needsVersion
-          ? { version: statement.version, updated_at: statement.updated_at }
-          : {}
-      ),
+      body: JSON.stringify(body),
     });
     setBusy(false);
     if (!res.success) {
@@ -207,6 +213,7 @@ export default function BankStatementDetailPage() {
       return;
     }
     setConfirmAction(null);
+    setReopenReason('');
     const labels: Record<string, string> = {
       start: 'تم بدء التسوية',
       reconcile: 'تم إنهاء التسوية',
@@ -1375,11 +1382,25 @@ export default function BankStatementDetailPage() {
       <ConfirmDialog
         open={confirmAction === 'reopen'}
         title="تأكيد إعادة فتح الكشف"
-        message="سيعاد الكشف إلى حالة (قيد المعالجة). يتطلب صلاحية مدير الحسابات. هل تريد المتابعة؟"
+        message={
+          <div className="space-y-2">
+            <p>سيعاد الكشف إلى حالة (قيد المعالجة). يتطلب صلاحية مدير الحسابات.</p>
+            <textarea
+              className="w-full border rounded-md px-3 py-2 text-sm"
+              rows={2}
+              placeholder="سبب إعادة الفتح"
+              value={reopenReason}
+              onChange={(e) => setReopenReason(e.target.value)}
+            />
+          </div>
+        }
         confirmLabel="إعادة فتح"
         busy={busy}
         error={actionError}
-        onClose={() => setConfirmAction(null)}
+        onClose={() => {
+          setConfirmAction(null);
+          setReopenReason('');
+        }}
         onConfirm={() => void runAction('reopen')}
       />
       <ConfirmDialog

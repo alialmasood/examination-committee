@@ -7,7 +7,7 @@ import {
   mapPgError,
   requireAccountsAccess,
 } from '@/src/lib/accounts/auth';
-import { calculateBankReconciliation } from '@/src/lib/accounts/bank-reconciliation';
+import { getBankStatementReconciliationView } from '@/src/lib/accounts/bank-reconciliation';
 import { assertCanAccessBankStatement } from '@/src/lib/accounts/bank-statements';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
 
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest, context: Ctx) {
   try {
     const { id } = await context.params;
 
-    const summary = await withTransaction(async (client) => {
+    const view = await withTransaction(async (client) => {
       try {
         await assertCanAccessBankStatement(client, {
           statementId: id,
@@ -32,10 +32,18 @@ export async function GET(request: NextRequest, context: Ctx) {
         }
         throw e;
       }
-      return calculateBankReconciliation(client, id);
+      return getBankStatementReconciliationView(client, id);
     });
 
-    return jsonSuccess({ data: summary });
+    return jsonSuccess({
+      data: {
+        ...view.summary,
+        from_snapshot: view.from_snapshot,
+        generated_at: view.generated_at ?? null,
+        outstanding_book_items: view.outstanding_book_items ?? null,
+        lines: view.lines ?? null,
+      },
+    });
   } catch (error) {
     if (error instanceof AccountsHttpError) {
       return jsonError(error.message, error.status);

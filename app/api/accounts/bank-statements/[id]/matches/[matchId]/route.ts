@@ -17,10 +17,14 @@ export async function DELETE(request: NextRequest, context: Ctx) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
-    const { matchId } = await context.params;
+    const { matchId, id } = await context.params;
 
     const result = await withTransaction((client) =>
-      removeReconciliationMatch(client, { matchId, userId: auth.user.id })
+      removeReconciliationMatch(client, {
+        matchId,
+        userId: auth.user.id,
+        statementId: id,
+      })
     );
 
     return jsonSuccess({ data: { removed: result.removed, line_id: result.lineId } });

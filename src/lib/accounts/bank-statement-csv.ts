@@ -68,6 +68,7 @@ export type CommitCsvResult = {
 };
 
 const MAX_PREVIEW_ROWS = 5000;
+const MAX_CSV_ROWS = MAX_PREVIEW_ROWS;
 
 /**
  * حماية من CSV Injection عند التصدير: إن بدأت الخلية بأحد المحارف = + - @
@@ -316,6 +317,7 @@ export function previewBankStatementCsv(
 /**
  * يطبّق صفوف تم تحليلها مسبقاً (عبر previewBankStatementCsv) على كشف موجود.
  * يتجاهل الصفوف غير الصالحة ويتخطى المكرر (بصمة موجودة مسبقاً ضمن الكشف أو داخل الدفعة نفسها).
+ * لا يثق بحقل valid من العميل — يعيد التحقق من التواريخ والمبالغ والاتجاه والبصمة على السيرفر.
  */
 export async function commitBankStatementCsv(
   client: TxClient,
@@ -334,9 +336,24 @@ export async function commitBankStatementCsv(
     userId: params.userId,
   });
 
+  if (params.rows.length > MAX_CSV_ROWS) {
+    throw new AccountsHttpError(
+      `عدد صفوف الاستيراد يتجاوز الحد الأقصى (${MAX_CSV_ROWS})`,
+      400
+    );
+  }
+
   const totalInput = params.rows.length;
-  const validRows = params.rows.filter((r) => r.valid && r.fingerprint && r.transaction_date);
-  const invalidCount = totalInput - validRows.length;
+  const revalidated: ParsedCsvLine[] = [];
+  let invalidCount = 0;
+  for (const raw of params.rows) {
+    const row = revalidateParsedCsvLine(raw);
+    if (!row.valid || !row.fingerprint || !row.transaction_date) {
+      invalidCount += 1;
+      continue;
+    }
+    revalidated.push(row);
+  }
 
   const existingRes = await txQuery<{ fingerprint: string }>(
     client,
@@ -357,7 +374,7 @@ export async function commitBankStatementCsv(
   let skippedDuplicate = 0;
   const seenInBatch = new Set<string>();
 
-  for (const row of validRows) {
+  for (const row of revalidated) {
     const fp = row.fingerprint as string;
     if (existingFingerprints.has(fp) || seenInBatch.has(fp)) {
       skippedDuplicate += 1;
@@ -421,9 +438,107 @@ export async function commitBankStatementCsv(
     action: 'bank_statement.csv_imported',
     entityType: 'bank_statement',
     entityId: statement.id,
-    newValues: { imported, skipped_duplicate: skippedDuplicate, invalid: invalidCount, total_input: totalInput },
+    newValues: {
+      imported,
+      skipped_duplicate: skippedDuplicate,
+      invalid: invalidCount,
+      total_input: totalInput,
+    },
     description: `استيراد سطور CSV لكشف الحساب المصرفي ${statement.statement_number}`,
   });
 
-  return { imported, skipped_duplicate: skippedDuplicate, invalid: invalidCount, total_input: totalInput };
+  return {
+    imported,
+    skipped_duplicate: skippedDuplicate,
+    invalid: invalidCount,
+    total_input: totalInput,
+  };
+}
+
+/** إعادة التحقق الصارم من صف CSV قادم من العميل قبل الإدخال */
+function revalidateParsedCsvLine(raw: ParsedCsvLine): ParsedCsvLine {
+  const errors: string[] = [];
+  let transactionDate: string | null = null;
+  let valueDate: string | null = null;
+  let debitAmount = '0.000';
+  let creditAmount = '0.000';
+  let runningBalance: string | null = null;
+
+  try {
+    if (!raw.transaction_date) throw new Error('missing date');
+    transactionDate = pgDateOnly(raw.transaction_date);
+  } catch {
+    errors.push('تاريخ الحركة غير صالح');
+  }
+
+  if (raw.value_date) {
+    try {
+      valueDate = pgDateOnly(raw.value_date);
+    } catch {
+      errors.push('تاريخ القيمة غير صالح');
+    }
+  }
+
+  try {
+    debitAmount = normalizeMoneyInput(raw.debit_amount || '0');
+  } catch {
+    errors.push('قيمة المدين غير صالحة');
+  }
+  try {
+    creditAmount = normalizeMoneyInput(raw.credit_amount || '0');
+  } catch {
+    errors.push('قيمة الدائن غير صالحة');
+  }
+
+  const debitPositive = moneyIsPositive(debitAmount);
+  const creditPositive = moneyIsPositive(creditAmount);
+  if (debitPositive && creditPositive) {
+    errors.push('لا يمكن أن يكون السطر مديناً ودائناً معاً');
+  } else if (!debitPositive && !creditPositive) {
+    errors.push('يجب أن يحتوي السطر على مبلغ مدين أو دائن أكبر من صفر');
+  }
+
+  if (raw.running_balance != null && raw.running_balance !== '') {
+    try {
+      runningBalance = normalizeSignedMoneyInput(raw.running_balance);
+    } catch {
+      errors.push('قيمة الرصيد الجاري غير صالحة');
+    }
+  }
+
+  const description = String(raw.description ?? '').trim().slice(0, 2000);
+  const bankReference = raw.bank_reference
+    ? String(raw.bank_reference).trim().slice(0, 200) || null
+    : null;
+  const externalLineId = raw.external_line_id
+    ? String(raw.external_line_id).trim().slice(0, 200) || null
+    : null;
+
+  const valid = errors.length === 0;
+  const fingerprint =
+    valid && transactionDate
+      ? computeLineFingerprint({
+          transaction_date: transactionDate,
+          description,
+          bank_reference: bankReference,
+          debit_amount: debitAmount,
+          credit_amount: creditAmount,
+          external_line_id: externalLineId,
+        })
+      : null;
+
+  return {
+    row_number: Number(raw.row_number) || 0,
+    transaction_date: transactionDate,
+    value_date: valueDate,
+    description,
+    bank_reference: bankReference,
+    debit_amount: debitAmount,
+    credit_amount: creditAmount,
+    running_balance: runningBalance,
+    external_line_id: externalLineId,
+    fingerprint,
+    valid,
+    errors,
+  };
 }

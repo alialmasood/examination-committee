@@ -9,6 +9,7 @@ import {
 } from '@/src/lib/accounts/auth';
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
 import {
+  assertLineBelongsToStatement,
   deleteBankStatementLine,
   loadBankStatementLine,
   serializeBankStatementLine,
@@ -23,11 +24,12 @@ export async function PATCH(request: NextRequest, context: Ctx) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
-    const { lineId } = await context.params;
+    const { lineId, id } = await context.params;
     const body = await request.json();
 
     const line = await withTransaction(async (client) => {
       const before = await loadBankStatementLine(client, lineId);
+      assertLineBelongsToStatement(before, id);
       const updated = await updateBankStatementLine(client, {
         ...body,
         lineId,
@@ -59,10 +61,11 @@ export async function DELETE(request: NextRequest, context: Ctx) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
-    const { lineId } = await context.params;
+    const { lineId, id } = await context.params;
 
     await withTransaction(async (client) => {
       const before = await loadBankStatementLine(client, lineId);
+      assertLineBelongsToStatement(before, id);
       await deleteBankStatementLine(client, { lineId, userId: auth.user.id });
       await writeFinancialAudit(client, {
         userId: auth.user.id,
