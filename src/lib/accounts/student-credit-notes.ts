@@ -209,8 +209,11 @@ export async function voidStudentCreditNote(client:TxClient,p:{id:string;userId:
   ) {
     throw new AccountsHttpError('لا يمكن إلغاء الإشعار الدائن لأن الاستردادات المرحّلة تجعل الرصيد الدائن سالباً',409);
   }
-  const reversal=await createReversalEntry(client,{original:await loadJournalEntry(client,row.journal_entry_id),reversalDate:pgDateOnly(row.credit_note_date),reason:`إلغاء إشعار دائن ${row.credit_note_number}: ${reason}`,userId:p.userId});
-  await txQuery(client,`UPDATE accounts.journal_entries SET source_type='STUDENT_CREDIT_NOTE_REVERSAL',source_id=$2::uuid,status='POSTED' WHERE id=$1::uuid`,[reversal.id,row.id]);
+  const original=await loadJournalEntry(client,row.journal_entry_id);
+  const reversal=await createReversalEntry(client,{original,reversalDate:pgDateOnly(row.credit_note_date),reason:`إلغاء إشعار دائن ${row.credit_note_number}: ${reason}`,userId:p.userId});
+  // نفس سياسة 5.A/5.C.1: القيد الأصلي يبقى POSTED مع ربط العكس، والعكس يُوسم بمصدر STUDENT_*_REVERSAL.
+  await txQuery(client,`UPDATE accounts.journal_entries SET source_type='STUDENT_CREDIT_NOTE_REVERSAL',source_id=$2::uuid,status='POSTED',updated_at=NOW(),version=version+1 WHERE id=$1::uuid`,[reversal.id,row.id]);
+  await txQuery(client,`UPDATE accounts.journal_entries SET status='POSTED',reversal_entry_id=$2::uuid,updated_at=NOW(),version=version+1 WHERE id=$1::uuid`,[original.id,reversal.id]);
   await writeStudentLedgerEntry(client,{account:await loadStudentAccount(client,row.student_account_id,true),entryDate:pgDateOnly(row.credit_note_date),entryType:'CREDIT_NOTE_REVERSAL',sourceType:'STUDENT_CREDIT_NOTE',sourceId:row.id,description:`عكس إشعار دائن ${row.credit_note_number}: ${reason}`,debit:row.amount,credit:'0',currencyCode:'IQD',journalEntryId:reversal.id,userId:p.userId});
   if(row.application_mode==='DEBT_REDUCTION')await reverseChargeCreditNote(client,{chargeId:row.student_charge_id!,creditNoteAmount:row.amount});
   const r=await txQuery<StudentCreditNoteRow>(client,`UPDATE accounts.student_credit_notes SET status='VOID',reversal_journal_entry_id=$2::uuid,void_reason=$3,voided_by=$4::uuid,voided_at=NOW(),updated_at=NOW(),version=version+1 WHERE id=$1::uuid RETURNING *`,[row.id,reversal.id,reason,p.userId]);
