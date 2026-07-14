@@ -7,7 +7,8 @@
  *   • قيود سندات قبض/عكس مرتبطة بتحصيلات الطلبة (cash/bank voucher)
  * - B = مجموع الدفتر الفرعي (باستثناء OPENING_REFERENCE)
  *   يشمل CHARGE / CHARGE_REVERSAL / COLLECTION / COLLECTION_REVERSAL
- *   / RELIEF / RELIEF_REVERSAL
+ *   / RELIEF / RELIEF_REVERSAL / CREDIT_NOTE / CREDIT_NOTE_REVERSAL
+ *   / REFUND / REFUND_REVERSAL
  *
  * unexplained = كامل GL على الذمم − A (يشمل Legacy مثل نشاط نقدي على 1111).
  * لا استثناء عام لأي كود حساب.
@@ -68,8 +69,12 @@ export type StudentReceivablesVerifyResult = {
     ledger_entries_count: number;
     collections_posted_count: number;
     reliefs_posted_count: number;
+    credit_notes_posted_count: number;
+    refunds_posted_count: number;
     allocations_sum_ok: boolean;
     reliefs_sum_ok: boolean;
+    credit_notes_sum_ok: boolean;
+    refunds_sum_ok: boolean;
     gl_accounts: Array<{
       account_id: string;
       code: string | null;
@@ -83,6 +88,8 @@ function expectedChargeLedgerEntryType(jeSourceType: string): string {
   if (jeSourceType === 'STUDENT_CHARGE_REVERSAL') return 'CHARGE_REVERSAL';
   if (jeSourceType === 'STUDENT_RELIEF') return 'RELIEF';
   if (jeSourceType === 'STUDENT_RELIEF_REVERSAL') return 'RELIEF_REVERSAL';
+  if (jeSourceType === 'STUDENT_CREDIT_NOTE') return 'CREDIT_NOTE';
+  if (jeSourceType === 'STUDENT_CREDIT_NOTE_REVERSAL') return 'CREDIT_NOTE_REVERSAL';
   return 'CHARGE';
 }
 
@@ -139,6 +146,34 @@ const COLLECTION_RECV_NET_SQL = `
   ) x
 `;
 
+const REFUND_RECV_NET_SQL = `
+  SELECT COALESCE(SUM(x.net), 0) FROM (
+    SELECT SUM(l.debit_amount - l.credit_amount) net
+    FROM accounts.student_refunds sr JOIN accounts.student_accounts sa ON sa.id=sr.student_account_id
+    JOIN accounts.cash_vouchers cv ON cv.id=sr.cash_voucher_id JOIN accounts.journal_entries e ON e.id=cv.journal_entry_id AND e.status='POSTED'
+    JOIN accounts.journal_entry_lines l ON l.journal_entry_id=e.id AND l.account_id=sa.receivable_gl_account_id
+    WHERE sa.receivable_gl_account_id=a.id
+    UNION ALL
+    SELECT SUM(l.debit_amount - l.credit_amount) net
+    FROM accounts.student_refunds sr JOIN accounts.student_accounts sa ON sa.id=sr.student_account_id
+    JOIN accounts.cash_vouchers cv ON cv.id=sr.cash_voucher_id JOIN accounts.journal_entries e ON e.id=cv.reversal_journal_entry_id AND e.status='POSTED'
+    JOIN accounts.journal_entry_lines l ON l.journal_entry_id=e.id AND l.account_id=sa.receivable_gl_account_id
+    WHERE sa.receivable_gl_account_id=a.id
+    UNION ALL
+    SELECT SUM(l.debit_amount - l.credit_amount) net
+    FROM accounts.student_refunds sr JOIN accounts.student_accounts sa ON sa.id=sr.student_account_id
+    JOIN accounts.bank_vouchers bv ON bv.id=sr.bank_voucher_id JOIN accounts.journal_entries e ON e.id=bv.journal_entry_id AND e.status='POSTED'
+    JOIN accounts.journal_entry_lines l ON l.journal_entry_id=e.id AND l.account_id=sa.receivable_gl_account_id
+    WHERE sa.receivable_gl_account_id=a.id
+    UNION ALL
+    SELECT SUM(l.debit_amount - l.credit_amount) net
+    FROM accounts.student_refunds sr JOIN accounts.student_accounts sa ON sa.id=sr.student_account_id
+    JOIN accounts.bank_vouchers bv ON bv.id=sr.bank_voucher_id JOIN accounts.journal_entries e ON e.id=bv.reversal_journal_entry_id AND e.status='POSTED'
+    JOIN accounts.journal_entry_lines l ON l.journal_entry_id=e.id AND l.account_id=sa.receivable_gl_account_id
+    WHERE sa.receivable_gl_account_id=a.id
+  ) x
+`;
+
 export async function verifyStudentReceivables(
   client: TxClient
 ): Promise<StudentReceivablesVerifyResult> {
@@ -171,6 +206,8 @@ export async function verifyStudentReceivables(
     client,
     `SELECT COUNT(*)::int AS n FROM accounts.student_reliefs WHERE status = 'POSTED'`
   );
+  const creditNoteCount = await txQuery<{ n: number }>(client, `SELECT COUNT(*)::int n FROM accounts.student_credit_notes WHERE status='POSTED'`);
+  const refundCount = await txQuery<{ n: number }>(client, `SELECT COUNT(*)::int n FROM accounts.student_refunds WHERE status='POSTED'`);
 
   const allocCheck = await txQuery<{ bad: number }>(
     client,
@@ -203,6 +240,9 @@ export async function verifyStudentReceivables(
        ) > 0.0005`
   );
   const reliefsSumOk = (reliefSumCheck.rows[0]?.bad ?? 0) === 0;
+  const creditNoteCheck = await txQuery<{bad:number}>(client,`SELECT COUNT(*)::int bad FROM accounts.student_credit_notes cn WHERE cn.status='POSTED' AND ABS(cn.amount-COALESCE((SELECT SUM(le.credit_amount-le.debit_amount) FROM accounts.student_ledger_entries le WHERE le.source_type='STUDENT_CREDIT_NOTE' AND le.source_id=cn.id AND le.entry_type IN ('CREDIT_NOTE','CREDIT_NOTE_REVERSAL')),0))>0.0005`);
+  const refundCheck = await txQuery<{bad:number}>(client,`SELECT COUNT(*)::int bad FROM accounts.student_refunds sr WHERE sr.status='POSTED' AND ABS(sr.amount-COALESCE((SELECT SUM(le.debit_amount-le.credit_amount) FROM accounts.student_ledger_entries le WHERE le.source_type='STUDENT_REFUND' AND le.source_id=sr.id AND le.entry_type IN ('REFUND','REFUND_REVERSAL')),0))>0.0005`);
+  const creditNotesSumOk=(creditNoteCheck.rows[0]?.bad??0)===0, refundsSumOk=(refundCheck.rows[0]?.bad??0)===0;
 
   const sub = await txQuery<{ balance: string }>(
     client,
@@ -238,10 +278,12 @@ export async function verifyStudentReceivables(
                     AND e.status = 'POSTED'
                     AND e.source_type IN (
                       'STUDENT_CHARGE', 'STUDENT_CHARGE_REVERSAL',
-                      'STUDENT_RELIEF', 'STUDENT_RELIEF_REVERSAL'
+                      'STUDENT_RELIEF', 'STUDENT_RELIEF_REVERSAL',
+                      'STUDENT_CREDIT_NOTE', 'STUDENT_CREDIT_NOTE_REVERSAL'
                     )
                 ), 0)
                 + COALESCE((${COLLECTION_RECV_NET_SQL}), 0)
+                + COALESCE((${REFUND_RECV_NET_SQL}), 0)
               )::text AS ops_net,
               COALESCE((
                 SELECT SUM(l.debit_amount - l.credit_amount)
@@ -333,7 +375,8 @@ export async function verifyStudentReceivables(
        WHERE e.status = 'POSTED'
          AND e.source_type IN (
            'STUDENT_CHARGE', 'STUDENT_CHARGE_REVERSAL',
-           'STUDENT_RELIEF', 'STUDENT_RELIEF_REVERSAL'
+           'STUDENT_RELIEF', 'STUDENT_RELIEF_REVERSAL',
+           'STUDENT_CREDIT_NOTE', 'STUDENT_CREDIT_NOTE_REVERSAL'
          )
          AND e.source_id IS NOT NULL
          AND l.account_id = ANY($1::uuid[])
@@ -370,7 +413,7 @@ export async function verifyStudentReceivables(
      FROM accounts.student_ledger_entries le
      WHERE le.entry_type IN (
        'CHARGE', 'CHARGE_REVERSAL', 'COLLECTION', 'COLLECTION_REVERSAL',
-       'RELIEF', 'RELIEF_REVERSAL'
+       'RELIEF', 'RELIEF_REVERSAL', 'CREDIT_NOTE', 'CREDIT_NOTE_REVERSAL'
      )
        AND le.source_id IS NOT NULL`
   );
@@ -381,6 +424,7 @@ export async function verifyStudentReceivables(
       row.entry_type === 'CHARGE_REVERSAL' ||
       row.entry_type === 'RELIEF' ||
       row.entry_type === 'RELIEF_REVERSAL'
+      || row.entry_type === 'CREDIT_NOTE' || row.entry_type === 'CREDIT_NOTE_REVERSAL'
     ) {
       const key = sourceKey(row.entry_type, row.source_id);
       const prev = ledBySource.get(key);
@@ -518,7 +562,7 @@ export async function verifyStudentReceivables(
     journalWithoutLedger.length === 0 &&
     ledgerWithoutJournal.length === 0 &&
     amountMismatches.length === 0;
-  const ok = chargeSubledgerMatch && noOrphans && allocationsSumOk && reliefsSumOk;
+  const ok = chargeSubledgerMatch && noOrphans && allocationsSumOk && reliefsSumOk && creditNotesSumOk && refundsSumOk;
 
   return {
     ok,
@@ -539,8 +583,12 @@ export async function verifyStudentReceivables(
       ledger_entries_count: ledgerCount.rows[0]?.n ?? 0,
       collections_posted_count: collCount.rows[0]?.n ?? 0,
       reliefs_posted_count: reliefCount.rows[0]?.n ?? 0,
+      credit_notes_posted_count: creditNoteCount.rows[0]?.n ?? 0,
+      refunds_posted_count: refundCount.rows[0]?.n ?? 0,
       allocations_sum_ok: allocationsSumOk,
       reliefs_sum_ok: reliefsSumOk,
+      credit_notes_sum_ok: creditNotesSumOk,
+      refunds_sum_ok: refundsSumOk,
       gl_accounts: glAccounts,
     },
   };

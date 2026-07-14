@@ -834,10 +834,14 @@ async function applyInstallmentAllocation(
   const relief = normalizeMoneyInput(
     (inst as { relief_amount?: string }).relief_amount ?? '0'
   );
+  const creditNote = normalizeMoneyInput(
+    (inst as { credit_note_amount?: string }).credit_note_amount ?? '0'
+  );
   const outstanding = millisToMoney(
     moneyToMillis(normalizeMoneyInput(inst.amount)) -
       moneyToMillis(paid) -
-      moneyToMillis(relief)
+      moneyToMillis(relief) -
+      moneyToMillis(creditNote)
   );
   if (moneyToMillis(outstanding) < BigInt(0)) {
     throw new AccountsHttpError('مبلغ التخصيص يتجاوز رصيد القسط', 409);
@@ -879,10 +883,14 @@ async function reverseInstallmentAllocation(
   const relief = normalizeMoneyInput(
     (inst as { relief_amount?: string }).relief_amount ?? '0'
   );
+  const creditNote = normalizeMoneyInput(
+    (inst as { credit_note_amount?: string }).credit_note_amount ?? '0'
+  );
   const outstanding = millisToMoney(
     moneyToMillis(normalizeMoneyInput(inst.amount)) -
       paidMillis -
-      moneyToMillis(relief)
+      moneyToMillis(relief) -
+      moneyToMillis(creditNote)
   );
   const status = deriveInstallmentStatus(
     paid,
