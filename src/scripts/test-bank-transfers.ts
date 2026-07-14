@@ -25,6 +25,7 @@ import { createBank } from '../lib/accounts/banks';
 import { createBankBranch } from '../lib/accounts/bank-branches';
 import {
   createBankTransfer,
+  deleteDraftBankTransfer,
   postBankTransfer,
   updateBankTransfer,
   voidBankTransfer,
@@ -509,6 +510,43 @@ async function main() {
       'لا يسمح بالتحويلات'
     );
 
+    // 5b) DRAFT ثم تعليق المصدر → رفض الترحيل
+    const draftSuspend = await withTransaction(async (client) => {
+      await acquireBanksLock(client);
+      return createBankTransfer(client, {
+        source_bank_account_id: baA.id,
+        destination_bank_account_id: baB.id,
+        transfer_date: vDate,
+        amount: '12',
+        description: `مسودة قبل تعليق ${suffix}`,
+        created_by: userId,
+      });
+    });
+    createdTransferIds.push(draftSuspend.id);
+    await query(
+      `UPDATE accounts.bank_accounts SET status='SUSPENDED', version=version+1 WHERE id=$1`,
+      [baA.id]
+    );
+    await expectHttp(
+      '5b) رفض ترحيل DRAFT بعد تعليق المصدر',
+      () =>
+        withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          await acquireJournalEntriesLock(client);
+          return postBankTransfer(client, {
+            id: draftSuspend.id,
+            userId,
+            version: draftSuspend.version,
+            updated_at: draftSuspend.updated_at,
+          });
+        }),
+      409
+    );
+    await query(
+      `UPDATE accounts.bank_accounts SET status='ACTIVE', version=version+1 WHERE id=$1`,
+      [baA.id]
+    );
+
     // 6) تعديل DRAFT
     transfer = await withTransaction(async (client) => {
       await acquireBanksLock(client);
@@ -571,6 +609,20 @@ async function main() {
     transfer = postedPlain.transfer;
     if (transfer.status === 'POSTED' && transfer.journal_entry_id) ok('9) ترحيل دون رسوم');
     else fail('9)', transfer);
+
+    const jeMeta = await query(
+      `SELECT source_type, source_id::text, entry_date::text AS entry_date, entry_type
+       FROM accounts.journal_entries WHERE id=$1`,
+      [transfer.journal_entry_id]
+    );
+    if (
+      jeMeta.rows[0]?.source_type === 'BANK_TRANSFER' &&
+      jeMeta.rows[0]?.source_id === transfer.id &&
+      jeMeta.rows[0]?.entry_type === 'TRANSFER' &&
+      pgDateOnly(jeMeta.rows[0].entry_date) === vDate
+    ) {
+      ok('9b) source_type/source_id وentry_date=transfer_date');
+    } else fail('9b)', jeMeta.rows[0]);
 
     const linesPlain = await query(
       `SELECT account_id::text, debit_amount::text, credit_amount::text
@@ -883,6 +935,88 @@ async function main() {
       ok('18) BANK_PAYMENT وBANK_TRANSFER متزامنان');
     } else fail('18)', { mixOk, mixFail, bal: balMix.balance, amt: mixAmt });
 
+    // 18b) تحويلان متزامنان مع رسوم (amount+fee)
+    await postPostedJe({
+      userId,
+      yearId,
+      periodId,
+      entryDate: vDate,
+      debitAccountId: glA,
+      creditAccountId: contraId,
+      amount: '200.000',
+      description: `تمويل رسوم متزامنة ${suffix}`,
+    });
+    const feeBalBook = await getAccountBookBalance(glA);
+    // كل تحويل يخصم 120 (100+20) والرصيد ~200 → واحد فقط
+    const feeC1 = await withTransaction(async (client) => {
+      await acquireBanksLock(client);
+      return createBankTransfer(client, {
+        source_bank_account_id: baA.id,
+        destination_bank_account_id: baB.id,
+        transfer_date: vDate,
+        amount: '100',
+        fee_amount: '20',
+        fee_expense_account_id: glFee,
+        description: `تزامن رسوم أ ${suffix}`,
+        created_by: userId,
+      });
+    });
+    const feeC2 = await withTransaction(async (client) => {
+      await acquireBanksLock(client);
+      return createBankTransfer(client, {
+        source_bank_account_id: baA.id,
+        destination_bank_account_id: baB.id,
+        transfer_date: vDate,
+        amount: '100',
+        fee_amount: '20',
+        fee_expense_account_id: glFee,
+        description: `تزامن رسوم ب ${suffix}`,
+        created_by: userId,
+      });
+    });
+    createdTransferIds.push(feeC1.id, feeC2.id);
+    const feeConc = await Promise.allSettled([
+      withTransaction(async (client) => {
+        await acquireBanksLock(client);
+        await acquireJournalEntriesLock(client);
+        return postBankTransfer(client, {
+          id: feeC1.id,
+          userId,
+          version: feeC1.version,
+          updated_at: feeC1.updated_at,
+        });
+      }),
+      withTransaction(async (client) => {
+        await acquireBanksLock(client);
+        await acquireJournalEntriesLock(client);
+        return postBankTransfer(client, {
+          id: feeC2.id,
+          userId,
+          version: feeC2.version,
+          updated_at: feeC2.updated_at,
+        });
+      }),
+    ]);
+    const feeOk = feeConc.filter((r) => r.status === 'fulfilled').length;
+    const feeFail = feeConc.filter((r) => r.status === 'rejected').length;
+    const balFeeConc = await getAccountBookBalance(glA);
+    if (
+      feeOk === 1 &&
+      feeFail === 1 &&
+      Number(balFeeConc.balance) >= 0 &&
+      Number(feeBalBook.balance) >= 120
+    ) {
+      ok(
+        `18b) تزامن مع رسوم: نجح=${feeOk} فشل=${feeFail} رصيد=${balFeeConc.balance}`
+      );
+    } else
+      fail('18b)', {
+        feeOk,
+        feeFail,
+        bal: balFeeConc.balance,
+        before: feeBalBook.balance,
+      });
+
     // 19) تحويلان متعاكسان دون deadlock
     await postPostedJe({
       userId,
@@ -1067,9 +1201,66 @@ async function main() {
     if (voidAgain.status === 'VOID') ok('26) منع VOID مرتين (idempotent)');
     else fail('26)');
 
+    // 12x) DELETE API — DRAFT فقط
+    const delDraft = await withTransaction(async (client) => {
+      await acquireBanksLock(client);
+      return createBankTransfer(client, {
+        source_bank_account_id: baA.id,
+        destination_bank_account_id: baB.id,
+        transfer_date: vDate,
+        amount: '8',
+        description: `حذف مسودة ${suffix}`,
+        created_by: userId,
+      });
+    });
+    await withTransaction(async (client) => {
+      await acquireBanksLock(client);
+      await deleteDraftBankTransfer(client, {
+        id: delDraft.id,
+        userId,
+        version: delDraft.version,
+        updated_at: delDraft.updated_at,
+      });
+    });
+    const gone = await query(
+      `SELECT id FROM accounts.bank_transfers WHERE id=$1`,
+      [delDraft.id]
+    );
+    if (!gone.rows[0]) ok('12a) حذف DRAFT مسموح مع can_prepare');
+    else fail('12a)');
+
+    await expectHttp(
+      '12b) منع حذف POSTED',
+      () =>
+        withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          return deleteDraftBankTransfer(client, {
+            id: transfer.id,
+            userId,
+            version: transfer.version,
+            updated_at: transfer.updated_at,
+          });
+        }),
+      409
+    );
+    await expectHttp(
+      '12c) منع حذف VOID',
+      () =>
+        withTransaction(async (client) => {
+          await acquireBanksLock(client);
+          return deleteDraftBankTransfer(client, {
+            id: voidedPosted.id,
+            userId,
+            version: voidedPosted.version,
+            updated_at: voidedPosted.updated_at,
+          });
+        }),
+      409
+    );
+
     // 27/28) توثيق سياسة التاريخ والفترة
     ok('27) موثّق: الفترة يجب أن تكون OPEN عند الترحيل والعكس (assertFiscalContextForEntry)');
-    ok('28) موثّق: entry_date = transfer_date · value_date مرجعي فقط');
+    ok('28) موثّق: entry_date = transfer_date · value_date مرجعي فقط · تاريخ العكس = transfer_date');
 
     // صلاحيات
     const limRes = await query(
@@ -1243,6 +1434,39 @@ async function main() {
         }),
       403
     );
+
+    // قائمة: لا تظهر تحويلات بدون can_view على الحسابين
+    const listN = await query(
+      `SELECT COUNT(*)::int AS n
+       FROM accounts.bank_transfers t
+       WHERE t.source_bank_account_id = $1::uuid
+         AND t.destination_bank_account_id = $2::uuid
+         AND (
+           EXISTS (
+             SELECT 1 FROM student_affairs.users u
+             WHERE u.id = $3::uuid AND u.is_active
+               AND LOWER(TRIM(u.username)) IN (
+                 'accounts','admin','superadmin','super_admin'
+               )
+           )
+           OR (
+             EXISTS (
+               SELECT 1 FROM accounts.bank_account_users s
+               WHERE s.bank_account_id = t.source_bank_account_id
+                 AND s.user_id = $3::uuid AND s.can_view
+             )
+             AND EXISTS (
+               SELECT 1 FROM accounts.bank_account_users d
+               WHERE d.bank_account_id = t.destination_bank_account_id
+                 AND d.user_id = $3::uuid AND d.can_view
+             )
+           )
+         )`,
+      [baA.id, baB.id, limUserId]
+    );
+    if (Number(listN.rows[0]?.n || 0) === 0) {
+      ok('7g) قائمة التحويلات تخفي ما لا يُرى على الحسابين');
+    } else fail('7g) تسريب قائمة', listN.rows[0]);
 
     if (isPrivilegedAccountsUsername(username)) {
       await withTransaction(async (client) => {

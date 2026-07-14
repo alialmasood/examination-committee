@@ -287,9 +287,12 @@ export async function assertBankAccountOperational(
     forReceipt?: boolean;
     forPayment?: boolean;
     forTransfer?: boolean;
+    /** افتراضي true — استخدم false عند التحقق بعد قفل مرتّب مسبقاً */
+    forUpdate?: boolean;
   }
 ): Promise<BankAccountRow> {
-  const acc = await loadBankAccount(client, bankAccountId, true);
+  const forUpdate = opts.forUpdate !== false;
+  const acc = await loadBankAccount(client, bankAccountId, forUpdate);
   if (acc.status !== 'ACTIVE') {
     throw new AccountsHttpError(
       'الحساب المصرفي يجب أن يكون نشطاً (ACTIVE) لاستخدامه في العمليات',

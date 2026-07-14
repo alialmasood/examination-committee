@@ -47,6 +47,7 @@ export default function BankAccountDetailPage() {
   );
   const [outboundTotal, setOutboundTotal] = useState<string | null>(null);
   const [inboundTotal, setInboundTotal] = useState<string | null>(null);
+  const [outboundFees, setOutboundFees] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -119,6 +120,7 @@ export default function BankAccountDetailPage() {
       const inStats = inbound.stats as BankTransferStats | undefined;
       setOutboundTotal(outStats?.transfers_total ?? null);
       setInboundTotal(inStats?.transfers_total ?? null);
+      setOutboundFees(outStats?.fees_total ?? null);
       if (!detail.success || !detail.data) {
         setError(detail.message || 'تعذر تحميل الحساب');
         setAccount(null);
@@ -583,10 +585,10 @@ export default function BankAccountDetailPage() {
             </div>
           </div>
           <div className="rounded-lg border bg-gray-50 px-3 py-2">
-            <div className="text-xs text-gray-500">إجمالي الرسوم</div>
+            <div className="text-xs text-gray-500">رسوم صادر (مرحّل)</div>
             <div className="font-semibold text-red-950">
-              {transferStats
-                ? formatMoney(transferStats.fees_total, account.currency_code)
+              {outboundFees != null
+                ? formatMoney(outboundFees, account.currency_code)
                 : '—'}
             </div>
           </div>

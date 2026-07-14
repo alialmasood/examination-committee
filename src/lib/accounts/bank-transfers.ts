@@ -318,6 +318,8 @@ export async function assertBankTransferAccounts(
     feeAmount: string;
     feeExpenseAccountId: string | null;
     costCenterId: string | null;
+    /** عند false لا يُقفل صف الحساب (بعد قفل مرتّب مسبق) */
+    forUpdate?: boolean;
   }
 ): Promise<{
   source: BankAccountRow;
@@ -333,11 +335,12 @@ export async function assertBankTransferAccounts(
 
   const source = await assertBankAccountOperational(client, params.sourceId, {
     forTransfer: true,
+    forUpdate: params.forUpdate,
   });
   const destination = await assertBankAccountOperational(
     client,
     params.destinationId,
-    { forTransfer: true }
+    { forTransfer: true, forUpdate: params.forUpdate }
   );
 
   if (source.currency_code !== destination.currency_code) {
@@ -809,6 +812,24 @@ export async function postBankTransfer(
 
   const amount = normalizeMoneyInput(transfer.amount);
   const feeAmount = normalizeMoneyInput(transfer.fee_amount ?? '0');
+
+  // تحميل أولي بلا قفل ثم قفل مرتّب — يمنع deadlock مع تحويلات متعاكسة أو 4.B
+  const sourcePeek = await loadBankAccount(
+    client,
+    transfer.source_bank_account_id,
+    false
+  );
+  const destPeek = await loadBankAccount(
+    client,
+    transfer.destination_bank_account_id,
+    false
+  );
+  await lockTransferBalanceParticipants(client, {
+    source: sourcePeek,
+    destination: destPeek,
+    feeGlId: transfer.fee_expense_account_id,
+  });
+
   const { source, destination } = await assertBankTransferAccounts(client, {
     sourceId: transfer.source_bank_account_id,
     destinationId: transfer.destination_bank_account_id,
@@ -816,6 +837,7 @@ export async function postBankTransfer(
     feeAmount,
     feeExpenseAccountId: transfer.fee_expense_account_id,
     costCenterId: transfer.cost_center_id,
+    forUpdate: false,
   });
 
   if (transfer.currency_code !== source.currency_code) {
@@ -830,12 +852,6 @@ export async function postBankTransfer(
     fiscalYearId: transfer.fiscal_year_id,
     fiscalPeriodId: transfer.fiscal_period_id,
     entryDate: transferDate,
-  });
-
-  await lockTransferBalanceParticipants(client, {
-    source,
-    destination,
-    feeGlId: transfer.fee_expense_account_id,
   });
 
   const book = await getAccountBookBalanceTx(client, source.gl_account_id);
@@ -982,16 +998,19 @@ export async function voidBankTransfer(
     userId: params.userId,
   });
 
-  const sourceAcc = await loadBankAccount(
-    client,
+  await acquireBanksLock(client);
+
+  // قفل الحسابات بترتيب UUID ثابت (ليس مصدر ثم وجهة) لتوافق POST والتحويلات المتعاكسة
+  const bankIds = [
     transfer.source_bank_account_id,
-    true
-  );
-  const destAcc = await loadBankAccount(
-    client,
     transfer.destination_bank_account_id,
-    true
-  );
+  ].sort((a, b) => a.localeCompare(b));
+  const lockedBanks = new Map<string, BankAccountRow>();
+  for (const id of bankIds) {
+    lockedBanks.set(id, await loadBankAccount(client, id, true));
+  }
+  const sourceAcc = lockedBanks.get(transfer.source_bank_account_id)!;
+  const destAcc = lockedBanks.get(transfer.destination_bank_account_id)!;
   if (sourceAcc.status === 'CLOSED' || destAcc.status === 'CLOSED') {
     throw new AccountsHttpError(
       'لا يمكن إلغاء تحويل مرتبط بحساب مصرفي مغلق',
@@ -1021,9 +1040,20 @@ export async function voidBankTransfer(
     throw new AccountsHttpError('حالة التحويل لا تسمح بالإلغاء', 409);
   }
 
-  await acquireBanksLock(client);
+  // قفل GL بترتيب ثابت أيضاً عند العكس
+  const glIds = [sourceAcc.gl_account_id, destAcc.gl_account_id].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  for (const glId of glIds) {
+    await txQuery(
+      client,
+      `SELECT id FROM accounts.chart_of_accounts WHERE id = $1::uuid FOR UPDATE`,
+      [glId]
+    );
+  }
+
   const original = await loadJournalEntry(client, transfer.journal_entry_id);
-  // تاريخ العكس = transfer_date (مثل 4.B) — يجب أن تكون الفترة مفتوحة
+  // تاريخ العكس = transfer_date (مثل 4.B) — ليس تاريخ الإلغاء؛ الفترة يجب أن تكون OPEN
   const reversalDate = pgDateOnly(transfer.transfer_date);
   const reversal = await createReversalEntry(client, {
     original,

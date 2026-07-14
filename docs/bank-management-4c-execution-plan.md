@@ -11,17 +11,18 @@
 | بدون رسوم | Dr Destination Bank GL · Cr Source Bank GL |
 | مع رسوم | Dr Destination (amount) · Dr Fees Expense (fee) · Cr Source (amount+fee) |
 
-بديل مرفوض لهذه المرحلة: قيدان منفصلان (تحويل + رسوم) — يزيد التعقيد دون فائدة تدقيقية هنا.
-
 - `entry_date` = `transfer_date`
 - `value_date` مرجع مصرفي فقط ولا يغيّر تاريخ القيد
-- تاريخ العكس عند VOID = `transfer_date` (مثل 4.B) ويجب أن تكون الفترة OPEN
+- **تاريخ العكس عند VOID = `transfer_date`** (ليس تاريخ الإلغاء) — يجب أن تكون الفترة OPEN
 
-## الجدول
+## DELETE API
 
-`accounts.bank_transfers` — انظر Migration `069_create_bank_transfers.sql`.
+`DELETE /api/accounts/bank-transfers/[id]` يحذف **مسودة DRAFT فقط**:
 
-الترقيم: `BANK_TRANSFER_VOUCHER` / بادئة **BTR** عبر `document_sequences` مع `FOR UPDATE`.
+- يتطلب `can_prepare` على المصدر و`can_view` على الوجهة
+- يرفض POSTED وVOID (409)
+- لا يُستخدم للترحيلات الملغاة — الإلغاء عبر VOID
+- يسجّل `bank_transfer.deleted`
 
 ## التزامن وترتيب الأقفال
 
@@ -30,11 +31,12 @@
 3. قفل صفوف الحسابات البنكية بترتيب UUID تصاعدي
 4. قفل صفوف Bank GL (+ GL الرسوم إن وُجد) بترتيب UUID تصاعدي
 5. قفل `bank_vouchers` و`bank_transfers` المرتبطة بالمصدر
-6. حساب رصيد المصدر من دفتر الأستاذ POSTED
-7. التحقق: الرصيد ≥ amount + fee_amount
-8. إنشاء وترحيل القيد وربط الحالة
+6. إعادة التحقق من الحالات **بدون** إعادة قفل بترتيب المصدر→الوجهة
+7. حساب رصيد المصدر من دفتر الأستاذ POSTED
+8. التحقق: الرصيد ≥ amount + fee_amount
+9. إنشاء وترحيل القيد
 
-سياسة ملزمة: أي خصم من Bank GL يجب أن يستخدم `acquireBanksLock` + قفل GL — مشترك مع `BANK_PAYMENT`.
+VOID يستخدم نفس `acquireBanksLock` ثم قفل الحسابات/GL بترتيب UUID (لا المصدر أولاً دائماً).
 
 ## الصلاحيات
 
