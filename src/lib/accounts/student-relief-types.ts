@@ -375,21 +375,7 @@ export async function deactivateStudentReliefType(
   const row = await loadStudentReliefType(client, params.id, true);
   if (!row.is_active) return row;
 
-  const activeUse = await txQuery(
-    client,
-    `SELECT 1 FROM accounts.student_reliefs
-     WHERE relief_type_id = $1::uuid
-       AND status NOT IN ('VOID', 'REJECTED', 'POSTED')
-     LIMIT 1`,
-    [row.id]
-  );
-  if (activeUse.rows[0]) {
-    throw new AccountsHttpError(
-      'لا يمكن إلغاء تفعيل نوع مرتبط بطلبات تخفيض نشطة',
-      409
-    );
-  }
-
+  // التعطيل لا يحذف التاريخ. الطلبات الجديدة والترحيل/الاعتماد تُرفض عبر is_active.
   const upd = await txQuery<StudentReliefTypeRow>(
     client,
     `UPDATE accounts.student_relief_types SET

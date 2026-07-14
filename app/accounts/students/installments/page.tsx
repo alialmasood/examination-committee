@@ -6,7 +6,7 @@ import StudentsNav from '../components/StudentsNav';
 import {
   formatDateOnly,
   formatMoney,
-  INSTALLMENT_STATUS_LABEL,
+  installmentSettlementLabel,
   installmentStatusBadge,
   INSTALLMENTS_API,
   studentApi,
@@ -110,6 +110,8 @@ export default function StudentInstallmentsPage() {
               <th className="px-3 py-2 text-right font-medium">#</th>
               <th className="px-3 py-2 text-right font-medium">الاستحقاق</th>
               <th className="px-3 py-2 text-right font-medium">المبلغ</th>
+              <th className="px-3 py-2 text-right font-medium">المحصّل</th>
+              <th className="px-3 py-2 text-right font-medium">المعفى</th>
               <th className="px-3 py-2 text-right font-medium">المتبقي</th>
               <th className="px-3 py-2 text-right font-medium">الحالة</th>
             </tr>
@@ -117,13 +119,13 @@ export default function StudentInstallmentsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-gray-500">
+                <td colSpan={9} className="px-3 py-8 text-center text-gray-500">
                   جاري التحميل...
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-gray-500">
+                <td colSpan={9} className="px-3 py-8 text-center text-gray-500">
                   لا توجد أقساط
                 </td>
               </tr>
@@ -151,12 +153,16 @@ export default function StudentInstallmentsPage() {
                   <td className="px-3 py-2">{row.installment_number}</td>
                   <td className="px-3 py-2">{formatDateOnly(row.due_date)}</td>
                   <td className="px-3 py-2">{formatMoney(row.amount)}</td>
+                  <td className="px-3 py-2">{formatMoney(row.paid_amount)}</td>
+                  <td className="px-3 py-2">
+                    {formatMoney(row.relief_amount || '0')}
+                  </td>
                   <td className="px-3 py-2">{formatMoney(row.outstanding_amount)}</td>
                   <td className="px-3 py-2">
                     <span
                       className={`px-2 py-0.5 rounded text-xs ${installmentStatusBadge(row.status)}`}
                     >
-                      {INSTALLMENT_STATUS_LABEL[row.status]}
+                      {installmentSettlementLabel(row)}
                     </span>
                   </td>
                 </tr>

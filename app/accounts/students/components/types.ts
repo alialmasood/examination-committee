@@ -446,6 +446,26 @@ export const INSTALLMENT_STATUS_LABEL: Record<StudentInstallmentStatus, string> 
   CANCELLED: 'ملغى',
 };
 
+/** تسمية عرض: لا تخلط الإعفاء مع الدفع النقدي */
+export function installmentSettlementLabel(inst: {
+  status: StudentInstallmentStatus | string;
+  paid_amount?: string | null;
+  relief_amount?: string | null;
+  outstanding_amount?: string | null;
+}): string {
+  const base =
+    INSTALLMENT_STATUS_LABEL[inst.status as StudentInstallmentStatus] ||
+    inst.status;
+  if (inst.status !== 'PAID') return base;
+  const paid = String(inst.paid_amount ?? '0');
+  const relief = String(inst.relief_amount ?? '0');
+  const paidPos = Number(paid) > 0;
+  const reliefPos = Number(relief) > 0;
+  if (reliefPos && paidPos) return 'مغلق/مسوّى (دفع + إعفاء)';
+  if (reliefPos) return 'مغلق/مسوّى (إعفاء)';
+  return 'مسدد';
+}
+
 export const COLLECTION_STATUS_LABEL: Record<StudentCollectionStatus, string> = {
   DRAFT: 'مسودة',
   POSTED: 'مرحّل',
@@ -580,6 +600,7 @@ export type StudentReliefDetail = StudentReliefListItem & {
   rejected_at: string | null;
   posted_at: string | null;
   voided_at: string | null;
+  reversal_journal_entry_id?: string | null;
   charge_outstanding?: string | null;
 };
 

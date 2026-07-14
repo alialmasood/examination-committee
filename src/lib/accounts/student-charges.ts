@@ -1020,6 +1020,22 @@ export async function voidStudentCharge(
     }
   }
 
+  const activeRelief = await txQuery(
+    client,
+    `SELECT 1
+     FROM accounts.student_reliefs
+     WHERE student_charge_id = $1::uuid
+       AND status NOT IN ('VOID', 'REJECTED')
+     LIMIT 1`,
+    [charge.id]
+  );
+  if (activeRelief.rows[0]) {
+    throw new AccountsHttpError(
+      'لا يمكن إلغاء مطالبة لوجود طلبات تخفيض نشطة أو مرحّلة عليها',
+      409
+    );
+  }
+
   const accountPeek = await loadStudentAccount(
     client,
     charge.student_account_id,

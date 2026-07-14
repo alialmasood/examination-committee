@@ -299,14 +299,25 @@ function calculateRequestedFromType(
     if (pctRaw == null || pctRaw === '') {
       throw new AccountsHttpError('نسبة التخفيض مطلوبة', 400);
     }
-    const pct = Number(pctRaw);
-    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+    const pctStr = String(pctRaw).trim();
+    if (!/^\d+(\.\d{1,4})?$/.test(pctStr)) {
+      throw new AccountsHttpError(
+        'نسبة التخفيض غير صالحة (حتى 4 منازل عشرية)',
+        400
+      );
+    }
+    const [wholePart, fracPart = ''] = pctStr.split('.');
+    // مقياس 1e4 لوحدات النسبة → 100% = 1_000_000
+    const pctScaled =
+      BigInt(wholePart) * BigInt(10000) +
+      BigInt((fracPart + '0000').slice(0, 4));
+    if (pctScaled <= BigInt(0) || pctScaled > BigInt(1000000)) {
       throw new AccountsHttpError('نسبة التخفيض يجب أن تكون بين 0 و100', 400);
     }
-    percentage = String(pct);
+    percentage = pctStr;
+    // requested = original * pct / 100 (حساب صحيح بدون float)
     const millis =
-      (moneyToMillis(chargeOriginal) * BigInt(Math.round(pct * 1000))) /
-      BigInt(100000);
+      (moneyToMillis(chargeOriginal) * pctScaled) / BigInt(1000000);
     requested = millisToMoney(millis);
   } else {
     const amtRaw = input.requested_amount ?? reliefType.default_value;
@@ -557,16 +568,26 @@ export async function updateStudentRelief(
       ? pgDateOnly(String(params.relief_date).trim())
       : pgDateOnly(row.relief_date);
 
+  const fiscal =
+    reliefDate !== pgDateOnly(row.relief_date)
+      ? await resolveOpenFiscalForDate(client, reliefDate)
+      : {
+          fiscalYearId: row.fiscal_year_id,
+          fiscalPeriodId: row.fiscal_period_id,
+        };
+
   const upd = await txQuery<StudentReliefRow>(
     client,
     `UPDATE accounts.student_reliefs SET
        relief_type_id = $2::uuid,
        relief_date = $3::date,
-       calculation_type = $4,
-       percentage_value = $5::numeric,
-       requested_amount = $6::numeric,
-       reason = $7,
-       external_reference = $8,
+       fiscal_year_id = $4::uuid,
+       fiscal_period_id = $5::uuid,
+       calculation_type = $6,
+       percentage_value = $7::numeric,
+       requested_amount = $8::numeric,
+       reason = $9,
+       external_reference = $10,
        updated_at = NOW(),
        version = version + 1
      WHERE id = $1::uuid
@@ -575,6 +596,8 @@ export async function updateStudentRelief(
       row.id,
       reliefType.id,
       reliefDate,
+      fiscal.fiscalYearId,
+      fiscal.fiscalPeriodId,
       calculationType,
       percentage,
       requested,
@@ -598,13 +621,50 @@ export async function submitStudentRelief(
     updated_at: unknown;
   }
 ): Promise<StudentReliefRow> {
+  const peek = await loadStudentRelief(client, params.id, false);
+  if (peek.status !== 'DRAFT') {
+    throw new AccountsHttpError('يمكن إرسال المسودات فقط', 409);
+  }
+
+  await acquireAccountingResourceLocks(client, [
+    studentReliefLock(peek.id),
+    studentChargeLock(peek.student_charge_id),
+  ]);
+
   const row = await loadStudentRelief(client, params.id, true);
   if (row.status !== 'DRAFT') {
     throw new AccountsHttpError('يمكن إرسال المسودات فقط', 409);
   }
   assertOptimistic(row, params.version, params.updated_at);
 
-  const reliefType = await loadStudentReliefType(client, row.relief_type_id, false);
+  const reliefType = await loadStudentReliefType(client, row.relief_type_id, true);
+  if (!reliefType.is_active) {
+    throw new AccountsHttpError('نوع التخفيض غير فعّال', 409);
+  }
+
+  const charge = await loadStudentCharge(client, row.student_charge_id, true);
+  if (charge.status === 'VOID' || charge.status === 'SETTLED') {
+    throw new AccountsHttpError(
+      'لا يمكن إرسال تخفيض على مطالبة ملغاة أو مسددة بالكامل',
+      409
+    );
+  }
+
+  const eligible = await calculateReliefEligibleAmount(
+    client,
+    row.student_charge_id,
+    row.id
+  );
+  if (
+    moneyToMillis(row.requested_amount) > moneyToMillis(eligible) ||
+    moneyIsZero(eligible)
+  ) {
+    throw new AccountsHttpError(
+      'لا يمكن اعتماد التخفيض لأن قيمته تتجاوز الرصيد المستحق على المطالبة.',
+      409
+    );
+  }
+
   const newStatus: StudentReliefStatus = reliefType.requires_approval
     ? 'PENDING_APPROVAL'
     : 'APPROVED';
@@ -635,11 +695,26 @@ export async function approveStudentRelief(
     approved_amount?: unknown;
   }
 ): Promise<StudentReliefRow> {
+  const peek = await loadStudentRelief(client, params.id, false);
+  if (peek.status !== 'PENDING_APPROVAL') {
+    throw new AccountsHttpError('يمكن اعتماد الطلبات قيد الانتظار فقط', 409);
+  }
+
+  await acquireAccountingResourceLocks(client, [
+    studentReliefLock(peek.id),
+    studentChargeLock(peek.student_charge_id),
+  ]);
+
   const row = await loadStudentRelief(client, params.id, true);
   if (row.status !== 'PENDING_APPROVAL') {
     throw new AccountsHttpError('يمكن اعتماد الطلبات قيد الانتظار فقط', 409);
   }
   assertOptimistic(row, params.version, params.updated_at);
+
+  const reliefType = await loadStudentReliefType(client, row.relief_type_id, true);
+  if (!reliefType.is_active) {
+    throw new AccountsHttpError('نوع التخفيض غير فعّال', 409);
+  }
 
   const approved = normalizeMoneyInput(
     params.approved_amount ?? row.requested_amount

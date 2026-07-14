@@ -10,7 +10,7 @@ import {
   billingPlanStatusBadge,
   formatDateOnly,
   formatMoney,
-  INSTALLMENT_STATUS_LABEL,
+  installmentSettlementLabel,
   installmentStatusBadge,
   studentApi,
   type StudentBillingPlanDetail,
@@ -298,7 +298,8 @@ export default function StudentBillingPlanDetailPage() {
               <th className="px-3 py-2 text-right font-medium">#</th>
               <th className="px-3 py-2 text-right font-medium">تاريخ الاستحقاق</th>
               <th className="px-3 py-2 text-right font-medium">المبلغ</th>
-              <th className="px-3 py-2 text-right font-medium">المسدد</th>
+              <th className="px-3 py-2 text-right font-medium">المحصّل</th>
+              <th className="px-3 py-2 text-right font-medium">المعفى</th>
               <th className="px-3 py-2 text-right font-medium">المتبقي</th>
               <th className="px-3 py-2 text-right font-medium">الحالة</th>
               <th className="px-3 py-2 text-right font-medium">المطالبة</th>
@@ -307,7 +308,7 @@ export default function StudentBillingPlanDetailPage() {
           <tbody>
             {installments.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-gray-500">
+                <td colSpan={8} className="px-3 py-8 text-center text-gray-500">
                   لا توجد أقساط
                 </td>
               </tr>
@@ -318,12 +319,15 @@ export default function StudentBillingPlanDetailPage() {
                   <td className="px-3 py-2">{formatDateOnly(inst.due_date)}</td>
                   <td className="px-3 py-2">{formatMoney(inst.amount)}</td>
                   <td className="px-3 py-2">{formatMoney(inst.paid_amount)}</td>
+                  <td className="px-3 py-2">
+                    {formatMoney(inst.relief_amount || '0')}
+                  </td>
                   <td className="px-3 py-2">{formatMoney(inst.outstanding_amount)}</td>
                   <td className="px-3 py-2">
                     <span
                       className={`px-2 py-0.5 rounded text-xs ${installmentStatusBadge(inst.status)}`}
                     >
-                      {INSTALLMENT_STATUS_LABEL[inst.status]}
+                      {installmentSettlementLabel(inst)}
                     </span>
                   </td>
                   <td className="px-3 py-2">{inst.student_charge_id ? 'مرتبطة' : '—'}</td>

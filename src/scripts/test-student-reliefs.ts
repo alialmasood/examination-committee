@@ -10,7 +10,6 @@ import { grantAccountsAdminRole } from '../lib/accounts/accounts-access';
 import { pgDateOnly } from '../lib/accounts/document-sequences';
 import {
   moneyEquals,
-  moneyIsZero,
   moneyToMillis,
   normalizeMoneyInput,
 } from '../lib/accounts/money';
@@ -646,7 +645,7 @@ async function main() {
     });
   }
 
-  // 17) concurrent two reliefs على نفس المطالبة
+  // 17) حجز submit: طلبان يتجاوزان outstanding — واحد فقط ينجح
   const raceStudent = await insertTestStudent(suffix, 'RACE');
   const raceAccount = await withTransaction((client) =>
     createStudentAccount(client, {
@@ -684,62 +683,70 @@ async function main() {
       requested_by: userId,
     })
   );
-  const r1 = await withTransaction((client) =>
-    submitStudentRelief(client, {
-      id: r1draft.id,
-      userId,
-      version: r1draft.version,
-      updated_at: r1draft.updated_at,
-    })
-  );
-  const r2 = await withTransaction((client) =>
-    submitStudentRelief(client, {
-      id: r2draft.id,
-      userId,
-      version: r2draft.version,
-      updated_at: r2draft.updated_at,
-    })
-  );
-  const raceResults = await Promise.allSettled([
-    withTransaction(async (client) => {
-      await acquireJournalEntriesLock(client);
-      const rel = await loadStudentRelief(client, r1.id);
-      return postStudentRelief(client, {
-        id: rel.id,
+  const submitRace = await Promise.allSettled([
+    withTransaction((client) =>
+      submitStudentRelief(client, {
+        id: r1draft.id,
         userId,
-        version: rel.version,
-        updated_at: rel.updated_at,
-      });
-    }),
-    withTransaction(async (client) => {
-      await acquireJournalEntriesLock(client);
-      const rel = await loadStudentRelief(client, r2.id);
-      return postStudentRelief(client, {
-        id: rel.id,
+        version: r1draft.version,
+        updated_at: r1draft.updated_at,
+      })
+    ),
+    withTransaction((client) =>
+      submitStudentRelief(client, {
+        id: r2draft.id,
         userId,
-        version: rel.version,
-        updated_at: rel.updated_at,
-      });
-    }),
+        version: r2draft.version,
+        updated_at: r2draft.updated_at,
+      })
+    ),
   ]);
-  const fulfilled = raceResults.filter((r) => r.status === 'fulfilled').length;
-  const rejected = raceResults.filter((r) => r.status === 'rejected').length;
-  const postedSum = await query(
-    `SELECT COALESCE(SUM(approved_amount), 0)::text AS total
+  const submitOk = submitRace.filter((r) => r.status === 'fulfilled').length;
+  const submitFail = submitRace.filter((r) => r.status === 'rejected').length;
+  const reservedCount = await query(
+    `SELECT COUNT(*)::int AS n,
+            COALESCE(SUM(
+              CASE WHEN status='APPROVED' THEN approved_amount
+                   WHEN status='PENDING_APPROVAL' THEN requested_amount
+                   ELSE 0 END
+            ),0)::text AS reserved
      FROM accounts.student_reliefs
-     WHERE student_charge_id = $1::uuid AND status = 'POSTED'`,
+     WHERE student_charge_id = $1::uuid
+       AND status IN ('APPROVED','PENDING_APPROVAL')`,
     [raceCharge.id]
   );
-  const postedTotal = moneyToMillis(
-    normalizeMoneyInput(postedSum.rows[0]?.total ?? '0')
+  const reservedMillis = moneyToMillis(
+    normalizeMoneyInput(reservedCount.rows[0]?.reserved ?? '0')
   );
-  const origMillis = moneyToMillis(normalizeMoneyInput(raceCharge.original_amount));
-  if (fulfilled >= 1 && postedTotal <= origMillis && rejected >= 1) {
-    ok('17) concurrent two reliefs — واحد ينجح والآخر يُرفض');
-  } else if (fulfilled === 1 && postedTotal <= origMillis) {
-    ok('17) concurrent two reliefs — ترحيل واحد فقط');
+  if (
+    submitOk === 1 &&
+    submitFail === 1 &&
+    reservedMillis <= moneyToMillis('50000')
+  ) {
+    ok('17) concurrent submit — حجز لا يتجاوز outstanding');
   } else {
-    fail('17) concurrent reliefs', { fulfilled, rejected, postedTotal: String(postedTotal) });
+    fail('17) concurrent submit reservation', {
+      submitOk,
+      submitFail,
+      reserved: reservedCount.rows[0]?.reserved,
+    });
+  }
+
+  const approvedRace = await query(
+    `SELECT id, version, updated_at FROM accounts.student_reliefs
+     WHERE student_charge_id = $1::uuid AND status = 'APPROVED' LIMIT 1`,
+    [raceCharge.id]
+  );
+  if (approvedRace.rows[0]) {
+    await withTransaction(async (client) => {
+      await acquireJournalEntriesLock(client);
+      return postStudentRelief(client, {
+        id: approvedRace.rows[0].id as string,
+        userId,
+        version: approvedRace.rows[0].version,
+        updated_at: approvedRace.rows[0].updated_at,
+      });
+    });
   }
 
   // 18) clerk لا يستطيع approve
@@ -757,9 +764,78 @@ async function main() {
   const finalCharge = await withTransaction((client) =>
     loadStudentCharge(client, raceCharge.id)
   );
-  if (!moneyIsZero(finalCharge.outstanding_amount)) {
-    ok('18b) رصيد المطالبة بعد سباق صحيح');
+  if (moneyEquals(finalCharge.outstanding_amount, '20000')) {
+    ok('18b) رصيد المطالبة بعد سباق صحيح (20000)');
+  } else {
+    fail('18b) outstanding بعد ترحيل 30k', finalCharge.outstanding_amount);
   }
+
+  // 18c) تعطيل النوع يمنع ترحيل APPROVED
+  const deactStudent = await insertTestStudent(suffix, 'DEACT');
+  const deactAccount = await withTransaction((client) =>
+    createStudentAccount(client, {
+      student_id: deactStudent,
+      receivable_gl_account_id: recvGl,
+      created_by: userId,
+    })
+  );
+  const deactCharge = await postChargeOnAccount({
+    accountId: deactAccount.id,
+    studentId: deactStudent,
+    feeTypeId: feeType.id,
+    amount: '40000',
+    userId,
+    chargeDate: fiscal.chargeDate,
+    description: 'تعطيل نوع',
+  });
+  const deactType = await withTransaction((client) =>
+    createStudentReliefType(client, {
+      code: `SRL-DEACT-${suffix}`,
+      name_ar: 'للتتعطيل',
+      relief_kind: 'DISCOUNT',
+      calculation_type: 'FIXED_AMOUNT',
+      default_value: '5000',
+      gl_account_id: expGl,
+      requires_approval: false,
+      created_by: userId,
+    })
+  );
+  const deactDraft = await withTransaction((client) =>
+    createStudentRelief(client, {
+      student_charge_id: deactCharge.id,
+      relief_type_id: deactType.id,
+      calculation_type: 'FIXED_AMOUNT',
+      requested_amount: '5000',
+      reason: 'قبل التعطيل',
+      requested_by: userId,
+    })
+  );
+  const deactApproved = await withTransaction((client) =>
+    submitStudentRelief(client, {
+      id: deactDraft.id,
+      userId,
+      version: deactDraft.version,
+      updated_at: deactDraft.updated_at,
+    })
+  );
+  await withTransaction((client) =>
+    deactivateStudentReliefType(client, { id: deactType.id, userId })
+  );
+  await expectHttp(
+    '18c) تعطيل النوع يمنع POST',
+    () =>
+      withTransaction(async (client) => {
+        await acquireJournalEntriesLock(client);
+        return postStudentRelief(client, {
+          id: deactApproved.id,
+          userId,
+          version: deactApproved.version,
+          updated_at: deactApproved.updated_at,
+        });
+      }),
+    409,
+    'غير فعّال'
+  );
 
   // 19) تحصيل + تخفيض متزامنان على نفس المطالبة
   const bankRow = await query(

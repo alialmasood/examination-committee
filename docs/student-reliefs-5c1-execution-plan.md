@@ -12,6 +12,18 @@
 - عند VOID: العكس.
 - التمييز التشغيلي عبر `relief_kind` وليس نوع حساب جديد.
 
+## Eligible / Reservation
+
+```
+eligible = max(0, charge.outstanding_amount − Σ reserved)
+reserved = APPROVED.approved_amount + PENDING.COALESCE(approved, requested)
+```
+
+- POSTED داخل outstanding أصلاً (لا خصم مزدوج).
+- DRAFT لا يحجز.
+- `submit` و`approve` يعيدان التحقق داخل قفل المطالبة.
+- تعطيل النوع مسموح مع APPROVED قائم، ويمنع الطلبات الجديدة + POST/approve.
+
 ## القسط والمدفوع والمعفى
 
 - `paid_amount` = تحصيلات نقدية/مصرفية فقط.
