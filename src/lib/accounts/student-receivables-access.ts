@@ -34,6 +34,12 @@ export const STUDENT_RECEIVABLES_CAPABILITIES = {
   COLLECTIONS_PREPARE: 'student_collections.prepare',
   COLLECTIONS_POST: 'student_collections.post',
   COLLECTIONS_VOID: 'student_collections.void',
+  RELIEFS_VIEW: 'student_reliefs.view',
+  RELIEFS_PREPARE: 'student_reliefs.prepare',
+  RELIEFS_APPROVE: 'student_reliefs.approve',
+  RELIEFS_POST: 'student_reliefs.post',
+  RELIEFS_VOID: 'student_reliefs.void',
+  RELIEF_TYPES_MANAGE: 'student_relief_types.manage',
   CLOSE: 'student_accounts.close',
 } as const;
 
@@ -42,10 +48,12 @@ export type StudentReceivablesCapability =
 
 export const ACCOUNTS_VIEWER_ROLE_CODE = 'accounts_viewer';
 export const ACCOUNTS_CLERK_ROLE_CODE = 'accounts_clerk';
+export const ACCOUNTS_APPROVER_ROLE_CODE = 'accounts_approver';
 
 const VIEW_ONLY = new Set<string>([
   STUDENT_RECEIVABLES_CAPABILITIES.VIEW,
   STUDENT_RECEIVABLES_CAPABILITIES.BILLING_VIEW,
+  STUDENT_RECEIVABLES_CAPABILITIES.RELIEFS_VIEW,
 ]);
 
 const CLERK_CAPS = new Set<string>([
@@ -58,6 +66,16 @@ const CLERK_CAPS = new Set<string>([
   STUDENT_RECEIVABLES_CAPABILITIES.BILLING_VIEW,
   STUDENT_RECEIVABLES_CAPABILITIES.BILLING_MANAGE,
   STUDENT_RECEIVABLES_CAPABILITIES.COLLECTIONS_PREPARE,
+  STUDENT_RECEIVABLES_CAPABILITIES.RELIEFS_VIEW,
+  STUDENT_RECEIVABLES_CAPABILITIES.RELIEFS_PREPARE,
+]);
+
+const APPROVER_CAPS = new Set<string>([
+  STUDENT_RECEIVABLES_CAPABILITIES.VIEW,
+  STUDENT_RECEIVABLES_CAPABILITIES.BILLING_VIEW,
+  STUDENT_RECEIVABLES_CAPABILITIES.RELIEFS_VIEW,
+  STUDENT_RECEIVABLES_CAPABILITIES.RELIEFS_PREPARE,
+  STUDENT_RECEIVABLES_CAPABILITIES.RELIEFS_APPROVE,
 ]);
 
 const ADMIN_CAPS = new Set<string>([
@@ -65,6 +83,10 @@ const ADMIN_CAPS = new Set<string>([
   STUDENT_RECEIVABLES_CAPABILITIES.BILLING_ACTIVATE,
   STUDENT_RECEIVABLES_CAPABILITIES.COLLECTIONS_POST,
   STUDENT_RECEIVABLES_CAPABILITIES.COLLECTIONS_VOID,
+  STUDENT_RECEIVABLES_CAPABILITIES.RELIEFS_APPROVE,
+  STUDENT_RECEIVABLES_CAPABILITIES.RELIEFS_POST,
+  STUDENT_RECEIVABLES_CAPABILITIES.RELIEFS_VOID,
+  STUDENT_RECEIVABLES_CAPABILITIES.RELIEF_TYPES_MANAGE,
   STUDENT_RECEIVABLES_CAPABILITIES.CLOSE,
 ]);
 
@@ -135,6 +157,9 @@ export async function getStudentReceivablesCapabilities(
   if (roleCode === ACCOUNTS_CLERK_ROLE_CODE) {
     return new Set(CLERK_CAPS);
   }
+  if (roleCode === ACCOUNTS_APPROVER_ROLE_CODE) {
+    return new Set(APPROVER_CAPS);
+  }
   if (roleCode === ACCOUNTS_VIEWER_ROLE_CODE) {
     return new Set(VIEW_ONLY);
   }
@@ -175,6 +200,7 @@ export async function grantAccountsPlatformRole(
   roleCode:
     | typeof ACCOUNTS_VIEWER_ROLE_CODE
     | typeof ACCOUNTS_CLERK_ROLE_CODE
+    | typeof ACCOUNTS_APPROVER_ROLE_CODE
     | typeof ACCOUNTS_ADMIN_ROLE_CODE
 ): Promise<void> {
   const names: Record<string, { ar: string; en: string }> = {
@@ -185,6 +211,10 @@ export async function grantAccountsPlatformRole(
     [ACCOUNTS_CLERK_ROLE_CODE]: {
       ar: 'كاتب الحسابات',
       en: 'Accounts Clerk',
+    },
+    [ACCOUNTS_APPROVER_ROLE_CODE]: {
+      ar: 'معتمد الحسابات',
+      en: 'Accounts Approver',
     },
     [ACCOUNTS_ADMIN_ROLE_CODE]: {
       ar: 'مدير الحسابات',
