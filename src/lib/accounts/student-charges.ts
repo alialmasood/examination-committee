@@ -594,7 +594,9 @@ export type StudentLedgerEntryType =
   | 'CHARGE'
   | 'CHARGE_REVERSAL'
   | 'COLLECTION'
-  | 'COLLECTION_REVERSAL';
+  | 'COLLECTION_REVERSAL'
+  | 'RELIEF'
+  | 'RELIEF_REVERSAL';
 
 export async function writeStudentLedgerEntry(
   client: TxClient,
@@ -602,7 +604,7 @@ export async function writeStudentLedgerEntry(
     account: StudentAccountRow;
     entryDate: string;
     entryType: StudentLedgerEntryType;
-    sourceType: 'STUDENT_CHARGE' | 'STUDENT_COLLECTION';
+    sourceType: 'STUDENT_CHARGE' | 'STUDENT_COLLECTION' | 'STUDENT_RELIEF';
     sourceId: string;
     description: string;
     debit: string;
@@ -749,6 +751,26 @@ export async function reverseChargeAllocation(
     [charge.id, newOutstanding, newStatus]
   );
   return upd.rows[0];
+}
+
+export async function applyChargeRelief(
+  client: TxClient,
+  params: { chargeId: string; reliefAmount: string }
+): Promise<StudentChargeRow> {
+  return applyChargeAllocation(client, {
+    chargeId: params.chargeId,
+    allocatedAmount: params.reliefAmount,
+  });
+}
+
+export async function reverseChargeRelief(
+  client: TxClient,
+  params: { chargeId: string; reliefAmount: string }
+): Promise<StudentChargeRow> {
+  return reverseChargeAllocation(client, {
+    chargeId: params.chargeId,
+    allocatedAmount: params.reliefAmount,
+  });
 }
 
 export async function getStudentAccountReceivableBalance(

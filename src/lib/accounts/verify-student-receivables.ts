@@ -7,6 +7,7 @@
  *   • قيود سندات قبض/عكس مرتبطة بتحصيلات الطلبة (cash/bank voucher)
  * - B = مجموع الدفتر الفرعي (باستثناء OPENING_REFERENCE)
  *   يشمل CHARGE / CHARGE_REVERSAL / COLLECTION / COLLECTION_REVERSAL
+ *   / RELIEF / RELIEF_REVERSAL
  *
  * unexplained = كامل GL على الذمم − A (يشمل Legacy مثل نشاط نقدي على 1111).
  * لا استثناء عام لأي كود حساب.
@@ -66,7 +67,9 @@ export type StudentReceivablesVerifyResult = {
     student_accounts_count: number;
     ledger_entries_count: number;
     collections_posted_count: number;
+    reliefs_posted_count: number;
     allocations_sum_ok: boolean;
+    reliefs_sum_ok: boolean;
     gl_accounts: Array<{
       account_id: string;
       code: string | null;
@@ -78,6 +81,8 @@ export type StudentReceivablesVerifyResult = {
 
 function expectedChargeLedgerEntryType(jeSourceType: string): string {
   if (jeSourceType === 'STUDENT_CHARGE_REVERSAL') return 'CHARGE_REVERSAL';
+  if (jeSourceType === 'STUDENT_RELIEF') return 'RELIEF';
+  if (jeSourceType === 'STUDENT_RELIEF_REVERSAL') return 'RELIEF_REVERSAL';
   return 'CHARGE';
 }
 
@@ -162,6 +167,10 @@ export async function verifyStudentReceivables(
     client,
     `SELECT COUNT(*)::int AS n FROM accounts.student_collections WHERE status = 'POSTED'`
   );
+  const reliefCount = await txQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int AS n FROM accounts.student_reliefs WHERE status = 'POSTED'`
+  );
 
   const allocCheck = await txQuery<{ bad: number }>(
     client,
@@ -177,6 +186,23 @@ export async function verifyStudentReceivables(
        ) > 0.0005`
   );
   const allocationsSumOk = (allocCheck.rows[0]?.bad ?? 0) === 0;
+
+  const reliefSumCheck = await txQuery<{ bad: number }>(
+    client,
+    `SELECT COUNT(*)::int AS bad
+     FROM accounts.student_reliefs sr
+     WHERE sr.status = 'POSTED'
+       AND ABS(
+         COALESCE(sr.approved_amount, 0) - COALESCE((
+           SELECT SUM(le.credit_amount - le.debit_amount)
+           FROM accounts.student_ledger_entries le
+           WHERE le.source_type = 'STUDENT_RELIEF'
+             AND le.source_id = sr.id
+             AND le.entry_type IN ('RELIEF', 'RELIEF_REVERSAL')
+         ), 0)
+       ) > 0.0005`
+  );
+  const reliefsSumOk = (reliefSumCheck.rows[0]?.bad ?? 0) === 0;
 
   const sub = await txQuery<{ balance: string }>(
     client,
@@ -210,7 +236,10 @@ export async function verifyStudentReceivables(
                   INNER JOIN accounts.journal_entries e ON e.id = l.journal_entry_id
                   WHERE l.account_id = a.id
                     AND e.status = 'POSTED'
-                    AND e.source_type IN ('STUDENT_CHARGE', 'STUDENT_CHARGE_REVERSAL')
+                    AND e.source_type IN (
+                      'STUDENT_CHARGE', 'STUDENT_CHARGE_REVERSAL',
+                      'STUDENT_RELIEF', 'STUDENT_RELIEF_REVERSAL'
+                    )
                 ), 0)
                 + COALESCE((${COLLECTION_RECV_NET_SQL}), 0)
               )::text AS ops_net,
@@ -302,7 +331,10 @@ export async function verifyStudentReceivables(
        FROM accounts.journal_entries e
        JOIN accounts.journal_entry_lines l ON l.journal_entry_id = e.id
        WHERE e.status = 'POSTED'
-         AND e.source_type IN ('STUDENT_CHARGE', 'STUDENT_CHARGE_REVERSAL')
+         AND e.source_type IN (
+           'STUDENT_CHARGE', 'STUDENT_CHARGE_REVERSAL',
+           'STUDENT_RELIEF', 'STUDENT_RELIEF_REVERSAL'
+         )
          AND e.source_id IS NOT NULL
          AND l.account_id = ANY($1::uuid[])
        GROUP BY e.id, e.source_type, e.source_id`,
@@ -337,7 +369,8 @@ export async function verifyStudentReceivables(
             le.journal_entry_id::text AS journal_entry_id
      FROM accounts.student_ledger_entries le
      WHERE le.entry_type IN (
-       'CHARGE', 'CHARGE_REVERSAL', 'COLLECTION', 'COLLECTION_REVERSAL'
+       'CHARGE', 'CHARGE_REVERSAL', 'COLLECTION', 'COLLECTION_REVERSAL',
+       'RELIEF', 'RELIEF_REVERSAL'
      )
        AND le.source_id IS NOT NULL`
   );
@@ -345,7 +378,9 @@ export async function verifyStudentReceivables(
   for (const row of ledSources.rows) {
     if (
       row.entry_type === 'CHARGE' ||
-      row.entry_type === 'CHARGE_REVERSAL'
+      row.entry_type === 'CHARGE_REVERSAL' ||
+      row.entry_type === 'RELIEF' ||
+      row.entry_type === 'RELIEF_REVERSAL'
     ) {
       const key = sourceKey(row.entry_type, row.source_id);
       const prev = ledBySource.get(key);
@@ -483,7 +518,7 @@ export async function verifyStudentReceivables(
     journalWithoutLedger.length === 0 &&
     ledgerWithoutJournal.length === 0 &&
     amountMismatches.length === 0;
-  const ok = chargeSubledgerMatch && noOrphans && allocationsSumOk;
+  const ok = chargeSubledgerMatch && noOrphans && allocationsSumOk && reliefsSumOk;
 
   return {
     ok,
@@ -503,7 +538,9 @@ export async function verifyStudentReceivables(
       student_accounts_count: accountsCount.rows[0]?.n ?? 0,
       ledger_entries_count: ledgerCount.rows[0]?.n ?? 0,
       collections_posted_count: collCount.rows[0]?.n ?? 0,
+      reliefs_posted_count: reliefCount.rows[0]?.n ?? 0,
       allocations_sum_ok: allocationsSumOk,
+      reliefs_sum_ok: reliefsSumOk,
       gl_accounts: glAccounts,
     },
   };

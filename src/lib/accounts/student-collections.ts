@@ -831,8 +831,13 @@ async function applyInstallmentAllocation(
     moneyToMillis(normalizeMoneyInput(inst.paid_amount)) +
       moneyToMillis(allocatedAmount)
   );
+  const relief = normalizeMoneyInput(
+    (inst as { relief_amount?: string }).relief_amount ?? '0'
+  );
   const outstanding = millisToMoney(
-    moneyToMillis(normalizeMoneyInput(inst.amount)) - moneyToMillis(paid)
+    moneyToMillis(normalizeMoneyInput(inst.amount)) -
+      moneyToMillis(paid) -
+      moneyToMillis(relief)
   );
   if (moneyToMillis(outstanding) < BigInt(0)) {
     throw new AccountsHttpError('مبلغ التخصيص يتجاوز رصيد القسط', 409);
@@ -841,7 +846,8 @@ async function applyInstallmentAllocation(
     paid,
     inst.amount,
     pgDateOnly(inst.due_date),
-    asOfDate
+    asOfDate,
+    outstanding
   );
   await txQuery(
     client,
@@ -870,14 +876,20 @@ async function reverseInstallmentAllocation(
     throw new AccountsHttpError('عكس التخصيص يتجاوز المبلغ المدفوع للقسط', 409);
   }
   const paid = millisToMoney(paidMillis);
+  const relief = normalizeMoneyInput(
+    (inst as { relief_amount?: string }).relief_amount ?? '0'
+  );
   const outstanding = millisToMoney(
-    moneyToMillis(normalizeMoneyInput(inst.amount)) - paidMillis
+    moneyToMillis(normalizeMoneyInput(inst.amount)) -
+      paidMillis -
+      moneyToMillis(relief)
   );
   const status = deriveInstallmentStatus(
     paid,
     inst.amount,
     pgDateOnly(inst.due_date),
-    asOfDate
+    asOfDate,
+    outstanding
   );
   await txQuery(
     client,

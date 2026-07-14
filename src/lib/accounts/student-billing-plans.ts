@@ -21,6 +21,7 @@ import { assertFiscalContextForEntry } from './journal-entries';
 import {
   moneyEquals,
   moneyIsPositive,
+  moneyIsZero,
   moneyToMillis,
   millisToMoney,
   normalizeMoneyInput,
@@ -88,6 +89,7 @@ export type StudentInstallmentRow = {
   due_date: string | Date;
   amount: string;
   paid_amount: string;
+  relief_amount: string;
   outstanding_amount: string;
   status: StudentInstallmentStatus;
   student_charge_id: string | null;
@@ -164,10 +166,12 @@ export function serializeStudentBillingPlan(row: StudentBillingPlanRow) {
 
 export function serializeStudentInstallment(row: StudentInstallmentRow) {
   const dueDate = pgDateOnly(row.due_date);
+  const relief = normalizeMoneyInput(row.relief_amount ?? '0');
   const base = {
     ...row,
     amount: normalizeMoneyInput(row.amount),
     paid_amount: normalizeMoneyInput(row.paid_amount),
+    relief_amount: relief,
     outstanding_amount: normalizeMoneyInput(row.outstanding_amount),
     due_date: dueDate,
     created_at: iso(row.created_at)!,
@@ -184,7 +188,9 @@ export function serializeStudentInstallment(row: StudentInstallmentRow) {
       status: deriveInstallmentStatus(
         row.paid_amount,
         row.amount,
-        dueDate
+        dueDate,
+        undefined,
+        row.outstanding_amount
       ),
     };
   }
@@ -955,17 +961,34 @@ export async function refreshBillingPlanCompletion(
   const installments = await listPlanInstallments(client, planId);
 
   const anyCancelled = installments.some((i) => i.status === 'CANCELLED');
-  const allPaid =
+  const allSettled =
     installments.length > 0 &&
-    installments.every((i) => i.status === 'PAID');
-  const anyNotPaid = installments.some((i) => i.status !== 'PAID');
+    installments.every(
+      (i) =>
+        i.status === 'PAID' ||
+        moneyIsZero(normalizeMoneyInput(i.outstanding_amount))
+    );
+  const anyNotSettled = installments.some(
+    (i) =>
+      i.status !== 'PAID' &&
+      !moneyIsZero(normalizeMoneyInput(i.outstanding_amount))
+  );
 
-  if (allPaid && !anyCancelled) {
+  if (allSettled && !anyCancelled) {
     const paidSum = sumMoney(
       installments.map((i) => normalizeMoneyInput(i.paid_amount))
     );
+    const reliefSum = sumMoney(
+      installments.map((i) => normalizeMoneyInput(i.relief_amount ?? '0'))
+    );
+    const settledSum = millisToMoney(
+      moneyToMillis(paidSum) + moneyToMillis(reliefSum)
+    );
     const total = normalizeMoneyInput(plan.total_amount);
-    if (moneyEquals(paidSum, total)) {
+    const allOutstandingZero = installments.every((i) =>
+      moneyIsZero(normalizeMoneyInput(i.outstanding_amount))
+    );
+    if (moneyEquals(settledSum, total) && allOutstandingZero) {
       await txQuery(
         client,
         `UPDATE accounts.student_billing_plans SET
@@ -979,7 +1002,7 @@ export async function refreshBillingPlanCompletion(
     }
   }
 
-  if (anyNotPaid || anyCancelled) {
+  if (anyNotSettled || anyCancelled) {
     await txQuery(
       client,
       `UPDATE accounts.student_billing_plans SET
