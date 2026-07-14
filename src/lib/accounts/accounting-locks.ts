@@ -25,7 +25,10 @@ export type AccountingLockDomain =
   | 'CHART_ACCOUNT'
   | 'STUDENT_ACCOUNT'
   | 'STUDENT_CHARGE'
-  | 'STUDENT_LEDGER';
+  | 'STUDENT_LEDGER'
+  | 'STUDENT_BILLING_PLAN'
+  | 'STUDENT_INSTALLMENT'
+  | 'STUDENT_COLLECTION';
 
 export type AccountingLockResource = {
   domain: AccountingLockDomain;
@@ -132,4 +135,13 @@ export function studentChargeLock(id: string): AccountingLockResource {
 }
 export function studentLedgerLock(studentAccountId: string): AccountingLockResource {
   return { domain: 'STUDENT_LEDGER', resourceId: studentAccountId };
+}
+export function studentBillingPlanLock(id: string): AccountingLockResource {
+  return { domain: 'STUDENT_BILLING_PLAN', resourceId: id };
+}
+export function studentInstallmentLock(id: string): AccountingLockResource {
+  return { domain: 'STUDENT_INSTALLMENT', resourceId: id };
+}
+export function studentCollectionLock(id: string): AccountingLockResource {
+  return { domain: 'STUDENT_COLLECTION', resourceId: id };
 }
