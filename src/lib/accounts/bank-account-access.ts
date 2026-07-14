@@ -26,6 +26,69 @@ const PRIVILEGED_ACCOUNTS_USERNAMES = new Set([
   'super_admin',
 ]);
 
+/** لقوائم SQL — مصدر واحد مع دالة المطابقة أعلاه (حل مؤقت) */
+export function privilegedAccountsUsernamesSqlInList(): string {
+  return [...PRIVILEGED_ACCOUNTS_USERNAMES]
+    .map((u) => `'${u.replace(/'/g, "''")}'`)
+    .join(',');
+}
+
+/**
+ * شرط القائمة: مستخدم privileged أو can_view على حساب بنكي.
+ * userIdParam مثل `$11` — bankAccountIdExpr مثل `v.bank_account_id`.
+ */
+export function sqlUserCanViewBankAccount(
+  userIdParam: string,
+  bankAccountIdExpr: string
+): string {
+  const names = privilegedAccountsUsernamesSqlInList();
+  return `(
+    EXISTS (
+      SELECT 1 FROM student_affairs.users u
+      WHERE u.id = ${userIdParam}::uuid AND u.is_active = TRUE
+        AND LOWER(TRIM(u.username)) IN (${names})
+    )
+    OR EXISTS (
+      SELECT 1 FROM accounts.bank_account_users bau
+      WHERE bau.bank_account_id = ${bankAccountIdExpr}
+        AND bau.user_id = ${userIdParam}::uuid
+        AND bau.can_view = TRUE
+    )
+  )`;
+}
+
+/**
+ * شرط قائمة التحويلات: privileged أو can_view على المصدر والوجهة معاً.
+ */
+export function sqlUserCanViewBankTransferPair(
+  userIdParam: string,
+  sourceExpr: string,
+  destinationExpr: string
+): string {
+  const names = privilegedAccountsUsernamesSqlInList();
+  return `(
+    EXISTS (
+      SELECT 1 FROM student_affairs.users u
+      WHERE u.id = ${userIdParam}::uuid AND u.is_active = TRUE
+        AND LOWER(TRIM(u.username)) IN (${names})
+    )
+    OR (
+      EXISTS (
+        SELECT 1 FROM accounts.bank_account_users bau_s
+        WHERE bau_s.bank_account_id = ${sourceExpr}
+          AND bau_s.user_id = ${userIdParam}::uuid
+          AND bau_s.can_view = TRUE
+      )
+      AND EXISTS (
+        SELECT 1 FROM accounts.bank_account_users bau_d
+        WHERE bau_d.bank_account_id = ${destinationExpr}
+          AND bau_d.user_id = ${userIdParam}::uuid
+          AND bau_d.can_view = TRUE
+      )
+    )
+  )`;
+}
+
 /** مستخدمون نظاميون يُعتبرون حسابات Admin ويتجاوزون تخصيص البنك (حل مؤقت). */
 export function isPrivilegedAccountsUsername(
   username: string | null | undefined

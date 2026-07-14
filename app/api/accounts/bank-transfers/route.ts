@@ -8,6 +8,7 @@ import {
   requireAccountsAccess,
 } from '@/src/lib/accounts/auth';
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
+import { sqlUserCanViewBankTransferPair } from '@/src/lib/accounts/bank-account-access';
 import {
   createBankTransfer,
   serializeBankTransfer,
@@ -53,29 +54,11 @@ export async function GET(request: NextRequest) {
         AND ($8::date IS NULL OR t.transfer_date >= $8::date)
         AND ($9::date IS NULL OR t.transfer_date <= $9::date)
         AND ($10 = '' OR COALESCE(t.bank_reference,'') ILIKE '%'||$10||'%')
-        AND (
-          EXISTS (
-            SELECT 1 FROM student_affairs.users u
-            WHERE u.id = $11::uuid AND u.is_active = TRUE
-              AND LOWER(TRIM(u.username)) IN (
-                'accounts','admin','superadmin','super_admin'
-              )
-          )
-          OR (
-            EXISTS (
-              SELECT 1 FROM accounts.bank_account_users bau_s
-              WHERE bau_s.bank_account_id = t.source_bank_account_id
-                AND bau_s.user_id = $11::uuid
-                AND bau_s.can_view = TRUE
-            )
-            AND EXISTS (
-              SELECT 1 FROM accounts.bank_account_users bau_d
-              WHERE bau_d.bank_account_id = t.destination_bank_account_id
-                AND bau_d.user_id = $11::uuid
-                AND bau_d.can_view = TRUE
-            )
-          )
-        )
+        AND ${sqlUserCanViewBankTransferPair(
+          '$11',
+          't.source_bank_account_id',
+          't.destination_bank_account_id'
+        )}
     `;
     const params = [
       q,

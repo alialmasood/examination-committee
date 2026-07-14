@@ -8,6 +8,7 @@ import {
   requireAccountsAccess,
 } from '@/src/lib/accounts/auth';
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
+import { sqlUserCanViewBankAccount } from '@/src/lib/accounts/bank-account-access';
 import {
   createBankVoucher,
   serializeBankVoucher,
@@ -52,6 +53,7 @@ export async function GET(request: NextRequest) {
         AND ($8::date IS NULL OR v.voucher_date <= $8::date)
         AND ($9 = '' OR COALESCE(v.party_name,'') ILIKE '%'||$9||'%')
         AND ($10 = '' OR COALESCE(v.bank_reference,'') ILIKE '%'||$10||'%')
+        AND ${sqlUserCanViewBankAccount('$11', 'v.bank_account_id')}
     `;
     const params = [
       q,
@@ -64,6 +66,7 @@ export async function GET(request: NextRequest) {
       dateTo || null,
       party,
       bankReference,
+      auth.user.id,
     ];
 
     const fromJoin = `
@@ -109,7 +112,7 @@ export async function GET(request: NextRequest) {
        LEFT JOIN student_affairs.users u ON u.id = v.created_by
        ${where}
        ORDER BY v.voucher_date DESC, v.created_at DESC
-       LIMIT $11 OFFSET $12`,
+       LIMIT $12 OFFSET $13`,
       [...params, pageSize, offset]
     );
 
