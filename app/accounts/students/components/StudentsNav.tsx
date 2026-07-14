@@ -11,6 +11,8 @@ const TABS: Array<{ href: string; label: string; exact?: boolean }> = [
   { href: '/accounts/students/collections', label: 'التحصيلات' },
   { href: '/accounts/students/charges', label: 'المطالبات' },
   { href: '/accounts/students/reliefs', label: 'الخصومات والمنح' },
+  { href: '/accounts/students/credit-notes', label: 'الإشعارات الدائنة' },
+  { href: '/accounts/students/refunds', label: 'الاستردادات' },
   { href: '/accounts/students/fee-types', label: 'أنواع الرسوم' },
   { href: '/accounts/students/relief-types', label: 'أنواع التخفيضات' },
 ];

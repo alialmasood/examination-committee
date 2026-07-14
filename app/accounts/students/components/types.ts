@@ -663,3 +663,31 @@ export function reliefStatusBadge(status: string): string {
       return 'bg-gray-100 text-gray-700';
   }
 }
+
+// ——— المرحلة 5.C.2: الإشعارات الدائنة والاستردادات ———
+export type StudentCreditNoteStatus = StudentReliefStatus;
+export type StudentRefundStatus = StudentReliefStatus;
+export type StudentCreditNoteMode = 'DEBT_REDUCTION' | 'CREDIT_BALANCE_CREATE';
+export type StudentCreditNote = {
+  id:string; credit_note_number:string; student_account_id:string; student_id:string; student_charge_id:string|null;
+  credit_note_date:string; amount:string; reason_code:string; reason:string; application_mode:StudentCreditNoteMode;
+  status:StudentCreditNoteStatus; version:number; updated_at:string; journal_entry_id:string|null;
+  account_number?:string|null; student_full_name_ar?:string|null; charge_number?:string|null;
+  external_reference?:string|null; reversal_journal_entry_id?:string|null;
+};
+export type StudentRefund = {
+  id:string; refund_number:string; student_account_id:string; student_id:string; refund_date:string; amount:string;
+  payment_method:'CASH'|'BANK'; status:StudentRefundStatus; reason:string; version:number; updated_at:string;
+  account_number?:string|null; student_full_name_ar?:string|null; beneficiary_name?:string|null;
+  cash_voucher_id?:string|null; bank_voucher_id?:string|null; allocations?:Array<{student_collection_id:string;refunded_amount:string}>;
+};
+export type CreditNoteOptions = { reason_codes:string[]; application_modes:Array<{code:string;name_ar:string}>; statuses:Array<{code:string;name_ar:string}>; expense_gl_accounts:Array<{id:string;code:string;name_ar:string}>; };
+export type RefundOptions = { payment_methods:Array<{code:string;name_ar:string}>; statuses:Array<{code:string;name_ar:string}>; cash_boxes:Array<{id:string;code:string;name_ar:string}>; bank_accounts:Array<{id:string;code:string;account_name_ar:string}>; };
+export const CREDIT_NOTES_API='/api/accounts/student-credit-notes';
+export const CREDIT_NOTE_OPTIONS_API='/api/accounts/student-credit-notes/options';
+export const REFUNDS_API='/api/accounts/student-refunds';
+export const REFUND_OPTIONS_API='/api/accounts/student-refunds/options';
+export const CREDIT_NOTE_STATUS_LABEL:Record<StudentCreditNoteStatus,string>=RELIEF_STATUS_LABEL;
+export const REFUND_STATUS_LABEL:Record<StudentRefundStatus,string>=RELIEF_STATUS_LABEL;
+export const creditNoteStatusBadge=reliefStatusBadge;
+export const refundStatusBadge=reliefStatusBadge;
