@@ -32,6 +32,7 @@ import {
 import { assertPostingAccount } from './posting-account';
 import {
   assertStudentAccountActiveForCharges,
+  assertValidReceivableGlAccount,
   getStudentAccountBalance,
   loadStudentAccount,
   type StudentAccountRow,
@@ -98,6 +99,7 @@ export type StudentLedgerEntryRow = {
   journal_entry_id: string | null;
   created_by: string | null;
   created_at: Date | string;
+  charge_number?: string | null;
 };
 
 function iso(value: Date | string | null | undefined): string | null {
@@ -655,11 +657,9 @@ export async function postStudentCharge(
     entryDate: chargeDate,
   });
 
-  const receivableGl = await assertPostingAccount(
+  const receivableGl = await assertValidReceivableGlAccount(
     client,
-    account.receivable_gl_account_id,
-    'حساب الذمم المدينة',
-    { invalidStatusCode: 400 }
+    account.receivable_gl_account_id
   );
   const revenueGl = await assertPostingAccount(
     client,
@@ -972,12 +972,15 @@ export async function getStudentLedger(
 
   const list = await txQuery<StudentLedgerEntryRow>(
     client,
-    `SELECT *
-     FROM accounts.student_ledger_entries
-     WHERE student_account_id = $1::uuid
-       AND ($2::date IS NULL OR entry_date >= $2::date)
-       AND ($3::date IS NULL OR entry_date <= $3::date)
-     ORDER BY entry_date ASC, created_at ASC
+    `SELECT le.*,
+            sc.charge_number
+     FROM accounts.student_ledger_entries le
+     LEFT JOIN accounts.student_charges sc
+       ON sc.id = le.source_id AND le.source_type = 'STUDENT_CHARGE'
+     WHERE le.student_account_id = $1::uuid
+       AND ($2::date IS NULL OR le.entry_date >= $2::date)
+       AND ($3::date IS NULL OR le.entry_date <= $3::date)
+     ORDER BY le.entry_date ASC, le.created_at ASC
      LIMIT $4 OFFSET $5`,
     [params.studentAccountId, dateFrom, dateTo, pageSize, offset]
   );

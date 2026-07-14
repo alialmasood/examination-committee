@@ -13,6 +13,10 @@ import {
   loadStudentAccount,
   serializeStudentAccount,
 } from '@/src/lib/accounts/student-accounts';
+import {
+  STUDENT_RECEIVABLES_CAPABILITIES,
+  assertStudentReceivablesCapability,
+} from '@/src/lib/accounts/student-receivables-access';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -26,6 +30,11 @@ export async function POST(request: NextRequest, context: Ctx) {
     const body = await request.json().catch(() => ({}));
 
     const closed = await withTransaction(async (client) => {
+      await assertStudentReceivablesCapability(
+        client,
+        auth.user.id,
+        STUDENT_RECEIVABLES_CAPABILITIES.CLOSE
+      );
       const before = await loadStudentAccount(client, id);
       const row = await closeStudentAccount(client, {
         id,

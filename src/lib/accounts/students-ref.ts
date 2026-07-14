@@ -47,6 +47,21 @@ export async function loadStudentRef(
   return r.rows[0];
 }
 
+/** للطالب ACTIVE فقط — قبل إنشاء حساب مالي أو getOrCreate */
+export async function assertStudentEligibleForAccount(
+  client: TxClient,
+  studentId: string
+): Promise<StudentRef> {
+  const student = await loadStudentRef(client, studentId);
+  if (String(student.status).toLowerCase() !== 'active') {
+    throw new AccountsHttpError(
+      'لا يمكن فتح حساب مالي لطالب غير نشط',
+      409
+    );
+  }
+  return student;
+}
+
 /** للطالب ACTIVE فقط — يُستدعى قبل إنشاء مطالبات جديدة */
 export async function assertStudentActiveForCharges(
   client: TxClient,

@@ -1,7 +1,7 @@
 'use client';
 
-import { useParams, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ACCOUNT_STATUS_LABEL,
   formatDateOnly,
@@ -15,6 +15,7 @@ import {
 export default function StudentAccountPrintPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const id = String(params.id || '');
 
   const [account, setAccount] = useState<StudentAccountDetail | null>(null);
@@ -23,14 +24,21 @@ export default function StudentAccountPrintPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const dateFromParam = searchParams.get('from') || searchParams.get('date_from');
+  const dateToParam = searchParams.get('to') || searchParams.get('date_to');
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    const qs = new URLSearchParams({ page_size: '200' });
+    if (dateFromParam) qs.set('date_from', dateFromParam);
+    if (dateToParam) qs.set('date_to', dateToParam);
+
     const [accRes, sumRes, ledRes] = await Promise.all([
       studentApi<StudentAccountDetail>(`/api/accounts/student-accounts/${id}`),
       studentApi<StudentAccountSummary>(`/api/accounts/student-accounts/${id}/summary`),
       studentApi<StudentLedgerEntry[]>(
-        `/api/accounts/student-accounts/${id}/ledger?page_size=200`
+        `/api/accounts/student-accounts/${id}/ledger?${qs.toString()}`
       ),
     ]);
     if (!accRes.success || !accRes.data) {
@@ -43,7 +51,7 @@ export default function StudentAccountPrintPage() {
     setLedger(Array.isArray(ledRes.data) ? ledRes.data : []);
     setError(null);
     setLoading(false);
-  }, [id]);
+  }, [id, dateFromParam, dateToParam]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch statement for print
@@ -56,6 +64,18 @@ export default function StudentAccountPrintPage() {
       return () => window.clearTimeout(t);
     }
   }, [loading, account]);
+
+  const periodLabel = useMemo(() => {
+    if (dateFromParam || dateToParam) {
+      return `${dateFromParam ? formatDateOnly(dateFromParam) : '—'} → ${
+        dateToParam ? formatDateOnly(dateToParam) : '—'
+      }`;
+    }
+    if (ledger.length === 0) return '—';
+    const first = formatDateOnly(ledger[0].entry_date);
+    const last = formatDateOnly(ledger[ledger.length - 1].entry_date);
+    return `${first} → ${last}`;
+  }, [dateFromParam, dateToParam, ledger]);
 
   if (loading) {
     return (
@@ -85,6 +105,15 @@ export default function StudentAccountPrintPage() {
     acc.push({ ...e, running_balance: next });
     return acc;
   }, []);
+
+  const major =
+    account.student?.major ||
+    account.student_major ||
+    '—';
+  const stage =
+    account.student?.admission_type ||
+    account.student_admission_type ||
+    '—';
 
   return (
     <div className="p-6" dir="rtl">
@@ -129,6 +158,18 @@ export default function StudentAccountPrintPage() {
             <strong>{account.student?.university_id || account.student?.student_number || '—'}</strong>
           </div>
           <div>
+            <span className="text-gray-500">القسم / التخصص: </span>
+            <strong>{major}</strong>
+          </div>
+          <div>
+            <span className="text-gray-500">المرحلة (نوع القبول): </span>
+            <strong>{stage}</strong>
+          </div>
+          <div>
+            <span className="text-gray-500">الفترة: </span>
+            <strong>{periodLabel}</strong>
+          </div>
+          <div>
             <span className="text-gray-500">حساب الذمم: </span>
             <strong>
               {account.receivable_gl_code} — {account.receivable_gl_name_ar}
@@ -144,6 +185,7 @@ export default function StudentAccountPrintPage() {
           <thead>
             <tr className="border-b-2 border-gray-800">
               <th className="py-2 text-right">التاريخ</th>
+              <th className="py-2 text-right">رقم المطالبة</th>
               <th className="py-2 text-right">البيان</th>
               <th className="py-2 text-right">مدين</th>
               <th className="py-2 text-right">دائن</th>
@@ -154,6 +196,7 @@ export default function StudentAccountPrintPage() {
             {ledgerWithRunning.map((e) => (
                 <tr key={e.id} className="border-b border-gray-200">
                   <td className="py-2">{formatDateOnly(e.entry_date)}</td>
+                  <td className="py-2">{e.charge_number || '—'}</td>
                   <td className="py-2">{e.description}</td>
                   <td className="py-2">{formatMoney(e.debit_amount)}</td>
                   <td className="py-2">{formatMoney(e.credit_amount)}</td>
@@ -162,6 +205,25 @@ export default function StudentAccountPrintPage() {
             ))}
           </tbody>
         </table>
+
+        <section className="mt-10 grid grid-cols-2 gap-8 text-sm">
+          <div className="border-t border-gray-400 pt-2 min-h-[4.5rem]">
+            <p className="font-medium">توقيع المحاسب</p>
+            <p className="text-xs text-gray-500 mt-6">الاسم / التوقيع</p>
+          </div>
+          <div className="border-t border-gray-400 pt-2 min-h-[4.5rem]">
+            <p className="font-medium">توقيع شؤون الطلبة</p>
+            <p className="text-xs text-gray-500 mt-6">الاسم / التوقيع</p>
+          </div>
+          <div className="border-t border-gray-400 pt-2 min-h-[4.5rem]">
+            <p className="font-medium">توقيع المدير المالي (CFO)</p>
+            <p className="text-xs text-gray-500 mt-6">الاسم / التوقيع</p>
+          </div>
+          <div className="border-t border-gray-400 pt-2 min-h-[4.5rem]">
+            <p className="font-medium">توقيع التدقيق</p>
+            <p className="text-xs text-gray-500 mt-6">الاسم / التوقيع</p>
+          </div>
+        </section>
 
         <footer className="mt-6 pt-4 border-t border-gray-300 text-xs text-gray-500 flex justify-between">
           <span>تاريخ الطباعة: {new Date().toLocaleString('ar-IQ')}</span>

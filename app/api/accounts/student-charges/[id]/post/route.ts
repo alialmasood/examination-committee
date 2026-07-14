@@ -13,6 +13,10 @@ import {
   serializeStudentCharge,
 } from '@/src/lib/accounts/student-charges';
 import {
+  STUDENT_RECEIVABLES_CAPABILITIES,
+  assertStudentReceivablesCapability,
+} from '@/src/lib/accounts/student-receivables-access';
+import {
   acquireJournalEntriesLock,
   withTransaction,
 } from '@/src/lib/accounts/with-transaction';
@@ -28,6 +32,11 @@ export async function POST(request: NextRequest, context: Ctx) {
     const body = await request.json().catch(() => ({}));
 
     const result = await withTransaction(async (client) => {
+      await assertStudentReceivablesCapability(
+        client,
+        auth.user.id,
+        STUDENT_RECEIVABLES_CAPABILITIES.CHARGES_POST
+      );
       await acquireJournalEntriesLock(client);
       const posted = await postStudentCharge(client, {
         id,

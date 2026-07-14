@@ -13,6 +13,10 @@ import {
   listStudentCharges,
   serializeStudentCharge,
 } from '@/src/lib/accounts/student-charges';
+import {
+  STUDENT_RECEIVABLES_CAPABILITIES,
+  assertStudentReceivablesCapability,
+} from '@/src/lib/accounts/student-receivables-access';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
 
 export async function GET(request: NextRequest) {
@@ -20,6 +24,12 @@ export async function GET(request: NextRequest) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
+    await assertStudentReceivablesCapability(
+      null,
+      auth.user.id,
+      STUDENT_RECEIVABLES_CAPABILITIES.VIEW
+    );
+
     const sp = request.nextUrl.searchParams;
     const result = await withTransaction((client) =>
       listStudentCharges(client, {
@@ -63,6 +73,11 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const created = await withTransaction(async (client) => {
+      await assertStudentReceivablesCapability(
+        client,
+        auth.user.id,
+        STUDENT_RECEIVABLES_CAPABILITIES.CHARGES_PREPARE
+      );
       const row = await createStudentCharge(client, {
         ...body,
         created_by: auth.user.id,

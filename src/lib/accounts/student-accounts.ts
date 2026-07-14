@@ -1,7 +1,6 @@
 /**
  * الحسابات المالية للطلبة — المرحلة 5.A
  */
-import { requireAccountsAdmin } from './accounts-access';
 import {
   acquireAccountingResourceLocks,
   chartAccountLock,
@@ -20,9 +19,23 @@ import {
   normalizeSignedMoneyInput,
 } from './money';
 import { assertPostingAccountWithType } from './posting-account';
-import { loadStudentRef } from './students-ref';
+import {
+  STUDENT_RECEIVABLES_CAPABILITIES,
+  assertStudentReceivablesCapability,
+} from './student-receivables-access';
+import {
+  assertStudentEligibleForAccount,
+} from './students-ref';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
+
+/** أكواد نقد رئيسية شائعة — لا تُستخدم كذمم طلبة */
+function isCashMainGlCode(code: string): boolean {
+  const c = String(code ?? '').trim();
+  if (!c) return false;
+  if (c.startsWith('111')) return true;
+  return /^111[0-9]$/.test(c);
+}
 
 export type StudentAccountStatus = 'ACTIVE' | 'SUSPENDED' | 'CLOSED';
 
@@ -104,11 +117,16 @@ export function serializeStudentAccount(row: StudentAccountRow) {
   };
 }
 
-/** حساب ذمم طلبة: ASSET ترحيلي فعّال — ليس صندوقاً ولا بنكاً */
+/** حساب ذمم طلبة: ASSET ترحيلي فعّال — ليس صندوقاً (حساب تشغيلي أو مغلق) ولا بنكاً ولا نقد 111* */
 export async function assertValidReceivableGlAccount(
   client: TxClient,
   accountId: string
-): Promise<{ id: string; code: string; name_ar?: string }> {
+): Promise<{
+  id: string;
+  code: string;
+  name_ar?: string;
+  requires_cost_center: boolean;
+}> {
   const glId = String(accountId ?? '').trim();
   if (!glId) throw new AccountsHttpError('حساب الذمم المدينة مطلوب', 400);
 
@@ -125,11 +143,17 @@ export async function assertValidReceivableGlAccount(
     );
   }
 
-  const cash = await txQuery(
+  if (isCashMainGlCode(acc.code)) {
+    throw new AccountsHttpError(
+      `لا يمكن استخدام حساب نقد رئيسي كذمم طلبة (${acc.code})`,
+      400
+    );
+  }
+
+  const cash = await txQuery<{ code: string }>(
     client,
     `SELECT code FROM accounts.cash_boxes
-     WHERE account_id = $1::uuid
-       AND status IN ('ACTIVE', 'SUSPENDED', 'DRAFT', 'CLOSED')
+     WHERE account_id = $1::uuid OR closed_account_id = $1::uuid
      LIMIT 1`,
     [glId]
   );
@@ -140,7 +164,7 @@ export async function assertValidReceivableGlAccount(
     );
   }
 
-  const bank = await txQuery(
+  const bank = await txQuery<{ code: string }>(
     client,
     `SELECT code FROM accounts.bank_accounts
      WHERE gl_account_id = $1::uuid
@@ -154,7 +178,11 @@ export async function assertValidReceivableGlAccount(
     );
   }
 
-  return { id: acc.id, code: acc.code };
+  return {
+    id: acc.id,
+    code: acc.code,
+    requires_cost_center: acc.requires_cost_center,
+  };
 }
 
 export async function listEligibleReceivableGlAccounts(
@@ -171,8 +199,10 @@ export async function listEligibleReceivableGlAccounts(
        AND NOT a.is_group
        AND a.allow_posting
        AND a.is_active
+       AND a.code NOT LIKE '111%'
        AND NOT EXISTS (
-         SELECT 1 FROM accounts.cash_boxes cb WHERE cb.account_id = a.id
+         SELECT 1 FROM accounts.cash_boxes cb
+         WHERE cb.account_id = a.id OR cb.closed_account_id = a.id
        )
        AND NOT EXISTS (
          SELECT 1 FROM accounts.bank_accounts ba WHERE ba.gl_account_id = a.id
@@ -314,7 +344,7 @@ export async function createStudentAccount(
   const studentId = String(input.student_id ?? '').trim();
   if (!studentId) throw new AccountsHttpError('معرّف الطالب مطلوب', 400);
 
-  const student = await loadStudentRef(client, studentId);
+  const student = await assertStudentEligibleForAccount(client, studentId);
   const currency = assertIqdOnly(input.currency_code);
 
   const existing = await findStudentAccountByStudentCurrency(
@@ -557,10 +587,10 @@ export async function closeStudentAccount(
   client: TxClient,
   params: { id: string; userId: string; version: unknown; updated_at: unknown }
 ): Promise<StudentAccountRow> {
-  await requireAccountsAdmin(
+  await assertStudentReceivablesCapability(
     client,
     params.userId,
-    'إغلاق الحساب المالي للطالب يتطلب صلاحية مدير الحسابات'
+    STUDENT_RECEIVABLES_CAPABILITIES.CLOSE
   );
 
   const acc = await loadStudentAccount(client, params.id, true);

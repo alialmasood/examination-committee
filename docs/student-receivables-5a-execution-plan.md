@@ -102,7 +102,9 @@ Concurrency متفائل عبر `version` + `updated_at`.
 | `PATCH …/charges/[id]` · `POST …/post` · `POST …/void` | تحديث / ترحيل / إلغاء |
 | `GET /api/accounts/student-options` | خيارات الواجهة |
 
-الوصول: `requireAccountsAccess` · إغلاق الحساب: Accounts Admin.
+الوصول: `requireAccountsAccess` + قدرات `student-receivables-access` (انظر §15).
+
+إغلاق الحساب: `student_accounts.close` (Admin عبر `hasAccountsAdminAccess` فقط).
 
 ---
 
@@ -113,7 +115,7 @@ Concurrency متفائل عبر `version` + `updated_at`.
 | `/accounts/students` | ملخص + تبويبات |
 | `/accounts/students/accounts` | قائمة + فلاتر + ترقيم + إنشاء |
 | `/accounts/students/accounts/[id]` | تفاصيل + دفتر + مطالبات + إجراءات |
-| `/accounts/students/accounts/[id]/print` | كشف حساب للطباعة (`print-container`) |
+| `/accounts/students/accounts/[id]/print` | كشف حساب (`print-container`) — تخصص، مرحلة (admission_type)، فترة، أرقام مطالبات، تواقيع |
 | `/accounts/students/charges` | قائمة + مسودة + ترحيل/إلغاء |
 | `/accounts/students/fee-types` | CRUD + تعطيل |
 
@@ -163,7 +165,7 @@ npm run accounts:verify-student-receivables
 
 ## 13) مخاطر معروفة
 
-- مقارنة `verifyStudentReceivables` على **كل** حسابات الذمم المستخدمة؛ قيود يدوية على نفس GL دون دفتر فرعي تكسر التطابق.
+- `verifyStudentReceivables` يقارن A (قيود STUDENT_CHARGE*) مع B (الدفتر الفرعي) ويتتبع الأيتام؛ نشاط GL آخر يُبلَّغ كـ `unexplained_gl_activity` ويفشل فقط مع `--strict`.
 - الاعتماد على فترة OPEN لتواريخ المطالبة في بيئات العرض/الاختبار.
 
 ---
@@ -173,3 +175,26 @@ npm run accounts:verify-student-receivables
 - قبض/تسديد جزئي وكامل · ربط سندات قبض/بنك  
 - حالات `PARTIALLY_SETTLED` / `SETTLED` التشغيلية  
 - تقارير أعمار الذمم · إشعارات · خصومات/منح (حسب القرار المحاسبي)
+- **دين أكاديمي (snapshot):** واجهة القائمة تنضمّ إلى بيانات الطالب الحية (`major` / `admission_type` / قسم). المطالبات لا تخزّن لقطة للقسم/المرحلة عند الإنشاء — يُعالَج في 5.B إن لزم التقرير التاريخي.
+
+---
+
+## 15) صلاحيات 5.A (hardening)
+
+| القدرة | Viewer | Clerk | Admin |
+|--------|--------|-------|-------|
+| `student_accounts.view` | ✓ | ✓ | ✓ |
+| `student_accounts.manage` | | ✓ | ✓ |
+| `student_fee_types.manage` | | ✓ | ✓ |
+| `student_charges.prepare` | | ✓ | ✓ |
+| `student_charges.post` | | ✓ | ✓ |
+| `student_charges.void` | | ✓ | ✓ |
+| `student_accounts.close` | | | ✓ |
+
+أدوار `student_affairs.roles` (migration `076_accounts_receivables_roles.sql`): `accounts_viewer` · `accounts_clerk` · `accounts_admin` (من 070).
+
+دور واحد لكل `(user_id, ACCOUNTS)` عبر `platform.user_system_roles`.
+
+**سياسة مؤقتة:** مستخدم له عضوية نظام ACCOUNTS في `student_affairs.user_systems` دون دور viewer/clerk/admin يحصل مؤقتاً على صلاحيات **clerk** التشغيلية (بدون close). أزل بعد اكتمال منح الأدوار.
+
+**لا** تُمنح قدرات 5.A عبر username. مسار Admin (كل القدرات + close) فقط عبر `hasAccountsAdminAccess`.

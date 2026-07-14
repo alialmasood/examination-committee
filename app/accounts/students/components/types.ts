@@ -93,6 +93,7 @@ export type StudentLedgerEntry = {
   debit_amount: string;
   credit_amount: string;
   journal_entry_id: string | null;
+  charge_number?: string | null;
 };
 
 export type StudentAccountSummary = {

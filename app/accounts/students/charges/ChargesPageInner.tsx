@@ -74,7 +74,7 @@ export default function StudentChargesPageInner() {
       `/api/accounts/student-charges?${params}`
     );
     if (!res.success) {
-      setError(res.message || 'ÊÚĞÑ ÊÍãíá ÇáãØÇáÈÇÊ');
+      setError(res.message || 'ØªØ¹Ø°Ø± ØªØ­Ù…ÙŠÙ„ Ø§Ù„Ù…Ø·Ø§Ù„Ø¨Ø§Øª');
       setRows([]);
     } else {
       setError(null);
@@ -107,11 +107,11 @@ export default function StudentChargesPageInner() {
     });
     setSaving(false);
     if (!res.success) {
-      setError(res.message || 'ÊÚĞÑ ÅäÔÇÁ ÇáãÓæÏÉ');
+      setError(res.message || 'ØªØ¹Ø°Ø± Ø¥Ù†Ø´Ø§Ø¡ Ø§Ù„Ù…Ø³ÙˆØ¯Ø©');
       return;
     }
     setCreateOpen(false);
-    setSuccess('Êã ÅäÔÇÁ ãØÇáÈÉ ãÓæÏÉ');
+    setSuccess('ØªÙ… Ø¥Ù†Ø´Ø§Ø¡ Ù…Ø·Ø§Ù„Ø¨Ø© Ù…Ø³ÙˆØ¯Ø©');
     void load();
   };
 
@@ -127,17 +127,17 @@ export default function StudentChargesPageInner() {
       version: actionCharge.version,
       updated_at: actionCharge.updated_at,
     };
-    if (actionKind === 'void') body.reason = voidReason || 'ÅáÛÇÁ ãä ÇáæÇÌåÉ';
+    if (actionKind === 'void') body.reason = voidReason || 'Ø¥Ù„ØºØ§Ø¡ Ù…Ù† Ø§Ù„ÙˆØ§Ø¬Ù‡Ø©';
     const res = await studentApi(url, { method: 'POST', body: JSON.stringify(body) });
     setActionBusy(false);
     if (!res.success) {
-      setError(res.message || 'İÔáÊ ÇáÚãáíÉ');
+      setError(res.message || 'ÙØ´Ù„Øª Ø§Ù„Ø¹Ù…Ù„ÙŠØ©');
       return;
     }
     setActionCharge(null);
     setActionKind(null);
     setVoidReason('');
-    setSuccess(actionKind === 'post' ? 'Êã ÇáÊÑÍíá' : 'Êã ÇáÅáÛÇÁ');
+    setSuccess(actionKind === 'post' ? 'ØªÙ… Ø§Ù„ØªØ±Ø­ÙŠÙ„' : 'ØªÙ… Ø§Ù„Ø¥Ù„ØºØ§Ø¡');
     void load();
   };
 
@@ -145,15 +145,15 @@ export default function StudentChargesPageInner() {
     <div className="p-6" dir="rtl">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">ÇáãØÇáÈÇÊ ÇáãÇáíÉ</h1>
-          <p className="text-sm text-gray-600 mt-1">ãÓæÏÉ ? ÊÑÍíá (ãÏíä Ğãã / ÏÇÆä ÅíÑÇÏ) ? ÅáÛÇÁ ÈÚßÓ</p>
+          <h1 className="text-xl font-semibold text-gray-900">Ø§Ù„Ù…Ø·Ø§Ù„Ø¨Ø§Øª Ø§Ù„Ù…Ø§Ù„ÙŠØ©</h1>
+          <p className="text-sm text-gray-600 mt-1">Ù…Ø³ÙˆØ¯Ø© ? ØªØ±Ø­ÙŠÙ„ (Ù…Ø¯ÙŠÙ† Ø°Ù…Ù… / Ø¯Ø§Ø¦Ù† Ø¥ÙŠØ±Ø§Ø¯) ? Ø¥Ù„ØºØ§Ø¡ Ø¨Ø¹ÙƒØ³</p>
         </div>
         <button
           type="button"
           onClick={() => setCreateOpen(true)}
           className="px-4 py-2 bg-red-900 text-white text-sm rounded-md hover:bg-red-800"
         >
-          ãØÇáÈÉ ãÓæÏÉ
+          Ù…Ø·Ø§Ù„Ø¨Ø© Ù…Ø³ÙˆØ¯Ø©
         </button>
       </div>
 
@@ -177,7 +177,7 @@ export default function StudentChargesPageInner() {
             setPage(1);
             setQ(e.target.value);
           }}
-          placeholder="ÈÍË ÈÑŞã ÇáãØÇáÈÉ / ÇáÈíÇä"
+          placeholder="Ø¨Ø­Ø« Ø¨Ø±Ù‚Ù… Ø§Ù„Ù…Ø·Ø§Ù„Ø¨Ø© / Ø§Ù„Ø¨ÙŠØ§Ù†"
           className="border border-gray-300 rounded-md px-3 py-2 text-sm"
         />
         <select
@@ -188,10 +188,10 @@ export default function StudentChargesPageInner() {
           }}
           className="border border-gray-300 rounded-md px-3 py-2 text-sm"
         >
-          <option value="">ßá ÇáÍÇáÇÊ</option>
-          <option value="DRAFT">ãÓæÏÉ</option>
-          <option value="POSTED">ãÑÍøá</option>
-          <option value="VOID">ãáÛì</option>
+          <option value="">ÙƒÙ„ Ø§Ù„Ø­Ø§Ù„Ø§Øª</option>
+          <option value="DRAFT">Ù…Ø³ÙˆØ¯Ø©</option>
+          <option value="POSTED">Ù…Ø±Ø­Ù‘Ù„</option>
+          <option value="VOID">Ù…Ù„ØºÙ‰</option>
         </select>
         <select
           value={accountId}
@@ -201,10 +201,10 @@ export default function StudentChargesPageInner() {
           }}
           className="border border-gray-300 rounded-md px-3 py-2 text-sm"
         >
-          <option value="">ßá ÇáÍÓÇÈÇÊ</option>
+          <option value="">ÙƒÙ„ Ø§Ù„Ø­Ø³Ø§Ø¨Ø§Øª</option>
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.account_number} — {a.student_full_name_ar || ''}
+              {a.account_number} â€” {a.student_full_name_ar || ''}
             </option>
           ))}
         </select>
@@ -213,7 +213,7 @@ export default function StudentChargesPageInner() {
           onClick={() => void load()}
           className="border border-gray-300 rounded-md px-3 py-2 text-sm hover:bg-gray-50"
         >
-          ÊÍÏíË
+          ØªØ­Ø¯ÙŠØ«
         </button>
       </div>
 
@@ -221,26 +221,26 @@ export default function StudentChargesPageInner() {
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50 text-gray-600">
             <tr>
-              <th className="px-3 py-2 text-right font-medium">ÇáÑŞã</th>
-              <th className="px-3 py-2 text-right font-medium">ÇáØÇáÈ</th>
-              <th className="px-3 py-2 text-right font-medium">äæÚ ÇáÑÓã</th>
-              <th className="px-3 py-2 text-right font-medium">ÇáÊÇÑíÎ</th>
-              <th className="px-3 py-2 text-right font-medium">ÇáãÈáÛ</th>
-              <th className="px-3 py-2 text-right font-medium">ÇáÍÇáÉ</th>
-              <th className="px-3 py-2 text-right font-medium">ÅÌÑÇÁÇÊ</th>
+              <th className="px-3 py-2 text-right font-medium">Ø§Ù„Ø±Ù‚Ù…</th>
+              <th className="px-3 py-2 text-right font-medium">Ø§Ù„Ø·Ø§Ù„Ø¨</th>
+              <th className="px-3 py-2 text-right font-medium">Ù†ÙˆØ¹ Ø§Ù„Ø±Ø³Ù…</th>
+              <th className="px-3 py-2 text-right font-medium">Ø§Ù„ØªØ§Ø±ÙŠØ®</th>
+              <th className="px-3 py-2 text-right font-medium">Ø§Ù„Ù…Ø¨Ù„Øº</th>
+              <th className="px-3 py-2 text-right font-medium">Ø§Ù„Ø­Ø§Ù„Ø©</th>
+              <th className="px-3 py-2 text-right font-medium">Ø¥Ø¬Ø±Ø§Ø¡Ø§Øª</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
                 <td colSpan={7} className="px-3 py-8 text-center text-gray-500">
-                  ÌÇÑí ÇáÊÍãíá...
+                  Ø¬Ø§Ø±ÙŠ Ø§Ù„ØªØ­Ù…ÙŠÙ„...
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-3 py-8 text-center text-gray-500">
-                  áÇ ÊæÌÏ ãØÇáÈÇÊ
+                  Ù„Ø§ ØªÙˆØ¬Ø¯ Ù…Ø·Ø§Ù„Ø¨Ø§Øª
                 </td>
               </tr>
             ) : (
@@ -248,12 +248,12 @@ export default function StudentChargesPageInner() {
                 <tr key={row.id} className="border-t border-gray-100">
                   <td className="px-3 py-2 font-medium">{row.charge_number}</td>
                   <td className="px-3 py-2">
-                    {row.student_full_name_ar || row.account_number || '—'}
+                    {row.student_full_name_ar || row.account_number || 'â€”'}
                   </td>
                   <td className="px-3 py-2">
                     {row.fee_type_code
-                      ? `${row.fee_type_code} — ${row.fee_type_name_ar || ''}`
-                      : '—'}
+                      ? `${row.fee_type_code} â€” ${row.fee_type_name_ar || ''}`
+                      : 'â€”'}
                   </td>
                   <td className="px-3 py-2">{formatDateOnly(row.charge_date)}</td>
                   <td className="px-3 py-2">{formatMoney(row.original_amount)}</td>
@@ -274,7 +274,7 @@ export default function StudentChargesPageInner() {
                               setActionKind('post');
                             }}
                           >
-                            ÊÑÍíá
+                            ØªØ±Ø­ÙŠÙ„
                           </button>
                           <button
                             type="button"
@@ -284,7 +284,7 @@ export default function StudentChargesPageInner() {
                               setActionKind('void');
                             }}
                           >
-                            ÅáÛÇÁ
+                            Ø¥Ù„ØºØ§Ø¡
                           </button>
                         </>
                       )}
@@ -297,7 +297,7 @@ export default function StudentChargesPageInner() {
                             setActionKind('void');
                           }}
                         >
-                          ÚßÓ
+                          Ø¹ÙƒØ³
                         </button>
                       )}
                     </div>
@@ -311,7 +311,7 @@ export default function StudentChargesPageInner() {
 
       <div className="flex items-center justify-between mt-3 text-sm text-gray-600">
         <span>
-          ÕİÍÉ {pagination.page} ãä {pagination.total_pages} · {pagination.total}
+          ØµÙØ­Ø© {pagination.page} Ù…Ù† {pagination.total_pages} Â· {pagination.total}
         </span>
         <div className="flex gap-2">
           <button
@@ -320,7 +320,7 @@ export default function StudentChargesPageInner() {
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             className="px-3 py-1 border rounded disabled:opacity-40"
           >
-            ÇáÓÇÈŞ
+            Ø§Ù„Ø³Ø§Ø¨Ù‚
           </button>
           <button
             type="button"
@@ -328,7 +328,7 @@ export default function StudentChargesPageInner() {
             onClick={() => setPage((p) => p + 1)}
             className="px-3 py-1 border rounded disabled:opacity-40"
           >
-            ÇáÊÇáí
+            Ø§Ù„ØªØ§Ù„ÙŠ
           </button>
         </div>
       </div>
@@ -336,10 +336,10 @@ export default function StudentChargesPageInner() {
       {createOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-5" dir="rtl">
-            <h2 className="text-lg font-semibold mb-4">ÅäÔÇÁ ãØÇáÈÉ ãÓæÏÉ</h2>
+            <h2 className="text-lg font-semibold mb-4">Ø¥Ù†Ø´Ø§Ø¡ Ù…Ø·Ø§Ù„Ø¨Ø© Ù…Ø³ÙˆØ¯Ø©</h2>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm text-gray-600 mb-1">ÇáÍÓÇÈ ÇáãÇáí</label>
+                <label className="block text-sm text-gray-600 mb-1">Ø§Ù„Ø­Ø³Ø§Ø¨ Ø§Ù„Ù…Ø§Ù„ÙŠ</label>
                 <select
                   value={form.student_account_id}
                   onChange={(e) =>
@@ -347,16 +347,16 @@ export default function StudentChargesPageInner() {
                   }
                   className="w-full border rounded-md px-3 py-2 text-sm"
                 >
-                  <option value="">ÇÎÊÑ</option>
+                  <option value="">Ø§Ø®ØªØ±</option>
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.account_number} — {a.student_full_name_ar || ''}
+                      {a.account_number} â€” {a.student_full_name_ar || ''}
                     </option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-gray-600 mb-1">äæÚ ÇáÑÓã</label>
+                <label className="block text-sm text-gray-600 mb-1">Ù†ÙˆØ¹ Ø§Ù„Ø±Ø³Ù…</label>
                 <select
                   value={form.fee_type_id}
                   onChange={(e) => {
@@ -371,17 +371,17 @@ export default function StudentChargesPageInner() {
                   }}
                   className="w-full border rounded-md px-3 py-2 text-sm"
                 >
-                  <option value="">ÇÎÊÑ</option>
+                  <option value="">Ø§Ø®ØªØ±</option>
                   {(options?.fee_types || []).map((f) => (
                     <option key={f.id} value={f.id}>
-                      {f.code} — {f.name_ar}
+                      {f.code} â€” {f.name_ar}
                     </option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="block text-sm text-gray-600 mb-1">
-                  ÊÇÑíÎ ÇáãØÇáÈÉ (İÊÑÉ OPEN)
+                  ØªØ§Ø±ÙŠØ® Ø§Ù„Ù…Ø·Ø§Ù„Ø¨Ø© (ÙØªØ±Ø© OPEN)
                 </label>
                 <input
                   type="date"
@@ -391,7 +391,7 @@ export default function StudentChargesPageInner() {
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-600 mb-1">ÇáãÈáÛ</label>
+                <label className="block text-sm text-gray-600 mb-1">Ø§Ù„Ù…Ø¨Ù„Øº</label>
                 <input
                   value={form.original_amount}
                   onChange={(e) => setForm((f) => ({ ...f, original_amount: e.target.value }))}
@@ -399,7 +399,7 @@ export default function StudentChargesPageInner() {
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-600 mb-1">ÇáÈíÇä</label>
+                <label className="block text-sm text-gray-600 mb-1">Ø§Ù„Ø¨ÙŠØ§Ù†</label>
                 <textarea
                   value={form.description}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
@@ -410,7 +410,7 @@ export default function StudentChargesPageInner() {
             </div>
             <div className="flex justify-end gap-2 mt-5">
               <button type="button" onClick={() => setCreateOpen(false)} className="px-3 py-2 border rounded-md text-sm">
-                ÅáÛÇÁ
+                Ø¥Ù„ØºØ§Ø¡
               </button>
               <button
                 type="button"
@@ -418,7 +418,7 @@ export default function StudentChargesPageInner() {
                 onClick={() => void createDraft()}
                 className="px-3 py-2 bg-red-900 text-white rounded-md text-sm disabled:opacity-40"
               >
-                {saving ? 'ÌÇÑí ÇáÍİÙ...' : 'ÍİÙ ãÓæÏÉ'}
+                {saving ? 'Ø¬Ø§Ø±ÙŠ Ø§Ù„Ø­ÙØ¸...' : 'Ø­ÙØ¸ Ù…Ø³ÙˆØ¯Ø©'}
               </button>
             </div>
           </div>
@@ -429,16 +429,16 @@ export default function StudentChargesPageInner() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-5" dir="rtl">
             <h2 className="text-lg font-semibold mb-2">
-              {actionKind === 'post' ? 'ÊÑÍíá ÇáãØÇáÈÉ' : 'ÅáÛÇÁ ÇáãØÇáÈÉ'}
+              {actionKind === 'post' ? 'ØªØ±Ø­ÙŠÙ„ Ø§Ù„Ù…Ø·Ø§Ù„Ø¨Ø©' : 'Ø¥Ù„ØºØ§Ø¡ Ø§Ù„Ù…Ø·Ø§Ù„Ø¨Ø©'}
             </h2>
             <p className="text-sm text-gray-600 mb-3">
-              {actionCharge.charge_number} · {formatMoney(actionCharge.original_amount)}
+              {actionCharge.charge_number} Â· {formatMoney(actionCharge.original_amount)}
             </p>
             {actionKind === 'void' && actionCharge.status === 'POSTED' && (
               <textarea
                 value={voidReason}
                 onChange={(e) => setVoidReason(e.target.value)}
-                placeholder="ÓÈÈ ÇáÅáÛÇÁ (ÅáÒÇãí ááãÑÍøá)"
+                placeholder="Ø³Ø¨Ø¨ Ø§Ù„Ø¥Ù„ØºØ§Ø¡ (Ø¥Ù„Ø²Ø§Ù…ÙŠ Ù„Ù„Ù…Ø±Ø­Ù‘Ù„)"
                 className="w-full border rounded-md px-3 py-2 text-sm mb-3"
                 rows={2}
               />
@@ -452,7 +452,7 @@ export default function StudentChargesPageInner() {
                 }}
                 className="px-3 py-2 border rounded-md text-sm"
               >
-                ÊÑÇÌÚ
+                ØªØ±Ø§Ø¬Ø¹
               </button>
               <button
                 type="button"
@@ -465,7 +465,7 @@ export default function StudentChargesPageInner() {
                 onClick={() => void confirmAction()}
                 className="px-3 py-2 bg-red-900 text-white rounded-md text-sm disabled:opacity-40"
               >
-                {actionBusy ? '...' : 'ÊÃßíÏ'}
+                {actionBusy ? '...' : 'ØªØ£ÙƒÙŠØ¯'}
               </button>
             </div>
           </div>

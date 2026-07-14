@@ -13,6 +13,10 @@ import {
   serializeStudentFeeType,
   updateStudentFeeType,
 } from '@/src/lib/accounts/student-fee-types';
+import {
+  STUDENT_RECEIVABLES_CAPABILITIES,
+  assertStudentReceivablesCapability,
+} from '@/src/lib/accounts/student-receivables-access';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
 import { query } from '@/src/lib/db';
 
@@ -23,6 +27,11 @@ export async function GET(request: NextRequest, context: Ctx) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
+    await assertStudentReceivablesCapability(
+      null,
+      auth.user.id,
+      STUDENT_RECEIVABLES_CAPABILITIES.VIEW
+    );
     const { id } = await context.params;
     const detail = await query(
       `SELECT ft.*,
@@ -72,6 +81,11 @@ export async function PATCH(request: NextRequest, context: Ctx) {
     const body = await request.json();
 
     const updated = await withTransaction(async (client) => {
+      await assertStudentReceivablesCapability(
+        client,
+        auth.user.id,
+        STUDENT_RECEIVABLES_CAPABILITIES.FEE_TYPES_MANAGE
+      );
       const before = await loadStudentFeeType(client, id);
       const row = await updateStudentFeeType(client, {
         id,

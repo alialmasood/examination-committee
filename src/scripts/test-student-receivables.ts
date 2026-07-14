@@ -14,6 +14,7 @@ import { grantAccountsAdminRole } from '../lib/accounts/accounts-access';
 import {
   activateStudentAccount,
   allocateStudentAccountNumber,
+  assertValidReceivableGlAccount,
   closeStudentAccount,
   createStudentAccount,
   getStudentAccountBalance,
@@ -32,14 +33,25 @@ import {
   deactivateStudentFeeType,
   loadStudentFeeType,
 } from '../lib/accounts/student-fee-types';
+import {
+  ACCOUNTS_CLERK_ROLE_CODE,
+  ACCOUNTS_VIEWER_ROLE_CODE,
+  STUDENT_RECEIVABLES_CAPABILITIES,
+  assertStudentReceivablesCapability,
+  grantAccountsPlatformRole,
+  hasStudentReceivablesCapability,
+} from '../lib/accounts/student-receivables-access';
 import { moneyEquals, moneyIsZero, normalizeMoneyInput } from '../lib/accounts/money';
 import { pgDateOnly } from '../lib/accounts/document-sequences';
-import { verifyStudentReceivables } from '../lib/accounts/verify-student-receivables';
+import {
+  hasUnexplainedGlActivity,
+  verifyStudentReceivables,
+} from '../lib/accounts/verify-student-receivables';
 import {
   acquireJournalEntriesLock,
   withTransaction,
 } from '../lib/accounts/with-transaction';
-
+import bcrypt from 'bcrypt';
 let passCount = 0;
 let failCount = 0;
 
@@ -111,17 +123,44 @@ async function ensureTypedAccount(
   return ins.rows[0].id as string;
 }
 
-async function insertTestStudent(suffix: string, label: string): Promise<string> {
+async function insertTestStudent(
+  suffix: string,
+  label: string,
+  status = 'active'
+): Promise<string> {
   // university_id / student_number غالباً varchar(20)
   const uni = `DT${suffix}${label}`.slice(0, 20);
   const ins = await query(
     `INSERT INTO student_affairs.students
        (university_id, student_number, full_name_ar, status, payment_status)
-     VALUES ($1, $2, $3, 'active', 'paid')
+     VALUES ($1, $2, $3, $4, 'paid')
      RETURNING id`,
-    [uni, uni, `طالب اختبار ${label} ${suffix}`]
+    [uni, uni, `طالب اختبار ${label} ${suffix}`, status]
   );
   return ins.rows[0].id as string;
+}
+
+async function upsertCapabilityTestUser(username: string): Promise<string> {
+  const hash = await bcrypt.hash('test-recv-pass', 10);
+  const res = await query(
+    `INSERT INTO student_affairs.users (username, email, full_name, password_hash, is_active)
+     VALUES ($1, $2, $3, $4, TRUE)
+     ON CONFLICT (username) DO UPDATE SET
+       password_hash = EXCLUDED.password_hash,
+       is_active = TRUE
+     RETURNING id`,
+    [username, `${username}@test.local`, `اختبار ${username}`, hash]
+  );
+  const userId = res.rows[0].id as string;
+  await query(
+    `INSERT INTO student_affairs.user_systems (user_id, system_id)
+     SELECT $1::uuid, s.id
+     FROM student_affairs.systems s
+     WHERE s.code = 'ACCOUNTS'
+     ON CONFLICT (user_id, system_id) DO NOTHING`,
+    [userId]
+  );
+  return userId;
 }
 
 async function resolveOpenChargeDate(): Promise<{
@@ -624,51 +663,17 @@ async function main() {
   );
 
   const verify = await withTransaction((c) => verifyStudentReceivables(c));
-  if (verify.ok) {
-    ok('30) verifyStudentReceivables متطابق');
+  if (verify.charge_subledger_match && verify.ok) {
+    ok('30) verifyStudentReceivables A↔B متطابق (ok + charge_subledger_match)');
+  } else if (verify.charge_subledger_match) {
+    ok(
+      `30) verify charge_subledger_match مع أيتام/فروق مبلّغة (ok=${verify.ok})`
+    );
   } else {
-    // فرق بيئي: حساب ذمم مرتبط بـ GL فيه حركات غير STUDENT_CHARGE (بيانات سابقة)
-    const pollution = await query(
-      `SELECT a.code, COALESCE(SUM(l.debit_amount - l.credit_amount), 0)::text AS net
-       FROM accounts.student_accounts sa
-       JOIN accounts.chart_of_accounts a ON a.id = sa.receivable_gl_account_id
-       JOIN accounts.journal_entry_lines l ON l.account_id = a.id
-       JOIN accounts.journal_entries e ON e.id = l.journal_entry_id AND e.status = 'POSTED'
-       WHERE COALESCE(e.source_type, '') NOT IN ('STUDENT_CHARGE', 'STUDENT_CHARGE_REVERSAL')
-       GROUP BY a.code
-       HAVING ABS(COALESCE(SUM(l.debit_amount - l.credit_amount), 0)) > 0.0005`
+    fail(
+      '30) verifyStudentReceivables',
+      `ok=${verify.ok} match=${verify.charge_subledger_match} diff=${verify.difference} A=${verify.charge_sourced_gl_balance} B=${verify.total_student_subledger}`
     );
-    const chargeOnly = await query(
-      `WITH gl_charge AS (
-         SELECT COALESCE(SUM(l.debit_amount - l.credit_amount), 0) AS net
-         FROM accounts.student_accounts sa
-         JOIN accounts.journal_entry_lines l ON l.account_id = sa.receivable_gl_account_id
-         JOIN accounts.journal_entries e ON e.id = l.journal_entry_id
-         WHERE e.status = 'POSTED'
-           AND e.source_type IN ('STUDENT_CHARGE', 'STUDENT_CHARGE_REVERSAL')
-       ),
-       sub AS (
-         SELECT COALESCE(SUM(debit_amount - credit_amount), 0) AS net
-         FROM accounts.student_ledger_entries
-         WHERE entry_type <> 'OPENING_REFERENCE'
-       )
-       SELECT g.net::text AS gl_charge, s.net::text AS sub
-       FROM gl_charge g, sub s`
-    );
-    const glC = normalizeMoneyInput(chargeOnly.rows[0]?.gl_charge ?? '0');
-    const subC = normalizeMoneyInput(chargeOnly.rows[0]?.sub ?? '0');
-    if (moneyEquals(glC, subC) && pollution.rows.length > 0) {
-      ok(
-        `30) verify 5.A متسق (GL مطالبات=${glC}=sub); فرق بيئي ${verify.difference} من ${pollution.rows
-          .map((r) => r.code)
-          .join(',')}`
-      );
-    } else {
-      fail(
-        '30) verifyStudentReceivables',
-        `diff=${verify.difference} gl=${verify.glBalance} sub=${verify.subledgerBalance} chargeGl=${glC}`
-      );
-    }
   }
 
   // ——— API 401 ———
@@ -698,7 +703,10 @@ async function main() {
       const content = fs.readFileSync(printPage, 'utf8');
       if (
         content.includes('print-container') &&
-        (content.includes('كشف حساب') || content.includes('كشف الحساب'))
+        (content.includes('كشف حساب') || content.includes('كشف الحساب')) &&
+        content.includes('charge_number') &&
+        content.includes('توقيع المحاسب') &&
+        content.includes('admission_type')
       ) {
         ok('32) صفحة طباعة كشف الطالب موجودة بعناصرها الأساسية');
       } else {
@@ -716,6 +724,214 @@ async function main() {
     );
     if (num.startsWith('STA')) ok(`33) allocateStudentAccountNumber → ${num}`);
     else fail('33) allocateStudentAccountNumber', num);
+  }
+
+  // ——— Softening / hardening extras ———
+
+  // 34) رفض GL نقد / صندوق كذمم
+  {
+    const cashBox = await query(
+      `SELECT account_id::text AS aid, closed_account_id::text AS closed_id, code
+       FROM accounts.cash_boxes
+       WHERE account_id IS NOT NULL
+       ORDER BY created_at
+       LIMIT 1`
+    );
+    if (cashBox.rows[0]?.aid) {
+      await expectHttp(
+        '34) رفض حساب صندوق نقدي كذمم (account_id)',
+        () =>
+          withTransaction((client) =>
+            assertValidReceivableGlAccount(client, cashBox.rows[0].aid as string)
+          ),
+        400
+      );
+    } else {
+      ok('34) تخطّي رفض صندوق — لا يوجد cash_box.account_id');
+    }
+
+    const closedCash = await query(
+      `SELECT closed_account_id::text AS cid, code
+       FROM accounts.cash_boxes
+       WHERE closed_account_id IS NOT NULL
+       LIMIT 1`
+    );
+    if (closedCash.rows[0]?.cid) {
+      await expectHttp(
+        '35) رفض closed_account_id لصندوق كذمم',
+        () =>
+          withTransaction((client) =>
+            assertValidReceivableGlAccount(
+              client,
+              closedCash.rows[0].cid as string
+            )
+          ),
+        400
+      );
+    } else {
+      // أنشئ ASSET مؤقت واربطه كـ closed_account_id إن أمكن على صندوق موجود
+      const anyBox = await query(
+        `SELECT id FROM accounts.cash_boxes ORDER BY created_at LIMIT 1`
+      );
+      if (anyBox.rows[0]) {
+        const tmpGl = await ensureTypedAccount(
+          `DEMO-CASH-CL-${suffix}`,
+          'نقد مغلق اختبار',
+          'ASSET',
+          userId
+        );
+        await query(
+          `UPDATE accounts.cash_boxes SET closed_account_id = $1::uuid
+           WHERE id = $2::uuid AND closed_account_id IS NULL`,
+          [tmpGl, anyBox.rows[0].id]
+        );
+        const linked = await query(
+          `SELECT closed_account_id::text AS cid FROM accounts.cash_boxes
+           WHERE id = $1::uuid`,
+          [anyBox.rows[0].id]
+        );
+        if (linked.rows[0]?.cid === tmpGl) {
+          await expectHttp(
+            '35) رفض closed_account_id لصندوق كذمم',
+            () =>
+              withTransaction((client) =>
+                assertValidReceivableGlAccount(client, tmpGl)
+              ),
+            400
+          );
+          await query(
+            `UPDATE accounts.cash_boxes SET closed_account_id = NULL WHERE id = $1::uuid`,
+            [anyBox.rows[0].id]
+          );
+        } else {
+          ok('35) تخطّي closed_account_id — لم يُربط مؤقتاً');
+        }
+      } else {
+        ok('35) تخطّي closed_account_id — لا صناديق');
+      }
+    }
+  }
+
+  // 36) رفض إنشاء حساب لطالب غير نشط
+  {
+    const inactiveId = await insertTestStudent(suffix, 'X', 'suspended');
+    await expectHttp(
+      '36) رفض حساب مالي لطالب غير نشط',
+      () =>
+        withTransaction((client) =>
+          createStudentAccount(client, {
+            student_id: inactiveId,
+            receivable_gl_account_id: recvGl,
+            created_by: userId,
+          })
+        ),
+      409
+    );
+  }
+
+  // 37–40) صلاحيات viewer / clerk / admin
+  {
+    const viewerId = await upsertCapabilityTestUser(`recv_viewer_${suffix}`);
+    const clerkId = await upsertCapabilityTestUser(`recv_clerk_${suffix}`);
+    await grantAccountsPlatformRole(viewerId, ACCOUNTS_VIEWER_ROLE_CODE);
+    await grantAccountsPlatformRole(clerkId, ACCOUNTS_CLERK_ROLE_CODE);
+
+    await expectHttp(
+      '37) viewer لا يعدّ prepare',
+      () =>
+        assertStudentReceivablesCapability(
+          null,
+          viewerId,
+          STUDENT_RECEIVABLES_CAPABILITIES.CHARGES_PREPARE
+        ),
+      403
+    );
+    await expectHttp(
+      '38) viewer لا يعدّ post/void/close',
+      async () => {
+        await assertStudentReceivablesCapability(
+          null,
+          viewerId,
+          STUDENT_RECEIVABLES_CAPABILITIES.CHARGES_POST
+        );
+      },
+      403
+    );
+    // void + close لنفس viewer
+    await expectHttp(
+      '38b) viewer لا يعدّ void',
+      () =>
+        assertStudentReceivablesCapability(
+          null,
+          viewerId,
+          STUDENT_RECEIVABLES_CAPABILITIES.CHARGES_VOID
+        ),
+      403
+    );
+    await expectHttp(
+      '38c) viewer لا يعدّ close',
+      () =>
+        assertStudentReceivablesCapability(
+          null,
+          viewerId,
+          STUDENT_RECEIVABLES_CAPABILITIES.CLOSE
+        ),
+      403
+    );
+
+    await expectHttp(
+      '39) clerk لا يغلق الحساب',
+      () =>
+        assertStudentReceivablesCapability(
+          null,
+          clerkId,
+          STUDENT_RECEIVABLES_CAPABILITIES.CLOSE
+        ),
+      403
+    );
+
+    if (
+      (await hasStudentReceivablesCapability(
+        null,
+        userId,
+        STUDENT_RECEIVABLES_CAPABILITIES.CLOSE
+      )) &&
+      (await hasStudentReceivablesCapability(
+        null,
+        clerkId,
+        STUDENT_RECEIVABLES_CAPABILITIES.CHARGES_POST
+      ))
+    ) {
+      ok('40) admin يملك close و clerk يملك post');
+    } else {
+      fail('40) admin/clerk القدرات');
+    }
+  }
+
+  // 41) حقول verify / منطق --strict
+  {
+    const v = await withTransaction((c) => verifyStudentReceivables(c));
+    const hasFields =
+      typeof v.charge_subledger_match === 'boolean' &&
+      typeof v.unexplained_gl_activity === 'string' &&
+      typeof v.total_gl_balance === 'string' &&
+      typeof v.total_student_subledger === 'string' &&
+      typeof v.charge_sourced_gl_balance === 'string' &&
+      v.orphans &&
+      Array.isArray(v.orphans.journal_without_ledger);
+    if (!hasFields) {
+      fail('41) حقول verifyStudentReceivables ناقصة', v);
+    } else if (v.charge_subledger_match && v.ok) {
+      const unexplained = hasUnexplainedGlActivity(v);
+      ok(
+        `41) verify --strict logic: match=true · unexplained=${unexplained ? v.unexplained_gl_activity : '0'}`
+      );
+    } else {
+      fail(
+        '41) verify A↔B يجب أن يتطابق بعد اختبارات 5.A',
+        `ok=${v.ok} match=${v.charge_subledger_match}`
+      );
+    }
   }
 
   console.log(

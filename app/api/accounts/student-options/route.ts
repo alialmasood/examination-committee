@@ -1,12 +1,18 @@
 import { NextRequest } from 'next/server';
 import {
+  AccountsHttpError,
   isAuthFailure,
+  jsonError,
   jsonSuccess,
   mapPgError,
   requireAccountsAccess,
 } from '@/src/lib/accounts/auth';
 import { listEligibleReceivableGlAccounts } from '@/src/lib/accounts/student-accounts';
 import { listEligibleRevenueGlAccounts } from '@/src/lib/accounts/student-fee-types';
+import {
+  STUDENT_RECEIVABLES_CAPABILITIES,
+  assertStudentReceivablesCapability,
+} from '@/src/lib/accounts/student-receivables-access';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
 import { query } from '@/src/lib/db';
 
@@ -15,6 +21,12 @@ export async function GET(request: NextRequest) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
+    await assertStudentReceivablesCapability(
+      null,
+      auth.user.id,
+      STUDENT_RECEIVABLES_CAPABILITIES.VIEW
+    );
+
     const sp = request.nextUrl.searchParams;
     const q = sp.get('q')?.trim() || '';
     const studentLimit = Math.min(50, Math.max(1, Number(sp.get('student_limit') || 20)));
@@ -40,7 +52,8 @@ export async function GET(request: NextRequest) {
                 academic_year,
                 department_id
          FROM student_affairs.students
-         WHERE ($1 = ''
+         WHERE LOWER(TRIM(status)) = 'active'
+           AND ($1 = ''
                 OR university_id ILIKE '%'||$1||'%'
                 OR COALESCE(student_number,'') ILIKE '%'||$1||'%'
                 OR COALESCE(full_name_ar,'') ILIKE '%'||$1||'%'
@@ -117,6 +130,9 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof AccountsHttpError) {
+      return jsonError(error.message, error.status);
+    }
     return mapPgError(error);
   }
 }
