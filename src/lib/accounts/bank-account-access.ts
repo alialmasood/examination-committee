@@ -160,6 +160,49 @@ export async function assertCanPostBankAccount(
   });
 }
 
+export async function assertCanReconcileBankAccount(
+  client: TxClient,
+  params: { bankAccountId: string; userId: string }
+): Promise<void> {
+  await assertBankAccountPermission(client, {
+    ...params,
+    flag: 'can_reconcile',
+    actionLabel: 'تسوية كشف الحساب المصرفي',
+  });
+}
+
+/** شرط قائمة: Admin أو can_reconcile (عمليات التسوية) — أو can_view للعرض فقط عبر sqlUserCanView */
+export function sqlUserCanReconcileBankAccount(
+  userIdParam: string,
+  bankAccountIdExpr: string
+): string {
+  return `(
+    ${sqlUserIsAccountsAdmin(userIdParam)}
+    OR EXISTS (
+      SELECT 1 FROM accounts.bank_account_users bau
+      WHERE bau.bank_account_id = ${bankAccountIdExpr}
+        AND bau.user_id = ${userIdParam}::uuid
+        AND bau.can_reconcile = TRUE
+    )
+  )`;
+}
+
+/** قائمة/تفاصيل كشوف: عرض إذا can_view أو can_reconcile أو Admin */
+export function sqlUserCanAccessBankStatementAccount(
+  userIdParam: string,
+  bankAccountIdExpr: string
+): string {
+  return `(
+    ${sqlUserIsAccountsAdmin(userIdParam)}
+    OR EXISTS (
+      SELECT 1 FROM accounts.bank_account_users bau
+      WHERE bau.bank_account_id = ${bankAccountIdExpr}
+        AND bau.user_id = ${userIdParam}::uuid
+        AND (bau.can_view = TRUE OR bau.can_reconcile = TRUE)
+    )
+  )`;
+}
+
 /** @deprecated استخدم hasAccountsAdminAccess من accounts-access */
 export {
   hasAccountsAdminAccess as isAccountsPrivilegedUser,

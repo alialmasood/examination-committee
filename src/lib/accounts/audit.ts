@@ -85,7 +85,23 @@ export type AuditAction =
   | 'bank_transfer.updated'
   | 'bank_transfer.posted'
   | 'bank_transfer.voided'
-  | 'bank_transfer.deleted';
+  | 'bank_transfer.deleted'
+  | 'bank_statement.created'
+  | 'bank_statement.updated'
+  | 'bank_statement.started'
+  | 'bank_statement.cancelled'
+  | 'bank_statement.reconciled'
+  | 'bank_statement.closed'
+  | 'bank_statement.reopened'
+  | 'bank_statement.csv_imported'
+  | 'bank_statement.line_added'
+  | 'bank_statement.line_updated'
+  | 'bank_statement.line_deleted'
+  | 'bank_statement.line_excluded'
+  | 'bank_statement.line_unexcluded'
+  | 'bank_reconciliation.matched'
+  | 'bank_reconciliation.match_removed'
+  | 'bank_reconciliation.adjustment_posted';
 
 export async function writeFinancialAudit(
   client: TxClient,

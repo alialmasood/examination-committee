@@ -17,6 +17,7 @@ export const ADVISORY_LOCK_NAMESPACE_ACCOUNTING_RESOURCE = 58002001;
 export type AccountingLockDomain =
   | 'BANK_ACCOUNT'
   | 'BANK_GL'
+  | 'BANK_STATEMENT'
   | 'CASHBOX'
   | 'CASH_SESSION'
   | 'DOCUMENT_SEQUENCE'
@@ -89,6 +90,9 @@ export function bankAccountLock(id: string): AccountingLockResource {
 }
 export function bankGlLock(glAccountId: string): AccountingLockResource {
   return { domain: 'BANK_GL', resourceId: glAccountId };
+}
+export function bankStatementLock(id: string): AccountingLockResource {
+  return { domain: 'BANK_STATEMENT', resourceId: id };
 }
 export function cashboxLock(id: string): AccountingLockResource {
   return { domain: 'CASHBOX', resourceId: id };
