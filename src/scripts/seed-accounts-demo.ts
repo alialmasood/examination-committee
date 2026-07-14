@@ -6,6 +6,7 @@
  * npm run seed:accounts-demo
  */
 import { closePool, query } from '../lib/db';
+import { grantAccountsAdminRole } from '../lib/accounts/accounts-access';
 import { getAccountBookBalance } from '../lib/accounts/account-book-balance';
 import {
   activateCashBox,
@@ -216,6 +217,7 @@ async function main() {
   }
   const userId = user.rows[0].id as string;
   console.log(`المستخدم: ${user.rows[0].username} (${userId})`);
+  await grantAccountsAdminRole(userId);
 
   // سنة ACTIVE موجودة أو إنشاء DEMO-FY
   let year = await query(

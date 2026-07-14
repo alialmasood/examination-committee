@@ -8,6 +8,7 @@ import {
   requireAccountsAccess,
 } from '@/src/lib/accounts/auth';
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
+import { assertCanViewCashTransferOrThrowNotFound } from '@/src/lib/accounts/cash-box-access';
 import {
   loadCashTransfer,
   serializeCashTransfer,
@@ -27,9 +28,15 @@ export async function GET(request: NextRequest, context: Ctx) {
 
   try {
     const { id } = await context.params;
-    const transfer = await withTransaction(async (client) =>
-      loadCashTransfer(client, id)
-    );
+    const transfer = await withTransaction(async (client) => {
+      const loaded = await loadCashTransfer(client, id);
+      await assertCanViewCashTransferOrThrowNotFound(client, {
+        sourceCashBoxId: loaded.source_cash_box_id,
+        destinationCashBoxId: loaded.destination_cash_box_id,
+        userId: auth.user.id,
+      });
+      return loaded;
+    });
 
     const meta = await query(
       `SELECT

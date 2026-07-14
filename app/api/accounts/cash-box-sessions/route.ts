@@ -16,6 +16,7 @@ import {
   acquireCashBoxesLock,
   withTransaction,
 } from '@/src/lib/accounts/with-transaction';
+import { sqlUserCanViewCashBox } from '@/src/lib/accounts/cash-box-access';
 import { query } from '@/src/lib/db';
 
 export async function GET(request: NextRequest) {
@@ -41,8 +42,9 @@ export async function GET(request: NextRequest) {
           OR s.id::text ILIKE '%'||$3||'%'
           OR COALESCE(u.username,'') ILIKE '%'||$3||'%'
         )
+        AND ${sqlUserCanViewCashBox('$4', 's.cash_box_id')}
     `;
-    const params = [cashBoxId || null, status || null, q];
+    const params = [cashBoxId || null, status || null, q, auth.user.id];
 
     const countRes = await query(
       `SELECT COUNT(*)::int AS total
@@ -56,10 +58,14 @@ export async function GET(request: NextRequest) {
     const statsRes = await query(
       `SELECT
          COUNT(*)::int AS total,
-         COUNT(*) FILTER (WHERE status = 'OPEN')::int AS open,
-         COUNT(*) FILTER (WHERE status = 'CLOSING')::int AS closing,
-         COUNT(*) FILTER (WHERE status = 'CLOSED')::int AS closed
-       FROM accounts.cash_box_sessions`
+         COUNT(*) FILTER (WHERE s.status = 'OPEN')::int AS open,
+         COUNT(*) FILTER (WHERE s.status = 'CLOSING')::int AS closing,
+         COUNT(*) FILTER (WHERE s.status = 'CLOSED')::int AS closed
+       FROM accounts.cash_box_sessions s
+       JOIN accounts.cash_boxes cb ON cb.id = s.cash_box_id
+       LEFT JOIN student_affairs.users u ON u.id = s.primary_custodian_user_id
+       ${where}`,
+      params
     );
 
     const listRes = await query(
@@ -77,7 +83,7 @@ export async function GET(request: NextRequest) {
        LEFT JOIN student_affairs.users u ON u.id = s.primary_custodian_user_id
        ${where}
        ORDER BY s.session_date DESC, s.opened_at DESC
-       LIMIT $4 OFFSET $5`,
+       LIMIT $5 OFFSET $6`,
       [...params, pageSize, offset]
     );
 

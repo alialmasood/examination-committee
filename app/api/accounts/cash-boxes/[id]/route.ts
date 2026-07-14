@@ -14,6 +14,7 @@ import {
   serializeCashBox,
   updateCashBox,
 } from '@/src/lib/accounts/cash-boxes';
+import { assertCanViewCashBoxOrThrowNotFound } from '@/src/lib/accounts/cash-box-access';
 import {
   getActivePrimaryCustodian,
   listCashBoxCustodians,
@@ -46,6 +47,13 @@ export async function GET(request: NextRequest, context: Ctx) {
     if (!detail.rows[0]) {
       return jsonError('الصندوق غير موجود', 404);
     }
+
+    await withTransaction(async (client) =>
+      assertCanViewCashBoxOrThrowNotFound(client, {
+        cashBoxId: id,
+        userId: auth.user.id,
+      })
+    );
 
     const row = detail.rows[0];
     const bookBalance = row.account_id

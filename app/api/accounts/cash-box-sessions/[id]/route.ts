@@ -14,6 +14,7 @@ import {
   serializeCashSession,
   listCashCountsForSession,
 } from '@/src/lib/accounts/cash-box-sessions';
+import { assertCanViewCashBoxOrThrowNotFound } from '@/src/lib/accounts/cash-box-access';
 import {
   calculateSessionExpectedBalance,
   listVouchersForSession,
@@ -34,7 +35,14 @@ export async function GET(request: NextRequest, context: Ctx) {
 
   try {
     const { id } = await context.params;
-    const session = await withTransaction(async (client) => loadCashSession(client, id));
+    const session = await withTransaction(async (client) => {
+      const loaded = await loadCashSession(client, id);
+      await assertCanViewCashBoxOrThrowNotFound(client, {
+        cashBoxId: loaded.cash_box_id,
+        userId: auth.user.id,
+      });
+      return loaded;
+    });
 
     const meta = await query(
       `SELECT cb.code AS cash_box_code, cb.name_ar AS cash_box_name_ar,

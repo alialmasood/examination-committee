@@ -17,6 +17,7 @@ import {
   acquireCashBoxesLock,
   withTransaction,
 } from '@/src/lib/accounts/with-transaction';
+import { sqlUserCanViewCashBox } from '@/src/lib/accounts/cash-box-access';
 import { query } from '@/src/lib/db';
 
 export async function GET(request: NextRequest) {
@@ -50,6 +51,7 @@ export async function GET(request: NextRequest) {
               AND pcx.user_id = $5::uuid
           )
         )
+        AND ${sqlUserCanViewCashBox('$6', 'cb.id')}
     `;
     const params = [
       q,
@@ -57,6 +59,7 @@ export async function GET(request: NextRequest) {
       boxType || null,
       accountId || null,
       custodianUserId || null,
+      auth.user.id,
     ];
 
     const countRes = await query(
@@ -67,11 +70,12 @@ export async function GET(request: NextRequest) {
     const statsRes = await query(
       `SELECT
          COUNT(*)::int AS total,
-         COUNT(*) FILTER (WHERE status = 'ACTIVE')::int AS active,
-         COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS draft,
-         COUNT(*) FILTER (WHERE status = 'SUSPENDED')::int AS suspended,
-         COUNT(*) FILTER (WHERE status = 'CLOSED')::int AS closed
-       FROM accounts.cash_boxes`
+         COUNT(*) FILTER (WHERE cb.status = 'ACTIVE')::int AS active,
+         COUNT(*) FILTER (WHERE cb.status = 'DRAFT')::int AS draft,
+         COUNT(*) FILTER (WHERE cb.status = 'SUSPENDED')::int AS suspended,
+         COUNT(*) FILTER (WHERE cb.status = 'CLOSED')::int AS closed
+       FROM accounts.cash_boxes cb ${where}`,
+      params
     );
 
     const listRes = await query(
@@ -89,7 +93,7 @@ export async function GET(request: NextRequest) {
        LEFT JOIN student_affairs.users u ON u.id = pc.user_id
        ${where}
        ORDER BY cb.code ASC
-       LIMIT $6 OFFSET $7`,
+       LIMIT $7 OFFSET $8`,
       [...params, pageSize, offset]
     );
 

@@ -12,6 +12,7 @@ import {
   createBankAccount,
   serializeBankAccount,
 } from '@/src/lib/accounts/bank-accounts';
+import { sqlUserCanViewBankAccount } from '@/src/lib/accounts/bank-account-access';
 import {
   acquireBanksLock,
   withTransaction,
@@ -44,8 +45,9 @@ export async function GET(request: NextRequest) {
         AND ($4::text IS NULL OR ba.status = $4)
         AND ($5::text IS NULL OR ba.currency_code = $5)
         AND ($6::text IS NULL OR ba.account_type = $6)
+        AND ${sqlUserCanViewBankAccount('$7', 'ba.id')}
     `;
-    const params = [q, bankId, branchId, status, currency, accountType];
+    const params = [q, bankId, branchId, status, currency, accountType, auth.user.id];
 
     const [countRes, statsRes, listRes] = await Promise.all([
       query(
@@ -55,13 +57,14 @@ export async function GET(request: NextRequest) {
       query(
         `SELECT
            COUNT(*)::int AS total,
-           COUNT(*) FILTER (WHERE status = 'ACTIVE')::int AS active,
-           COUNT(*) FILTER (WHERE status = 'SUSPENDED')::int AS suspended,
-           COUNT(*) FILTER (WHERE status = 'CLOSED')::int AS closed,
-           COUNT(*) FILTER (WHERE is_primary AND status <> 'CLOSED')::int AS primary,
-           COUNT(*) FILTER (WHERE currency_code = 'IQD' AND status <> 'CLOSED')::int AS iqd,
-           COUNT(*) FILTER (WHERE currency_code <> 'IQD' AND status <> 'CLOSED')::int AS other
-         FROM accounts.bank_accounts`
+           COUNT(*) FILTER (WHERE ba.status = 'ACTIVE')::int AS active,
+           COUNT(*) FILTER (WHERE ba.status = 'SUSPENDED')::int AS suspended,
+           COUNT(*) FILTER (WHERE ba.status = 'CLOSED')::int AS closed,
+           COUNT(*) FILTER (WHERE ba.is_primary AND ba.status <> 'CLOSED')::int AS primary,
+           COUNT(*) FILTER (WHERE ba.currency_code = 'IQD' AND ba.status <> 'CLOSED')::int AS iqd,
+           COUNT(*) FILTER (WHERE ba.currency_code <> 'IQD' AND ba.status <> 'CLOSED')::int AS other
+         FROM accounts.bank_accounts ba ${where}`,
+        params
       ),
       query(
         `SELECT ba.*,
@@ -77,7 +80,7 @@ export async function GET(request: NextRequest) {
          LEFT JOIN accounts.chart_of_accounts a ON a.id = ba.gl_account_id
          ${where}
          ORDER BY ba.code ASC
-         LIMIT $7 OFFSET $8`,
+         LIMIT $8 OFFSET $9`,
         [...params, pageSize, offset]
       ),
     ]);

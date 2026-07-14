@@ -1,13 +1,12 @@
 /**
  * صلاحيات العمليات على الحساب البنكي عبر bank_account_users (4.B).
- *
- * تجاوز الإدارة:
- * لا يوجد حالياً Role رسمي خاص بـ «Accounts Admin» مربوط بنظام ACCOUNTS
- * (platform.user_system_roles فارغ لـ ACCOUNTS؛ أدوار student_affairs عامة فقط).
- * لذلك التجاوز مؤقت ومركزي هنا فقط عبر مطابقة دقيقة لـ username من قاعدة البيانات.
- * يجب استبداله لاحقاً بصلاحية/دور رسمي دون الاعتماد على أسماء المستخدمين.
+ * تجاوز الإدارة عبر hasAccountsAdminAccess (دور accounts_admin) — لا تعتمد على username كأساس دائم.
  */
 import { AccountsHttpError } from './auth';
+import {
+  hasAccountsAdminAccess,
+  sqlUserIsAccountsAdmin,
+} from './accounts-access';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
 
@@ -18,36 +17,16 @@ export type BankAccountPermissionFlag =
   | 'can_approve'
   | 'can_reconcile';
 
-/** قائمة مؤقتة — مطابقة دقيقة بعد trim + lower للحقل المخزّن فقط */
-const PRIVILEGED_ACCOUNTS_USERNAMES = new Set([
-  'accounts',
-  'admin',
-  'superadmin',
-  'super_admin',
-]);
-
-/** لقوائم SQL — مصدر واحد مع دالة المطابقة أعلاه (حل مؤقت) */
-export function privilegedAccountsUsernamesSqlInList(): string {
-  return [...PRIVILEGED_ACCOUNTS_USERNAMES]
-    .map((u) => `'${u.replace(/'/g, "''")}'`)
-    .join(',');
-}
-
 /**
- * شرط القائمة: مستخدم privileged أو can_view على حساب بنكي.
+ * شرط القائمة: Accounts Admin أو can_view على حساب بنكي.
  * userIdParam مثل `$11` — bankAccountIdExpr مثل `v.bank_account_id`.
  */
 export function sqlUserCanViewBankAccount(
   userIdParam: string,
   bankAccountIdExpr: string
 ): string {
-  const names = privilegedAccountsUsernamesSqlInList();
   return `(
-    EXISTS (
-      SELECT 1 FROM student_affairs.users u
-      WHERE u.id = ${userIdParam}::uuid AND u.is_active = TRUE
-        AND LOWER(TRIM(u.username)) IN (${names})
-    )
+    ${sqlUserIsAccountsAdmin(userIdParam)}
     OR EXISTS (
       SELECT 1 FROM accounts.bank_account_users bau
       WHERE bau.bank_account_id = ${bankAccountIdExpr}
@@ -58,20 +37,15 @@ export function sqlUserCanViewBankAccount(
 }
 
 /**
- * شرط قائمة التحويلات: privileged أو can_view على المصدر والوجهة معاً.
+ * شرط قائمة التحويلات: Admin أو can_view على المصدر والوجهة معاً.
  */
 export function sqlUserCanViewBankTransferPair(
   userIdParam: string,
   sourceExpr: string,
   destinationExpr: string
 ): string {
-  const names = privilegedAccountsUsernamesSqlInList();
   return `(
-    EXISTS (
-      SELECT 1 FROM student_affairs.users u
-      WHERE u.id = ${userIdParam}::uuid AND u.is_active = TRUE
-        AND LOWER(TRIM(u.username)) IN (${names})
-    )
+    ${sqlUserIsAccountsAdmin(userIdParam)}
     OR (
       EXISTS (
         SELECT 1 FROM accounts.bank_account_users bau_s
@@ -87,32 +61,6 @@ export function sqlUserCanViewBankTransferPair(
       )
     )
   )`;
-}
-
-/** مستخدمون نظاميون يُعتبرون حسابات Admin ويتجاوزون تخصيص البنك (حل مؤقت). */
-export function isPrivilegedAccountsUsername(
-  username: string | null | undefined
-): boolean {
-  const u = String(username ?? '').trim().toLowerCase();
-  if (!u) return false;
-  return PRIVILEGED_ACCOUNTS_USERNAMES.has(u);
-}
-
-/**
- * يقرأ username من DB بالمعرّف فقط — لا يعتمد على JWT display name أو قيمة عميل.
- */
-export async function isAccountsPrivilegedUser(
-  client: TxClient,
-  userId: string
-): Promise<boolean> {
-  const r = await txQuery<{ username: string }>(
-    client,
-    `SELECT username FROM student_affairs.users
-     WHERE id = $1::uuid AND is_active = TRUE`,
-    [userId]
-  );
-  if (!r.rows[0]) return false;
-  return isPrivilegedAccountsUsername(r.rows[0].username);
 }
 
 async function loadAssignmentFlag(
@@ -149,7 +97,7 @@ async function assertBankAccountPermission(
     actionLabel: string;
   }
 ): Promise<void> {
-  if (await isAccountsPrivilegedUser(client, params.userId)) return;
+  if (await hasAccountsAdminAccess(client, params.userId)) return;
 
   const allowed = await loadAssignmentFlag(
     client,
@@ -176,6 +124,20 @@ export async function assertCanViewBankAccount(
   });
 }
 
+export async function assertCanViewBankAccountOrThrowNotFound(
+  client: TxClient,
+  params: { bankAccountId: string; userId: string }
+): Promise<void> {
+  try {
+    await assertCanViewBankAccount(client, params);
+  } catch (e) {
+    if (e instanceof AccountsHttpError && e.status === 403) {
+      throw new AccountsHttpError('الحساب المصرفي غير موجود', 404);
+    }
+    throw e;
+  }
+}
+
 export async function assertCanPrepareBankAccount(
   client: TxClient,
   params: { bankAccountId: string; userId: string }
@@ -197,3 +159,9 @@ export async function assertCanPostBankAccount(
     actionLabel: 'ترحيل/إلغاء مرحّل',
   });
 }
+
+/** @deprecated استخدم hasAccountsAdminAccess من accounts-access */
+export {
+  hasAccountsAdminAccess as isAccountsPrivilegedUser,
+  isPrivilegedAccountsUsername,
+} from './accounts-access';

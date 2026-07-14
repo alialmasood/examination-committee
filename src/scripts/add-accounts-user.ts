@@ -1,4 +1,5 @@
 import bcrypt from 'bcrypt';
+import { grantAccountsAdminRole } from '../lib/accounts/accounts-access';
 import { query, closePool } from '../lib/db';
 
 async function ensureTables() {
@@ -87,6 +88,9 @@ async function main() {
 
     console.log('🔗 ربط المستخدم بالنظام ...');
     await linkUserSystem(user.id, system.id);
+
+    console.log('🔐 منح دور accounts_admin ...');
+    await grantAccountsAdminRole(user.id);
 
     console.log('🎉 تم إنجاز المهمة بنجاح!');
     console.log(`📋 المستخدم: ${user.username} — كلمة المرور: accounts123 — النظام: ${system.code} — المسار: http://localhost:3000/accounts`);

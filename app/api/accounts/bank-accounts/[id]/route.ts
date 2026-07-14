@@ -8,6 +8,7 @@ import {
   requireAccountsAccess,
 } from '@/src/lib/accounts/auth';
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
+import { assertCanViewBankAccountOrThrowNotFound } from '@/src/lib/accounts/bank-account-access';
 import {
   listBankAccountUsers,
   loadBankAccount,
@@ -48,6 +49,13 @@ export async function GET(request: NextRequest, context: Ctx) {
     if (!detail.rows[0]) {
       return jsonError('الحساب المصرفي غير موجود', 404);
     }
+
+    await withTransaction(async (client) =>
+      assertCanViewBankAccountOrThrowNotFound(client, {
+        bankAccountId: id,
+        userId: auth.user.id,
+      })
+    );
 
     const row = detail.rows[0];
     const users = await withTransaction(async (client) => {

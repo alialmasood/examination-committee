@@ -16,6 +16,7 @@ import {
   acquireCashBoxesLock,
   withTransaction,
 } from '@/src/lib/accounts/with-transaction';
+import { sqlUserCanViewCashBox } from '@/src/lib/accounts/cash-box-access';
 import { query } from '@/src/lib/db';
 
 export async function GET(request: NextRequest) {
@@ -45,6 +46,7 @@ export async function GET(request: NextRequest) {
         AND ($5::uuid IS NULL OR v.cash_box_session_id = $5::uuid)
         AND ($6::date IS NULL OR v.voucher_date >= $6::date)
         AND ($7::date IS NULL OR v.voucher_date <= $7::date)
+        AND ${sqlUserCanViewCashBox('$8', 'v.cash_box_id')}
     `;
     const params = [
       q,
@@ -54,6 +56,7 @@ export async function GET(request: NextRequest) {
       sessionId || null,
       dateFrom || null,
       dateTo || null,
+      auth.user.id,
     ];
 
     const countRes = await query(
@@ -88,7 +91,7 @@ export async function GET(request: NextRequest) {
        LEFT JOIN student_affairs.users u ON u.id = v.created_by
        ${where}
        ORDER BY v.voucher_date DESC, v.created_at DESC
-       LIMIT $8 OFFSET $9`,
+       LIMIT $9 OFFSET $10`,
       [...params, pageSize, offset]
     );
 

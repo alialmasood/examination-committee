@@ -8,6 +8,7 @@ import {
   requireAccountsAccess,
 } from '@/src/lib/accounts/auth';
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
+import { assertCanViewCashBoxOrThrowNotFound } from '@/src/lib/accounts/cash-box-access';
 import {
   deleteDraftCashVoucher,
   loadCashVoucher,
@@ -28,9 +29,14 @@ export async function GET(request: NextRequest, context: Ctx) {
 
   try {
     const { id } = await context.params;
-    const voucher = await withTransaction(async (client) =>
-      loadCashVoucher(client, id)
-    );
+    const voucher = await withTransaction(async (client) => {
+      const loaded = await loadCashVoucher(client, id);
+      await assertCanViewCashBoxOrThrowNotFound(client, {
+        cashBoxId: loaded.cash_box_id,
+        userId: auth.user.id,
+      });
+      return loaded;
+    });
 
     const meta = await query(
       `SELECT cb.code AS cash_box_code, cb.name_ar AS cash_box_name_ar,
