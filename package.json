@@ -35,6 +35,7 @@
     "test:accounts-access": "tsx src/scripts/test-accounts-access.ts",
     "test:accounting-locks": "tsx src/scripts/test-accounting-resource-locks.ts",
     "test:student-receivables": "tsx src/scripts/test-student-receivables.ts",
+    "test:student-billing-collections": "tsx src/scripts/test-student-billing-collections.ts",
     "accounts:rebuild-balances": "tsx src/scripts/rebuild-gl-balances.ts",
     "accounts:verify-balances": "tsx src/scripts/verify-gl-balances.ts",
     "accounts:verify-student-receivables": "tsx src/scripts/verify-student-receivables.ts",

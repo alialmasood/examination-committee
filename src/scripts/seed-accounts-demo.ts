@@ -51,6 +51,7 @@ import {
 } from '../lib/accounts/cash-settings';
 import { createDefaultSequencesForYear, pgDateOnly } from '../lib/accounts/document-sequences';
 import { seedBankReconciliationDemo } from './seed-accounts-reconciliation-demo';
+import { seedStudentBillingDemo } from './seed-accounts-student-billing-demo';
 import { seedStudentReceivablesDemo } from './seed-accounts-student-receivables-demo';
 import {
   allocateJournalEntryNumber,
@@ -1474,6 +1475,17 @@ async function main() {
     });
   } catch (e) {
     console.log('⚠ 5.A seed:', e instanceof Error ? e.message : e);
+  }
+
+  try {
+    await seedStudentBillingDemo({
+      userId,
+      entryDate,
+      yearId,
+      periodId,
+    });
+  } catch (e) {
+    console.log('⚠ 5.B seed:', e instanceof Error ? e.message : e);
   }
 
   console.log('\n——— ملخص العرض ———');
