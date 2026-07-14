@@ -39,16 +39,17 @@ import { assertFiscalContextForEntry } from './journal-entries';
 import {
   moneyEquals,
   moneyIsPositive,
+  moneyIsZero,
   moneyToMillis,
   moneyToMillisSigned,
   millisToMoney,
   normalizeMoneyInput,
   sumMoney,
 } from './money';
+import { deriveInstallmentStatus } from './student-installment-status';
 import {
   loadStudentInstallment,
   refreshBillingPlanCompletion,
-  type StudentInstallmentStatus,
 } from './student-billing-plans';
 import {
   applyChargeAllocation,
@@ -186,21 +187,21 @@ export function serializeStudentCollectionAllocation(
   };
 }
 
-export function deriveInstallmentStatus(
-  paid: string,
-  amount: string,
-  dueDate: string,
-  asOfDate?: string
-): StudentInstallmentStatus {
-  const paidNorm = normalizeMoneyInput(paid);
-  const amountNorm = normalizeMoneyInput(amount);
-  if (moneyEquals(paidNorm, amountNorm)) return 'PAID';
-  if (moneyIsPositive(paidNorm) && moneyToMillis(paidNorm) < moneyToMillis(amountNorm)) {
-    return 'PARTIALLY_PAID';
+async function assertCollectionAmountWithinBalance(
+  client: TxClient,
+  studentAccountId: string,
+  amount: string
+): Promise<void> {
+  const balance = await getStudentAccountReceivableBalance(
+    client,
+    studentAccountId
+  );
+  if (
+    moneyToMillisSigned(amount) > moneyToMillisSigned(balance) ||
+    moneyToMillisSigned(balance) <= BigInt(0)
+  ) {
+    throw new AccountsHttpError(OVERPAYMENT_MSG, 409);
   }
-  const today = asOfDate ?? pgDateOnly(new Date());
-  if (dueDate <= today) return 'DUE';
-  return 'PENDING';
 }
 
 export async function allocateStudentCollectionNumber(
@@ -339,6 +340,15 @@ async function assertAllocationsAgainstCharges(
     }
     const outstanding = normalizeMoneyInput(charge.outstanding_amount);
     if (
+      charge.status === 'SETTLED' &&
+      moneyIsZero(outstanding)
+    ) {
+      throw new AccountsHttpError(
+        'لا يمكن تخصيص تحصيل على مطالبة مسددة بالكامل',
+        409
+      );
+    }
+    if (
       moneyToMillis(d.allocated_amount) > moneyToMillis(outstanding)
     ) {
       throw new AccountsHttpError(
@@ -352,6 +362,12 @@ async function assertAllocationsAgainstCharges(
         d.student_installment_id,
         false
       );
+      if (inst.status === 'CANCELLED') {
+        throw new AccountsHttpError(
+          'لا يمكن تخصيص تحصيل على قسط ملغى',
+          409
+        );
+      }
       if (inst.student_charge_id !== charge.id) {
         throw new AccountsHttpError(
           'القسط لا يرتبط بالمطالبة المحددة',
@@ -551,6 +567,9 @@ export async function createStudentCollection(
   if (!accountId) throw new AccountsHttpError('الحساب المالي للطالب مطلوب', 400);
 
   const account = await loadStudentAccount(client, accountId, true);
+  if (account.status === 'CLOSED') {
+    throw new AccountsHttpError('لا يمكن إنشاء تحصيل على حساب مغلق', 409);
+  }
   const currency = assertIqdOnly(input.currency_code ?? account.currency_code);
   if (currency !== account.currency_code) {
     throw new AccountsHttpError('عملة التحصيل لا تطابق حساب الطالب', 409);
@@ -565,6 +584,8 @@ export async function createStudentCollection(
   if (!moneyIsPositive(amount)) {
     throw new AccountsHttpError('مبلغ التحصيل يجب أن يكون أكبر من صفر', 400);
   }
+
+  await assertCollectionAmountWithinBalance(client, account.id, amount);
 
   const paymentMethod = String(input.payment_method ?? '').toUpperCase();
   if (paymentMethod !== 'CASH' && paymentMethod !== 'BANK') {
@@ -747,6 +768,11 @@ export async function updateStudentCollection(
     if (!moneyIsPositive(amount)) {
       throw new AccountsHttpError('مبلغ التحصيل يجب أن يكون أكبر من صفر', 400);
     }
+    await assertCollectionAmountWithinBalance(
+      client,
+      collection.student_account_id,
+      amount
+    );
   }
 
   const existingAllocations = await listCollectionAllocations(client, collection.id);

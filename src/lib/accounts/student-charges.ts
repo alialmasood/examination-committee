@@ -979,6 +979,25 @@ export async function voidStudentCharge(
     );
   }
 
+  if (charge.status === 'DRAFT' || charge.status === 'POSTED') {
+    const activeAlloc = await txQuery(
+      client,
+      `SELECT 1
+       FROM accounts.student_collection_allocations sca
+       JOIN accounts.student_collections sc ON sc.id = sca.collection_id
+       WHERE sca.student_charge_id = $1::uuid
+         AND sc.status IN ('DRAFT', 'POSTED')
+       LIMIT 1`,
+      [charge.id]
+    );
+    if (activeAlloc.rows[0]) {
+      throw new AccountsHttpError(
+        'لا يمكن إلغاء مطالبة لوجود تخصيصات تحصيل نشطة عليها',
+        409
+      );
+    }
+  }
+
   const accountPeek = await loadStudentAccount(
     client,
     charge.student_account_id,

@@ -426,6 +426,7 @@ export type CollectionOptions = {
 };
 
 export const BILLING_PLAN_API = '/api/accounts/student-billing-plans';
+export const INSTALLMENTS_API = '/api/accounts/student-installments';
 export const COLLECTIONS_API = '/api/accounts/student-collections';
 export const COLLECTION_OPTIONS_API = '/api/accounts/student-collections/options';
 

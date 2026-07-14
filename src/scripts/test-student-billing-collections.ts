@@ -26,9 +26,13 @@ import {
 } from '../lib/accounts/money';
 import {
   activateStudentBillingPlan,
+  cancelStudentBillingPlan,
   createStudentBillingPlan,
   generateEqualInstallments,
   getStudentBillingPlan,
+  listStudentInstallments,
+  loadStudentInstallment,
+  serializeStudentInstallment,
   updateStudentBillingPlan,
 } from '../lib/accounts/student-billing-plans';
 import {
@@ -44,6 +48,14 @@ import {
   replaceAllocations,
   voidStudentCollection,
 } from '../lib/accounts/student-collections';
+import {
+  createStudentCharge,
+  postStudentCharge,
+} from '../lib/accounts/student-charges';
+import {
+  createCashVoucher,
+  postCashVoucher,
+} from '../lib/accounts/cash-vouchers';
 import { createStudentFeeType } from '../lib/accounts/student-fee-types';
 import {
   ACCOUNTS_CLERK_ROLE_CODE,
@@ -1186,6 +1198,675 @@ async function main() {
       ok(`47) getStudentBillingPlan · ${detail.plan.plan_number}`);
     } else {
       fail('47) getStudentBillingPlan', detail.plan.status);
+    }
+  }
+
+  // --- اختبارات تصلّب 5.B (سياسة الإلغاء والسلامة) ---
+  const hardStudentId = await insertTestStudent(suffix, 'HARD');
+  const hardAccount = await withTransaction((client) =>
+    createStudentAccount(client, {
+      student_id: hardStudentId,
+      receivable_gl_account_id: recvGl,
+      created_by: userId,
+    })
+  );
+
+  const draftForCancel = await withTransaction((client) =>
+    createStudentBillingPlan(client, {
+      student_account_id: hardAccount.id,
+      fee_type_id: feeType.id,
+      total_amount: '30000',
+      installment_count: 1,
+      first_due_date: fiscal.chargeDate,
+      description: `إلغاء مسودة ${suffix}`,
+      created_by: userId,
+    })
+  );
+  const cancelledDraft = await withTransaction((client) =>
+    cancelStudentBillingPlan(client, {
+      id: draftForCancel.plan.id,
+      userId,
+      version: draftForCancel.plan.version,
+      updated_at: draftForCancel.plan.updated_at,
+      reason: 'اختبار مسودة',
+    })
+  );
+  if (cancelledDraft.status === 'CANCELLED') {
+    ok('50) إلغاء خطة DRAFT');
+  } else {
+    fail('50) إلغاء DRAFT', cancelledDraft.status);
+  }
+
+  const activeCancelPlan = await withTransaction((client) =>
+    createStudentBillingPlan(client, {
+      student_account_id: hardAccount.id,
+      fee_type_id: feeType.id,
+      total_amount: '60000',
+      installment_count: 2,
+      first_due_date: fiscal.chargeDate,
+      description: `إلغاء فعّال ${suffix}`,
+      created_by: userId,
+    })
+  );
+  const activeCancelActivated = await withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    return activateStudentBillingPlan(client, {
+      id: activeCancelPlan.plan.id,
+      userId,
+      version: activeCancelPlan.plan.version,
+      updated_at: activeCancelPlan.plan.updated_at,
+      activation_date: fiscal.chargeDate,
+    });
+  });
+  const cancelledActive = await withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    return cancelStudentBillingPlan(client, {
+      id: activeCancelActivated.plan.id,
+      userId,
+      version: activeCancelActivated.plan.version,
+      updated_at: activeCancelActivated.plan.updated_at,
+      reason: 'إلغاء فعّال بلا تحصيلات',
+    });
+  });
+  const voidedCharges = await query(
+    `SELECT COUNT(*)::int AS n FROM accounts.student_charges
+     WHERE student_account_id = $1::uuid
+       AND id = ANY($2::uuid[])
+       AND status = 'VOID'`,
+    [
+      hardAccount.id,
+      activeCancelActivated.installments
+        .map((i) => i.student_charge_id)
+        .filter((id): id is string => Boolean(id)),
+    ]
+  );
+  if (
+    cancelledActive.status === 'CANCELLED' &&
+    voidedCharges.rows[0]?.n === activeCancelActivated.installments.length
+  ) {
+    ok('51) إلغاء ACTIVE بلا تحصيلات → VOID للمطالبات');
+  } else {
+    fail('51) إلغاء ACTIVE', {
+      plan: cancelledActive.status,
+      voided: voidedCharges.rows[0]?.n,
+    });
+  }
+
+  const postedBlockPlan = await withTransaction((client) =>
+    createStudentBillingPlan(client, {
+      student_account_id: hardAccount.id,
+      fee_type_id: feeType.id,
+      total_amount: '40000',
+      installment_count: 1,
+      first_due_date: fiscal.chargeDate,
+      description: `حاجز POSTED ${suffix}`,
+      created_by: userId,
+    })
+  );
+  const postedBlockActive = await withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    return activateStudentBillingPlan(client, {
+      id: postedBlockPlan.plan.id,
+      userId,
+      version: postedBlockPlan.plan.version,
+      updated_at: postedBlockPlan.plan.updated_at,
+      activation_date: fiscal.chargeDate,
+    });
+  });
+  const pbInst = postedBlockActive.installments[0];
+  const pbPostedCol = await withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    const { collection } = await createStudentCollection(client, {
+      student_account_id: hardAccount.id,
+      collection_date: fiscal.chargeDate,
+      amount: '10000',
+      payment_method: 'CASH',
+      cash_box_id: cashCtx.boxId,
+      cash_box_session_id: cashCtx.sessionId,
+      description: `حاجز posted ${suffix}`,
+      allocations: [
+        {
+          student_charge_id: pbInst.student_charge_id!,
+          student_installment_id: pbInst.id,
+          allocated_amount: '10000',
+        },
+      ],
+      created_by: userId,
+    });
+    await postStudentCollection(client, {
+      id: collection.id,
+      userId,
+      version: collection.version,
+      updated_at: collection.updated_at,
+    });
+    return collection;
+  });
+  void pbPostedCol;
+  await expectHttp(
+    '52) رفض إلغاء ACTIVE مع تحصيل POSTED',
+    () =>
+      withTransaction((client) =>
+        cancelStudentBillingPlan(client, {
+          id: postedBlockActive.plan.id,
+          userId,
+          version: postedBlockActive.plan.version,
+          updated_at: postedBlockActive.plan.updated_at,
+        })
+      ),
+    409
+  );
+
+  const draftBlockPlan = await withTransaction((client) =>
+    createStudentBillingPlan(client, {
+      student_account_id: hardAccount.id,
+      fee_type_id: feeType.id,
+      total_amount: '50000',
+      installment_count: 1,
+      first_due_date: fiscal.chargeDate,
+      description: `حاجز DRAFT ${suffix}`,
+      created_by: userId,
+    })
+  );
+  const draftBlockActive = await withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    return activateStudentBillingPlan(client, {
+      id: draftBlockPlan.plan.id,
+      userId,
+      version: draftBlockPlan.plan.version,
+      updated_at: draftBlockPlan.plan.updated_at,
+      activation_date: fiscal.chargeDate,
+    });
+  });
+  const dbInst = draftBlockActive.installments[0];
+  await withTransaction(async (client) => {
+    await createStudentCollection(client, {
+      student_account_id: hardAccount.id,
+      collection_date: fiscal.chargeDate,
+      amount: '5000',
+      payment_method: 'CASH',
+      cash_box_id: cashCtx.boxId,
+      cash_box_session_id: cashCtx.sessionId,
+      description: `حاجز draft ${suffix}`,
+      allocations: [
+        {
+          student_charge_id: dbInst.student_charge_id!,
+          student_installment_id: dbInst.id,
+          allocated_amount: '5000',
+        },
+      ],
+      created_by: userId,
+    });
+  });
+  await expectHttp(
+    '53) رفض إلغاء ACTIVE مع تحصيل DRAFT',
+    () =>
+      withTransaction((client) =>
+        cancelStudentBillingPlan(client, {
+          id: draftBlockActive.plan.id,
+          userId,
+          version: draftBlockActive.plan.version,
+          updated_at: draftBlockActive.plan.updated_at,
+        })
+      ),
+    409
+  );
+
+  const completePlan = await withTransaction((client) =>
+    createStudentBillingPlan(client, {
+      student_account_id: hardAccount.id,
+      fee_type_id: feeType.id,
+      total_amount: inst1.amount,
+      installment_count: 1,
+      first_due_date: fiscal.chargeDate,
+      description: `مكتملة ${suffix}`,
+      created_by: userId,
+    })
+  );
+  const completeActive = await withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    return activateStudentBillingPlan(client, {
+      id: completePlan.plan.id,
+      userId,
+      version: completePlan.plan.version,
+      updated_at: completePlan.plan.updated_at,
+      activation_date: fiscal.chargeDate,
+    });
+  });
+  const cInst = completeActive.installments[0];
+  await withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    const { collection } = await createStudentCollection(client, {
+      student_account_id: hardAccount.id,
+      collection_date: fiscal.chargeDate,
+      amount: cInst.amount,
+      payment_method: 'CASH',
+      cash_box_id: cashCtx.boxId,
+      cash_box_session_id: cashCtx.sessionId,
+      description: `إكمال خطة ${suffix}`,
+      allocations: [
+        {
+          student_charge_id: cInst.student_charge_id!,
+          student_installment_id: cInst.id,
+          allocated_amount: cInst.amount,
+        },
+      ],
+      created_by: userId,
+    });
+    await postStudentCollection(client, {
+      id: collection.id,
+      userId,
+      version: collection.version,
+      updated_at: collection.updated_at,
+    });
+  });
+  const completedPeek = await withTransaction((client) =>
+    getStudentBillingPlan(client, completeActive.plan.id)
+  );
+  if (completedPeek.plan.status !== 'COMPLETED') {
+    fail('54) الخطة لم تُكمل قبل اختبار الإلغاء', completedPeek.plan.status);
+  } else {
+    await expectHttp(
+      '54) رفض إلغاء خطة COMPLETED',
+      () =>
+        withTransaction((client) =>
+          cancelStudentBillingPlan(client, {
+            id: completeActive.plan.id,
+            userId,
+            version: completedPeek.plan.version,
+            updated_at: completedPeek.plan.updated_at,
+          })
+        ),
+      409
+    );
+  }
+
+  {
+    const rollRef = `TST-ROLL-${suffix}`;
+    const rollPlan = await withTransaction((client) =>
+      createStudentBillingPlan(client, {
+        student_account_id: hardAccount.id,
+        fee_type_id: feeType.id,
+        total_amount: '90000',
+        installment_count: 3,
+        first_due_date: fiscal.chargeDate,
+        description: `rollback ${suffix}`,
+        external_reference: rollRef,
+        created_by: userId,
+      })
+    );
+    await withTransaction(async (client) => {
+      await acquireJournalEntriesLock(client);
+      const blocking = await createStudentCharge(client, {
+        student_account_id: hardAccount.id,
+        fee_type_id: feeType.id,
+        charge_date: fiscal.chargeDate,
+        original_amount: '30000',
+        fiscal_year_id: fiscal.yearId,
+        description: `حاجز تفعيل ${suffix}`,
+        external_reference: `${rollRef}-3`,
+        created_by: userId,
+      });
+      await postStudentCharge(client, {
+        id: blocking.id,
+        userId,
+        version: blocking.version,
+        updated_at: blocking.updated_at,
+      });
+    });
+    let activateRollFailed = false;
+    try {
+      await withTransaction(async (client) => {
+        await acquireJournalEntriesLock(client);
+        return activateStudentBillingPlan(client, {
+          id: rollPlan.plan.id,
+          userId,
+          version: rollPlan.plan.version,
+          updated_at: rollPlan.plan.updated_at,
+          activation_date: fiscal.chargeDate,
+        });
+      });
+    } catch {
+      activateRollFailed = true;
+    }
+    if (activateRollFailed) {
+      ok('55) تراجع تفعيل عند تعارض external_reference');
+    } else {
+      fail('55) كان يجب أن يفشل التفعيل');
+    }
+    const rollAfter = await withTransaction((client) =>
+      getStudentBillingPlan(client, rollPlan.plan.id)
+    );
+    const linked = rollAfter.installments.filter((i) => i.student_charge_id);
+    const ledgerForPlanCharges = await query(
+      `SELECT COUNT(*)::int AS n
+       FROM accounts.student_ledger_entries sle
+       JOIN accounts.student_charges sc ON sc.id = sle.source_id
+       JOIN accounts.student_installments si ON si.student_charge_id = sc.id
+       WHERE si.billing_plan_id = $1::uuid
+         AND sle.source_type = 'STUDENT_CHARGE'
+         AND si.installment_number IN (1, 2)`,
+      [rollPlan.plan.id]
+    );
+    if (
+      rollAfter.plan.status === 'DRAFT' &&
+      linked.length === 0 &&
+      (ledgerForPlanCharges.rows[0]?.n ?? 0) === 0
+    ) {
+      ok('55b) الخطة ما زالت DRAFT بلا مطالبات للأقساط 1-2');
+    } else {
+      fail('55b) تراجع التفعيل', {
+        status: rollAfter.plan.status,
+        linked: linked.length,
+        ledger: ledgerForPlanCharges.rows[0]?.n,
+      });
+    }
+  }
+
+  await expectHttp(
+    '56) رفض createCollection DRAFT بمبلغ > الرصيد',
+    () =>
+      withTransaction((client) =>
+        createStudentCollection(client, {
+          student_account_id: account.id,
+          collection_date: fiscal.chargeDate,
+          amount: '999999999',
+          payment_method: 'CASH',
+          cash_box_id: cashCtx.boxId,
+          cash_box_session_id: cashCtx.sessionId,
+          description: 'overpayment draft بدون تخصيص',
+          created_by: userId,
+        })
+      ),
+    409,
+    'لا يمكن تسجيل مبلغ تحصيل أكبر'
+  );
+
+  {
+    const clerkId = await upsertCapabilityTestUser(`bill_clerk_void_${suffix}`);
+    await grantAccountsPlatformRole(clerkId, ACCOUNTS_CLERK_ROLE_CODE);
+    await expectHttp(
+      '57) clerk 403 على void POSTED',
+      () =>
+        assertStudentReceivablesCapability(
+          null,
+          clerkId,
+          STUDENT_RECEIVABLES_CAPABILITIES.COLLECTIONS_VOID
+        ),
+      403
+    );
+  }
+
+  {
+    const collPrint = path.join(
+      process.cwd(),
+      'app',
+      'accounts',
+      'students',
+      'collections',
+      '[id]',
+      'print',
+      'page.tsx'
+    );
+    if (fs.existsSync(collPrint)) {
+      ok('58) صفحة طباعة التحصيل موجودة');
+    } else {
+      fail('58) صفحة طباعة التحصيل غير موجودة');
+    }
+  }
+
+  {
+    const beforeVouchers = await query(
+      `SELECT COUNT(*)::int AS n FROM accounts.cash_vouchers
+       WHERE external_reference = $1`,
+      [`FAULT-5B-${suffix}`]
+    );
+    const beforeCount = beforeVouchers.rows[0]?.n ?? 0;
+    try {
+      await withTransaction(async (client) => {
+        const voucher = await createCashVoucher(client, {
+          voucher_type: 'CASH_RECEIPT',
+          cash_box_id: cashCtx.boxId,
+          cash_box_session_id: cashCtx.sessionId,
+          counter_account_id: recvGl,
+          voucher_date: fiscal.chargeDate,
+          amount: '1000',
+          external_reference: `FAULT-5B-${suffix}`,
+          description: `fault inject ${suffix}`,
+          created_by: userId,
+        });
+        await postCashVoucher(client, {
+          id: voucher.id,
+          userId,
+          version: voucher.version,
+          updated_at: voucher.updated_at,
+        });
+        throw new Error('FAULT_INJECT_ROLLBACK');
+      });
+      fail('59) fault injection — كان يجب أن يفشل');
+    } catch (e) {
+      if (e instanceof Error && e.message === 'FAULT_INJECT_ROLLBACK') {
+        const afterVouchers = await query(
+          `SELECT COUNT(*)::int AS n FROM accounts.cash_vouchers
+           WHERE external_reference = $1`,
+          [`FAULT-5B-${suffix}`]
+        );
+        if ((afterVouchers.rows[0]?.n ?? 0) === beforeCount) {
+          ok('59) fault injection — rollback لم يُبقِ السند');
+        } else {
+          fail('59) السند بقي بعد rollback', afterVouchers.rows[0]);
+        }
+      } else {
+        fail('59) fault injection', e);
+      }
+    }
+  }
+
+  {
+    const racePlan = await withTransaction((client) =>
+      createStudentBillingPlan(client, {
+        student_account_id: hardAccount.id,
+        fee_type_id: feeType.id,
+        total_amount: '12000',
+        installment_count: 1,
+        first_due_date: fiscal.chargeDate,
+        description: `post+void race ${suffix}`,
+        created_by: userId,
+      })
+    );
+    const raceActive = await withTransaction(async (client) => {
+      await acquireJournalEntriesLock(client);
+      return activateStudentBillingPlan(client, {
+        id: racePlan.plan.id,
+        userId,
+        version: racePlan.plan.version,
+        updated_at: racePlan.plan.updated_at,
+        activation_date: fiscal.chargeDate,
+      });
+    });
+    const raceInst = raceActive.installments[0];
+    const raceCol = await withTransaction(async (client) => {
+      const { collection } = await createStudentCollection(client, {
+        student_account_id: hardAccount.id,
+        collection_date: fiscal.chargeDate,
+        amount: '5000',
+        payment_method: 'CASH',
+        cash_box_id: cashCtx.boxId,
+        cash_box_session_id: cashCtx.sessionId,
+        description: `post+void race ${suffix}`,
+        allocations: [
+          {
+            student_charge_id: raceInst.student_charge_id!,
+            student_installment_id: raceInst.id,
+            allocated_amount: '5000',
+          },
+        ],
+        created_by: userId,
+      });
+      return collection;
+    });
+    const raceResults = await Promise.allSettled([
+      withTransaction(async (client) => {
+        await acquireJournalEntriesLock(client);
+        const col = await loadStudentCollection(client, raceCol.id);
+        return postStudentCollection(client, {
+          id: col.id,
+          userId,
+          version: col.version,
+          updated_at: col.updated_at,
+        });
+      }),
+      withTransaction(async (client) => {
+        const col = await loadStudentCollection(client, raceCol.id);
+        return voidStudentCollection(client, {
+          id: col.id,
+          userId,
+          version: col.version,
+          updated_at: col.updated_at,
+          reason: 'سباق post+void',
+        });
+      }),
+    ]);
+    const fulfilled = raceResults.filter((r) => r.status === 'fulfilled').length;
+    const rejected = raceResults.filter((r) => r.status === 'rejected').length;
+    if (fulfilled >= 1 && rejected >= 1) {
+      ok('60) سباق post+void على نفس التحصيل');
+    } else {
+      fail('60) post+void race', { fulfilled, rejected });
+    }
+  }
+
+  {
+    const revertStudentId = await insertTestStudent(suffix, 'REVERT');
+    const revertAccount = await withTransaction((client) =>
+      createStudentAccount(client, {
+        student_id: revertStudentId,
+        receivable_gl_account_id: recvGl,
+        created_by: userId,
+      })
+    );
+    const revertPlan = await withTransaction((client) =>
+      createStudentBillingPlan(client, {
+        student_account_id: revertAccount.id,
+        fee_type_id: feeType.id,
+        total_amount: '25000',
+        installment_count: 1,
+        first_due_date: fiscal.chargeDate,
+        description: `revert complete ${suffix}`,
+        created_by: userId,
+      })
+    );
+    const revertActive = await withTransaction(async (client) => {
+      await acquireJournalEntriesLock(client);
+      return activateStudentBillingPlan(client, {
+        id: revertPlan.plan.id,
+        userId,
+        version: revertPlan.plan.version,
+        updated_at: revertPlan.plan.updated_at,
+        activation_date: fiscal.chargeDate,
+      });
+    });
+    const rInst = revertActive.installments[0];
+    const completingCol = await withTransaction(async (client) => {
+      await acquireJournalEntriesLock(client);
+      const { collection } = await createStudentCollection(client, {
+        student_account_id: revertAccount.id,
+        collection_date: fiscal.chargeDate,
+        amount: rInst.amount,
+        payment_method: 'CASH',
+        cash_box_id: cashCtx.boxId,
+        cash_box_session_id: cashCtx.sessionId,
+        description: `إكمال للعكس ${suffix}`,
+        allocations: [
+          {
+            student_charge_id: rInst.student_charge_id!,
+            student_installment_id: rInst.id,
+            allocated_amount: rInst.amount,
+          },
+        ],
+        created_by: userId,
+      });
+      const posted = await postStudentCollection(client, {
+        id: collection.id,
+        userId,
+        version: collection.version,
+        updated_at: collection.updated_at,
+      });
+      return posted.collection;
+    });
+    const completedBeforeVoid = await withTransaction((client) =>
+      getStudentBillingPlan(client, revertActive.plan.id)
+    );
+    await withTransaction(async (client) => {
+      await acquireJournalEntriesLock(client);
+      return voidStudentCollection(client, {
+        id: completingCol.id,
+        userId,
+        version: completingCol.version,
+        updated_at: completingCol.updated_at,
+        reason: 'عكس إكمال الخطة',
+      });
+    });
+    const afterVoid = await withTransaction((client) =>
+      getStudentBillingPlan(client, revertActive.plan.id)
+    );
+    if (
+      completedBeforeVoid.plan.status === 'COMPLETED' &&
+      afterVoid.plan.status === 'ACTIVE'
+    ) {
+      ok('61) VOID تحصيل مكمّل → الخطة تعود ACTIVE');
+    } else {
+      fail('61) revert COMPLETED→ACTIVE', {
+        before: completedBeforeVoid.plan.status,
+        after: afterVoid.plan.status,
+      });
+    }
+  }
+
+  {
+    const dueStudentId = await insertTestStudent(suffix, 'DUE');
+    const dueAccount = await withTransaction((client) =>
+      createStudentAccount(client, {
+        student_id: dueStudentId,
+        receivable_gl_account_id: recvGl,
+        created_by: userId,
+      })
+    );
+    const duePlan = await withTransaction((client) =>
+      createStudentBillingPlan(client, {
+        student_account_id: dueAccount.id,
+        fee_type_id: feeType.id,
+        total_amount: '15000',
+        installment_count: 1,
+        first_due_date: fiscal.chargeDate,
+        description: `due effective ${suffix}`,
+        created_by: userId,
+      })
+    );
+    const dueInstId = duePlan.installments[0].id;
+    await query(
+      `UPDATE accounts.student_installments
+       SET status = 'PENDING', due_date = '2020-01-01'::date
+       WHERE id = $1::uuid`,
+      [dueInstId]
+    );
+    const dueRow = await withTransaction((client) =>
+      loadStudentInstallment(client, dueInstId)
+    );
+    const serialized = serializeStudentInstallment(dueRow);
+    const listed = await withTransaction((client) =>
+      listStudentInstallments(client, {
+        student_account_id: dueAccount.id,
+        status: 'DUE',
+        page_size: 10,
+      })
+    );
+    if (
+      serialized.status === 'DUE' &&
+      listed.rows.some((r) => r.id === dueInstId)
+    ) {
+      ok('62) حالة DUE الفعّالة في serialize/list');
+    } else {
+      fail('62) effective DUE', { serialized: serialized.status, listed: listed.total });
     }
   }
 

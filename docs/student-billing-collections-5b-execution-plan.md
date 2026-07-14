@@ -15,7 +15,11 @@
 1. DRAFT: إنشاء/تعديل + توليد أقساط (متساوٍ أو يدوي؛ آخر قسط يحمل فرق التقريب).
 2. ACTIVE (transaction): قفل → تحقق المجموع/التواريخ → إنشاء وترحيل Charge لكل قسط → ربط `student_charge_id` → ACTIVE + Audit.
 3. COMPLETED عندما كل الأقساط PAID.
-4. CANCELLED: فقط بلا تحصيلات مخصّصة؛ لا يحذف مطالبات مرحّلة دون معالجة.
+4. CANCELLED (سياسة محافظة):
+   - CANCELLED → idempotent؛ COMPLETED → 409.
+   - رفض إذا وُجدت تحصيلات DRAFT/POSTED مخصّصة لأقساط أو مطالبات الخطة.
+   - DRAFT: إلغاء أقساط PENDING/DUE فقط.
+   - ACTIVE: إبطال المطالبات POSTED غير المسددة (outstanding = original) عبر voidStudentCharge، ثم إلغاء كل الأقساط غير الملغاة.
 
 ## دورة التحصيل
 

@@ -4,13 +4,12 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import StudentsNav from '../components/StudentsNav';
 import {
-  BILLING_PLAN_API,
   formatDateOnly,
   formatMoney,
   INSTALLMENT_STATUS_LABEL,
   installmentStatusBadge,
+  INSTALLMENTS_API,
   studentApi,
-  type StudentBillingPlanListItem,
   type StudentInstallmentItem,
 } from '../components/types';
 
@@ -29,77 +28,32 @@ export default function StudentInstallmentsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams({ status: 'ACTIVE', page_size: '50' });
-    const plansRes = await studentApi<StudentBillingPlanListItem[]>(
-      `${BILLING_PLAN_API}?${params}`
+    const params = new URLSearchParams({
+      plan_status: 'ACTIVE',
+      page_size: '100',
+    });
+    if (statusFilter) params.set('status', statusFilter);
+    if (q.trim()) params.set('q', q.trim());
+
+    const res = await studentApi<FlatInstallment[]>(
+      `${INSTALLMENTS_API}?${params}`
     );
-    if (!plansRes.success) {
-      setError(plansRes.message || 'تعذر تحميل الأقساط');
+    if (!res.success) {
+      setError(res.message || 'تعذر تحميل الأقساط');
       setRows([]);
       setLoading(false);
       return;
     }
 
-    const plans = plansRes.data || [];
-    const details = await Promise.all(
-      plans.map((p) =>
-        studentApi<{
-          installments: StudentInstallmentItem[];
-          plan_number: string;
-          student_full_name_ar?: string | null;
-          account_number?: string | null;
-        }>(`${BILLING_PLAN_API}/${p.id}`)
-      )
-    );
-
-    const flat: FlatInstallment[] = [];
-    for (let i = 0; i < plans.length; i++) {
-      const plan = plans[i];
-      const detail = details[i];
-      if (!detail.success || !detail.data?.installments) continue;
-      for (const inst of detail.data.installments) {
-        flat.push({
-          ...inst,
-          plan_number: plan.plan_number,
-          student_full_name_ar: plan.student_full_name_ar,
-          account_number: plan.account_number,
-        });
-      }
-    }
-
-    flat.sort((a, b) => {
-      const d = a.due_date.localeCompare(b.due_date);
-      if (d !== 0) return d;
-      return a.installment_number - b.installment_number;
-    });
-
-    setRows(flat);
+    setRows(res.data || []);
     setError(null);
     setLoading(false);
-  }, []);
+  }, [q, statusFilter]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch
     void load();
   }, [load]);
-
-  const filtered = rows.filter((r) => {
-    if (statusFilter && r.status !== statusFilter) return false;
-    if (q.trim()) {
-      const needle = q.trim().toLowerCase();
-      const hay = [
-        r.plan_number,
-        r.student_full_name_ar,
-        r.account_number,
-        String(r.installment_number),
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      if (!hay.includes(needle)) return false;
-    }
-    return true;
-  });
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -108,7 +62,7 @@ export default function StudentInstallmentsPage() {
       <div className="mb-4">
         <h1 className="text-xl font-semibold text-gray-900">الأقساط</h1>
         <p className="text-sm text-gray-600 mt-1">
-          أقساط الخطط الفعّالة — يُحمّل التفصيل من كل خطة (مناسب للعرض التجريبي)
+          أقساط الخطط الفعّالة — قائمة موحّدة من واجهة الأقساط
         </p>
       </div>
 
@@ -167,14 +121,14 @@ export default function StudentInstallmentsPage() {
                   جاري التحميل...
                 </td>
               </tr>
-            ) : filtered.length === 0 ? (
+            ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-3 py-8 text-center text-gray-500">
                   لا توجد أقساط
                 </td>
               </tr>
             ) : (
-              filtered.map((row) => (
+              rows.map((row) => (
                 <tr
                   key={row.id}
                   className={`border-t border-gray-100 ${

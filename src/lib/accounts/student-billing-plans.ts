@@ -27,8 +27,14 @@ import {
   sumMoney,
 } from './money';
 import {
+  deriveInstallmentStatus,
+  type StudentInstallmentStatus,
+} from './student-installment-status';
+import {
   createStudentCharge,
+  loadStudentCharge,
   postStudentCharge,
+  voidStudentCharge,
 } from './student-charges';
 import {
   assertStudentAccountActiveForCharges,
@@ -45,12 +51,7 @@ export type StudentBillingPlanStatus =
   | 'COMPLETED'
   | 'CANCELLED';
 
-export type StudentInstallmentStatus =
-  | 'PENDING'
-  | 'DUE'
-  | 'PARTIALLY_PAID'
-  | 'PAID'
-  | 'CANCELLED';
+export type { StudentInstallmentStatus };
 
 export type StudentBillingPlanRow = {
   id: string;
@@ -162,15 +163,32 @@ export function serializeStudentBillingPlan(row: StudentBillingPlanRow) {
 }
 
 export function serializeStudentInstallment(row: StudentInstallmentRow) {
-  return {
+  const dueDate = pgDateOnly(row.due_date);
+  const base = {
     ...row,
     amount: normalizeMoneyInput(row.amount),
     paid_amount: normalizeMoneyInput(row.paid_amount),
     outstanding_amount: normalizeMoneyInput(row.outstanding_amount),
-    due_date: pgDateOnly(row.due_date),
+    due_date: dueDate,
     created_at: iso(row.created_at)!,
     updated_at: iso(row.updated_at)!,
   };
+  const terminal: StudentInstallmentStatus[] = [
+    'CANCELLED',
+    'PAID',
+    'PARTIALLY_PAID',
+  ];
+  if (!terminal.includes(row.status)) {
+    return {
+      ...base,
+      status: deriveInstallmentStatus(
+        row.paid_amount,
+        row.amount,
+        dueDate
+      ),
+    };
+  }
+  return base;
 }
 
 export function generateEqualInstallments(
@@ -786,6 +804,14 @@ export async function activateStudentBillingPlan(
   return { plan: activated.rows[0], installments: updatedInstallments };
 }
 
+/**
+ * سياسة إلغاء الخطة (محافظة):
+ * 1) CANCELLED → idempotent
+ * 2) COMPLETED → 409
+ * 3) رفض إذا وُجدت تحصيلات DRAFT/POSTED مخصّصة لأقساط أو مطالبات الخطة
+ * 4) DRAFT → إلغاء أقساط PENDING/DUE فقط → CANCELLED (بلا مطالبات)
+ * 5) ACTIVE بلا تحصيلات حاجزة → إبطال المطالبات غير المسددة ثم إلغاء كل الأقساط غير الملغاة
+ */
 export async function cancelStudentBillingPlan(
   client: TxClient,
   params: {
@@ -804,55 +830,106 @@ export async function cancelStudentBillingPlan(
     throw new AccountsHttpError('لا يمكن إلغاء خطة مكتملة', 409);
   }
 
-  const postedCollections = await txQuery(
+  const blockingCollections = await txQuery(
     client,
     `SELECT 1
      FROM accounts.student_collection_allocations sca
      JOIN accounts.student_collections sc ON sc.id = sca.collection_id
-     JOIN accounts.student_installments si ON si.id = sca.student_installment_id
-     WHERE si.billing_plan_id = $1::uuid
-       AND sc.status = 'POSTED'
+     LEFT JOIN accounts.student_installments si_inst
+       ON si_inst.id = sca.student_installment_id
+     WHERE sc.status IN ('DRAFT', 'POSTED')
+       AND (
+         si_inst.billing_plan_id = $1::uuid
+         OR sca.student_charge_id IN (
+           SELECT student_charge_id FROM accounts.student_installments
+           WHERE billing_plan_id = $1::uuid AND student_charge_id IS NOT NULL
+         )
+       )
      LIMIT 1`,
     [plan.id]
   );
-  if (postedCollections.rows[0]) {
+  if (blockingCollections.rows[0]) {
     throw new AccountsHttpError(
-      'لا يمكن إلغاء الخطة لوجود تحصيلات مرحّلة مخصصة لأقساطها',
+      'لا يمكن إلغاء الخطة لوجود تحصيلات نشطة مخصّصة لأقساطها أو مطالباتها',
       409
     );
   }
 
-  if (plan.status === 'ACTIVE') {
-    const allocatedCharges = await txQuery(
+  const voidReason = optText(params.reason, 2000) ?? 'إلغاء خطة رسوم';
+
+  if (plan.status === 'DRAFT') {
+    await txQuery(
       client,
-      `SELECT 1
-       FROM accounts.student_collection_allocations sca
-       JOIN accounts.student_collections sc ON sc.id = sca.collection_id
-       JOIN accounts.student_installments si ON si.student_charge_id = sca.student_charge_id
-       WHERE si.billing_plan_id = $1::uuid
-         AND sc.status = 'POSTED'
-       LIMIT 1`,
+      `UPDATE accounts.student_installments SET
+         status = 'CANCELLED',
+         updated_at = NOW()
+       WHERE billing_plan_id = $1::uuid
+         AND status IN ('PENDING', 'DUE')`,
       [plan.id]
     );
-    if (allocatedCharges.rows[0]) {
-      throw new AccountsHttpError(
-        'لا يمكن إلغاء الخطة لوجود تحصيلات مرحّلة على مطالباتها',
-        409
-      );
+  } else if (plan.status === 'ACTIVE') {
+    const installments = await listPlanInstallments(client, plan.id);
+
+    for (const inst of installments) {
+      if (!inst.student_charge_id) continue;
+
+      await acquireAccountingResourceLocks(client, [
+        studentInstallmentLock(inst.id),
+        studentChargeLock(inst.student_charge_id),
+      ]);
+
+      const charge = await loadStudentCharge(client, inst.student_charge_id, true);
+
+      if (charge.status === 'VOID') continue;
+
+      if (
+        charge.status === 'PARTIALLY_SETTLED' ||
+        charge.status === 'SETTLED'
+      ) {
+        throw new AccountsHttpError(
+          'لا يمكن إلغاء الخطة لمطالبة مسددة جزئياً أو كلياً',
+          409
+        );
+      }
+
+      if (charge.status === 'POSTED') {
+        const original = normalizeMoneyInput(charge.original_amount);
+        const outstanding = normalizeMoneyInput(charge.outstanding_amount);
+        if (!moneyEquals(outstanding, original)) {
+          throw new AccountsHttpError(
+            'لا يمكن إبطال مطالبة عليها أثر تحصيل',
+            409
+          );
+        }
+        await voidStudentCharge(client, {
+          id: charge.id,
+          userId: params.userId,
+          version: charge.version,
+          updated_at: charge.updated_at,
+          reason: voidReason,
+        });
+      } else if (charge.status === 'DRAFT') {
+        await voidStudentCharge(client, {
+          id: charge.id,
+          userId: params.userId,
+          version: charge.version,
+          updated_at: charge.updated_at,
+          reason: voidReason,
+        });
+      }
     }
+
+    await txQuery(
+      client,
+      `UPDATE accounts.student_installments SET
+         status = 'CANCELLED',
+         updated_at = NOW()
+       WHERE billing_plan_id = $1::uuid
+         AND status <> 'CANCELLED'`,
+      [plan.id]
+    );
   }
 
-  await txQuery(
-    client,
-    `UPDATE accounts.student_installments SET
-       status = 'CANCELLED',
-       updated_at = NOW()
-     WHERE billing_plan_id = $1::uuid
-       AND status IN ('PENDING', 'DUE')`,
-    [plan.id]
-  );
-
-  const reason = optText(params.reason, 2000) ?? 'إلغاء خطة رسوم';
   const cancelled = await txQuery<StudentBillingPlanRow>(
     client,
     `UPDATE accounts.student_billing_plans SET
@@ -865,7 +942,7 @@ export async function cancelStudentBillingPlan(
        version = version + 1
      WHERE id = $1::uuid
      RETURNING *`,
-    [plan.id, params.userId, reason]
+    [plan.id, params.userId, voidReason]
   );
   return cancelled.rows[0];
 }
@@ -874,25 +951,35 @@ export async function refreshBillingPlanCompletion(
   client: TxClient,
   planId: string
 ): Promise<void> {
-  const pending = await txQuery(
-    client,
-    `SELECT 1 FROM accounts.student_installments
-     WHERE billing_plan_id = $1::uuid
-       AND status NOT IN ('PAID', 'CANCELLED')
-     LIMIT 1`,
-    [planId]
-  );
-  if (!pending.rows[0]) {
-    await txQuery(
-      client,
-      `UPDATE accounts.student_billing_plans SET
-         status = 'COMPLETED',
-         updated_at = NOW(),
-         version = version + 1
-       WHERE id = $1::uuid AND status = 'ACTIVE'`,
-      [planId]
+  const plan = await loadStudentBillingPlan(client, planId, true);
+  const installments = await listPlanInstallments(client, planId);
+
+  const anyCancelled = installments.some((i) => i.status === 'CANCELLED');
+  const allPaid =
+    installments.length > 0 &&
+    installments.every((i) => i.status === 'PAID');
+  const anyNotPaid = installments.some((i) => i.status !== 'PAID');
+
+  if (allPaid && !anyCancelled) {
+    const paidSum = sumMoney(
+      installments.map((i) => normalizeMoneyInput(i.paid_amount))
     );
-  } else {
+    const total = normalizeMoneyInput(plan.total_amount);
+    if (moneyEquals(paidSum, total)) {
+      await txQuery(
+        client,
+        `UPDATE accounts.student_billing_plans SET
+           status = 'COMPLETED',
+           updated_at = NOW(),
+           version = version + 1
+         WHERE id = $1::uuid AND status = 'ACTIVE'`,
+        [planId]
+      );
+      return;
+    }
+  }
+
+  if (anyNotPaid || anyCancelled) {
     await txQuery(
       client,
       `UPDATE accounts.student_billing_plans SET
@@ -990,6 +1077,107 @@ export async function listStudentBillingPlans(
       StudentBillingPlanRow & {
         fee_type_code?: string | null;
         fee_type_name_ar?: string | null;
+        account_number?: string | null;
+        student_full_name_ar?: string | null;
+      }
+    >,
+    total: count.rows[0]?.total ?? 0,
+    page,
+    page_size: pageSize,
+  };
+}
+
+export async function listStudentInstallments(
+  client: TxClient,
+  filters: {
+    status?: string | null;
+    q?: string;
+    student_account_id?: string | null;
+    plan_status?: string | null;
+    page?: number;
+    page_size?: number;
+  }
+): Promise<{
+  rows: Array<
+    StudentInstallmentRow & {
+      plan_number?: string | null;
+      plan_status?: StudentBillingPlanStatus | null;
+      account_number?: string | null;
+      student_full_name_ar?: string | null;
+    }
+  >;
+  total: number;
+  page: number;
+  page_size: number;
+}> {
+  const page = Math.max(1, filters.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, filters.page_size ?? 20));
+  const offset = (page - 1) * pageSize;
+  const q = (filters.q ?? '').trim();
+  const statusFilter = filters.status || null;
+  const today = pgDateOnly(new Date());
+
+  const params: unknown[] = [
+    q,
+    filters.student_account_id || null,
+    filters.plan_status || null,
+  ];
+
+  let statusClause = 'TRUE';
+  if (statusFilter === 'DUE') {
+    statusClause = `(si.status = 'DUE' OR (si.status = 'PENDING' AND si.due_date <= $4::date))`;
+    params.push(today);
+  } else if (statusFilter === 'PENDING') {
+    statusClause = `(si.status = 'PENDING' AND si.due_date > $4::date)`;
+    params.push(today);
+  } else if (statusFilter) {
+    statusClause = `si.status = $4`;
+    params.push(statusFilter);
+  }
+
+  const where = `
+    WHERE ($1 = '' OR p.plan_number ILIKE '%'||$1||'%'
+           OR COALESCE(s.full_name_ar, s.full_name, '') ILIKE '%'||$1||'%'
+           OR sa.account_number ILIKE '%'||$1||'%'
+           OR CAST(si.installment_number AS TEXT) ILIKE '%'||$1||'%')
+      AND ${statusClause}
+      AND ($2::uuid IS NULL OR si.student_account_id = $2::uuid)
+      AND ($3::text IS NULL OR p.status = $3)
+  `;
+
+  const count = await txQuery<{ total: number }>(
+    client,
+    `SELECT COUNT(*)::int AS total
+     FROM accounts.student_installments si
+     JOIN accounts.student_billing_plans p ON p.id = si.billing_plan_id
+     JOIN accounts.student_accounts sa ON sa.id = si.student_account_id
+     JOIN student_affairs.students s ON s.id = p.student_id
+     ${where}`,
+    params
+  );
+
+  const list = await txQuery(
+    client,
+    `SELECT si.*,
+            p.plan_number,
+            p.status AS plan_status,
+            sa.account_number,
+            COALESCE(s.full_name_ar, s.full_name) AS student_full_name_ar
+     FROM accounts.student_installments si
+     JOIN accounts.student_billing_plans p ON p.id = si.billing_plan_id
+     JOIN accounts.student_accounts sa ON sa.id = si.student_account_id
+     JOIN student_affairs.students s ON s.id = p.student_id
+     ${where}
+     ORDER BY si.due_date ASC, si.installment_number ASC
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, pageSize, offset]
+  );
+
+  return {
+    rows: list.rows as Array<
+      StudentInstallmentRow & {
+        plan_number?: string | null;
+        plan_status?: StudentBillingPlanStatus | null;
         account_number?: string | null;
         student_full_name_ar?: string | null;
       }
