@@ -15,12 +15,24 @@ import {
   formatMoney,
   statusBadgeClass,
 } from '../components/types';
+import {
+  BankBookBalance,
+  BankVoucherListItem,
+  BankVoucherStats,
+  formatDateOnly,
+  VOUCHER_STATUS_LABEL,
+  VOUCHER_TYPE_LABEL,
+  voucherStatusClass,
+} from '../vouchers/components/types';
 
 export default function BankAccountDetailPage() {
   const params = useParams();
   const id = String(params.id || '');
   const [account, setAccount] = useState<BankAccountDetail | null>(null);
   const [options, setOptions] = useState<BankOptions | null>(null);
+  const [bookBalance, setBookBalance] = useState<BankBookBalance | null>(null);
+  const [voucherStats, setVoucherStats] = useState<BankVoucherStats | null>(null);
+  const [recentVouchers, setRecentVouchers] = useState<BankVoucherListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -47,13 +59,31 @@ export default function BankAccountDetailPage() {
     async (showSpinner = false) => {
       if (!id) return;
       if (showSpinner) setLoading(true);
-      const [detail, opt] = await Promise.all([
+      const [detail, opt, balanceOpt, vouchers] = await Promise.all([
         bankApi<BankAccountDetail>(`/api/accounts/bank-accounts/${id}`),
         bankApi<BankOptions>(
           `/api/accounts/bank-accounts/options?exclude_bank_account_id=${id}`
         ),
+        bankApi<{ book_balance?: BankBookBalance | null }>(
+          `/api/accounts/bank-vouchers/options?bank_account_id=${id}`
+        ),
+        bankApi<BankVoucherListItem[]>(
+          `/api/accounts/bank-vouchers?bank_account_id=${id}&page_size=10`
+        ),
       ]);
       if (opt.success && opt.data) setOptions(opt.data);
+      if (balanceOpt.success && balanceOpt.data?.book_balance) {
+        setBookBalance(balanceOpt.data.book_balance);
+      } else {
+        setBookBalance(null);
+      }
+      if (vouchers.success) {
+        setRecentVouchers(vouchers.data || []);
+        setVoucherStats((vouchers.stats as BankVoucherStats) || null);
+      } else {
+        setRecentVouchers([]);
+        setVoucherStats(null);
+      }
       if (!detail.success || !detail.data) {
         setError(detail.message || 'تعذر تحميل الحساب');
         setAccount(null);
@@ -335,6 +365,139 @@ export default function BankAccountDetailPage() {
               <div className="border-t border-gray-800 pt-2">اعتماد المدير المالي</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Book balance & bank vouchers */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 md:p-6 space-y-4 print:hidden">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">
+              الرصيد الدفتري والسندات
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">
+              الرصيد الدفتري من القيود المرحّلة على حساب GL — وليس الرصيد الافتتاحي المرجعي.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {account.allows_receipts && account.status === 'ACTIVE' && (
+              <Link
+                href={`/accounts/banks/vouchers?bank_account_id=${account.id}&type=BANK_RECEIPT`}
+                className="px-3 py-2 rounded-md bg-green-800 text-white text-sm hover:bg-green-700"
+              >
+                سند قبض جديد
+              </Link>
+            )}
+            {account.allows_payments && account.status === 'ACTIVE' && (
+              <Link
+                href={`/accounts/banks/vouchers?bank_account_id=${account.id}&type=BANK_PAYMENT`}
+                className="px-3 py-2 rounded-md bg-red-900 text-white text-sm hover:bg-red-800"
+              >
+                سند صرف جديد
+              </Link>
+            )}
+            <Link
+              href={`/accounts/banks/vouchers?bank_account_id=${account.id}`}
+              className="px-3 py-2 rounded-md border text-sm hover:bg-gray-50"
+            >
+              كل السندات
+            </Link>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+          <div className="rounded-lg border bg-gray-50 px-3 py-2">
+            <div className="text-xs text-gray-500">الرصيد الدفتري</div>
+            <div className="font-semibold text-red-950">
+              {bookBalance
+                ? formatMoney(bookBalance.book_balance, bookBalance.currency_code)
+                : '—'}
+            </div>
+          </div>
+          <div className="rounded-lg border bg-gray-50 px-3 py-2">
+            <div className="text-xs text-gray-500">مقبوضات مرحّلة</div>
+            <div className="font-semibold text-red-950">
+              {bookBalance
+                ? formatMoney(
+                    bookBalance.totals.bank_receipts_posted,
+                    bookBalance.currency_code
+                  )
+                : formatMoney(voucherStats?.receipts_total, account.currency_code)}
+            </div>
+          </div>
+          <div className="rounded-lg border bg-gray-50 px-3 py-2">
+            <div className="text-xs text-gray-500">مصروفات مرحّلة</div>
+            <div className="font-semibold text-red-950">
+              {bookBalance
+                ? formatMoney(
+                    bookBalance.totals.bank_payments_posted,
+                    bookBalance.currency_code
+                  )
+                : formatMoney(voucherStats?.payments_total, account.currency_code)}
+            </div>
+          </div>
+          <div className="rounded-lg border bg-gray-50 px-3 py-2">
+            <div className="text-xs text-gray-500">سندات (مسودة / مرحّل / ملغى)</div>
+            <div className="font-semibold text-red-950">
+              {bookBalance
+                ? `${bookBalance.counts.draft} / ${bookBalance.counts.posted} / ${bookBalance.counts.void}`
+                : voucherStats
+                  ? `${voucherStats.draft} / ${voucherStats.posted} / ${voucherStats.voided}`
+                  : '—'}
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto border rounded-md">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="text-right px-3 py-2 font-medium">رقم السند</th>
+                <th className="text-right px-3 py-2 font-medium">النوع</th>
+                <th className="text-right px-3 py-2 font-medium">التاريخ</th>
+                <th className="text-right px-3 py-2 font-medium">المبلغ</th>
+                <th className="text-right px-3 py-2 font-medium">الحالة</th>
+                <th className="text-right px-3 py-2 font-medium">الطرف</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentVouchers.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-4 text-center text-gray-500">
+                    لا توجد سندات لهذا الحساب
+                  </td>
+                </tr>
+              ) : (
+                recentVouchers.map((v) => (
+                  <tr key={v.id} className="border-t">
+                    <td className="px-3 py-2 font-mono text-xs">
+                      <Link
+                        href={`/accounts/banks/vouchers/${v.id}`}
+                        className="text-red-900 underline"
+                      >
+                        {v.voucher_number}
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2">
+                      {VOUCHER_TYPE_LABEL[v.voucher_type]}
+                    </td>
+                    <td className="px-3 py-2">{formatDateOnly(v.voucher_date)}</td>
+                    <td className="px-3 py-2">
+                      {formatMoney(v.amount, v.currency_code)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded text-xs ${voucherStatusClass(v.status)}`}
+                      >
+                        {VOUCHER_STATUS_LABEL[v.status]}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">{v.party_name || '—'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

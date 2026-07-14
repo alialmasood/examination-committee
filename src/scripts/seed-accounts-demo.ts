@@ -30,7 +30,14 @@ import {
 } from '../lib/accounts/cash-transfers';
 import { createBank } from '../lib/accounts/banks';
 import { createBankBranch } from '../lib/accounts/bank-branches';
-import { createBankAccount } from '../lib/accounts/bank-accounts';
+import {
+  assignBankAccountUser,
+  createBankAccount,
+} from '../lib/accounts/bank-accounts';
+import {
+  createBankVoucher,
+  postBankVoucher,
+} from '../lib/accounts/bank-vouchers';
 import {
   getCashVarianceSettings,
   setCashVarianceSettings,
@@ -68,6 +75,9 @@ const DEMO = {
   bankAccountUsd: 'DEMO-BA-USD',
   bankGl: 'DEMO-BANK-GL',
   bankGlUsd: 'DEMO-BANK-GL-USD',
+  bankVoucherReceipt: 'DEMO-BV-RECEIPT',
+  bankVoucherPayment: 'DEMO-BV-PAYMENT',
+  bankVoucherDraft: 'DEMO-BV-DRAFT',
   sessionZeroNotes: 'DEMO-SESSION-ZERO',
   sessionGainNotes: 'DEMO-SESSION-GAIN',
   sessionOpenNotes: 'DEMO-SESSION-OPEN',
@@ -1026,12 +1036,186 @@ async function main() {
     }
   }
 
+  // ——— 4.B: سندات بنكية DEMO ———
+  {
+    const baRow = await query(
+      `SELECT id FROM accounts.bank_accounts WHERE LOWER(code)=LOWER($1)`,
+      [DEMO.bankAccountIqd]
+    );
+    if (!baRow.rows[0]) {
+      console.log('⚠ تخطّي سندات بنكية DEMO (DEMO-BA-IQD غير موجود)');
+    } else {
+      const demoBaId = baRow.rows[0].id as string;
+
+      // تعيين مستخدم seed + accounts بصلاحيات كاملة (upsert)
+      const assignIds = new Set<string>([userId]);
+      const accountsUser = await query(
+        `SELECT u.id FROM student_affairs.users u
+         WHERE LOWER(u.username) = 'accounts' AND u.is_active LIMIT 1`
+      );
+      if (accountsUser.rows[0]) assignIds.add(accountsUser.rows[0].id as string);
+
+      for (const uid of assignIds) {
+        try {
+          await withTransaction(async (client) => {
+            await acquireBanksLock(client);
+            return assignBankAccountUser(client, {
+              bank_account_id: demoBaId,
+              user_id: uid,
+              can_view: true,
+              can_prepare: true,
+              can_post: true,
+              created_by: userId,
+            });
+          });
+        } catch (e) {
+          console.log('⚠ تعيين مستخدم بنك:', e instanceof Error ? e.message : e);
+        }
+      }
+      console.log('✓ تعيين مستخدمي الحساب البنكي DEMO (view/prepare/post)');
+
+      // مقابل القبض: DEMO-GAIN · مقابل الصرف: DEMO-LOSS
+      const gainAcc = await ensureAccount({
+        code: DEMO.gainAccount,
+        nameAr: 'إيراد فروق DEMO',
+        typeCode: 'ASSET',
+        userId,
+      });
+      const lossAcc = await ensureAccount({
+        code: DEMO.lossAccount,
+        nameAr: 'خسارة فروق DEMO',
+        typeCode: 'ASSET',
+        userId,
+      });
+
+      const hasBv = async (marker: string) => {
+        const r = await query(
+          `SELECT id, status, voucher_number FROM accounts.bank_vouchers
+           WHERE description ILIKE '%' || $1 || '%'
+              OR COALESCE(party_reference,'') = $1
+           LIMIT 1`,
+          [marker]
+        );
+        return r.rows[0] as
+          | { id: string; status: string; voucher_number: string }
+          | undefined;
+      };
+
+      // قبض مرحّل ~5000
+      const existingReceipt = await hasBv(DEMO.bankVoucherReceipt);
+      if (existingReceipt) {
+        console.log(
+          `✓ سند قبض بنكي DEMO موجود: ${existingReceipt.voucher_number} → /accounts/banks/vouchers/${existingReceipt.id}`
+        );
+      } else {
+        try {
+          const posted = await withTransaction(async (client) => {
+            await acquireBanksLock(client);
+            const v = await createBankVoucher(client, {
+              voucher_type: 'BANK_RECEIPT',
+              bank_account_id: demoBaId,
+              counter_account_id: gainAcc.id,
+              voucher_date: entryDate,
+              amount: '5000',
+              party_name: 'عرض DEMO',
+              party_reference: DEMO.bankVoucherReceipt,
+              description: `${DEMO.bankVoucherReceipt} — قبض مصرفي تجريبي`,
+              created_by: userId,
+            });
+            await acquireJournalEntriesLock(client);
+            return postBankVoucher(client, {
+              id: v.id,
+              userId,
+              version: v.version,
+              updated_at: v.updated_at,
+            });
+          });
+          console.log(
+            `✓ سند قبض بنكي مرحّل: ${posted.voucher.voucher_number} → /accounts/banks/vouchers/${posted.voucher.id}`
+          );
+        } catch (e) {
+          console.log('⚠ DEMO-BV-RECEIPT:', e instanceof Error ? e.message : e);
+        }
+      }
+
+      // صرف مرحّل ~1000
+      const existingPayment = await hasBv(DEMO.bankVoucherPayment);
+      if (existingPayment) {
+        console.log(
+          `✓ سند صرف بنكي DEMO موجود: ${existingPayment.voucher_number} → /accounts/banks/vouchers/${existingPayment.id}`
+        );
+      } else {
+        try {
+          const posted = await withTransaction(async (client) => {
+            await acquireBanksLock(client);
+            const v = await createBankVoucher(client, {
+              voucher_type: 'BANK_PAYMENT',
+              bank_account_id: demoBaId,
+              counter_account_id: lossAcc.id,
+              voucher_date: entryDate,
+              amount: '1000',
+              party_name: 'عرض DEMO',
+              party_reference: DEMO.bankVoucherPayment,
+              description: `${DEMO.bankVoucherPayment} — صرف مصرفي تجريبي`,
+              created_by: userId,
+            });
+            await acquireJournalEntriesLock(client);
+            return postBankVoucher(client, {
+              id: v.id,
+              userId,
+              version: v.version,
+              updated_at: v.updated_at,
+            });
+          });
+          console.log(
+            `✓ سند صرف بنكي مرحّل: ${posted.voucher.voucher_number} → /accounts/banks/vouchers/${posted.voucher.id}`
+          );
+        } catch (e) {
+          console.log('⚠ DEMO-BV-PAYMENT:', e instanceof Error ? e.message : e);
+        }
+      }
+
+      // مسودة
+      const existingDraft = await hasBv(DEMO.bankVoucherDraft);
+      if (existingDraft) {
+        console.log(
+          `✓ مسودة سند بنكي DEMO موجودة: ${existingDraft.voucher_number} → /accounts/banks/vouchers/${existingDraft.id}`
+        );
+      } else {
+        try {
+          const draft = await withTransaction(async (client) => {
+            await acquireBanksLock(client);
+            return createBankVoucher(client, {
+              voucher_type: 'BANK_RECEIPT',
+              bank_account_id: demoBaId,
+              counter_account_id: gainAcc.id,
+              voucher_date: entryDate,
+              amount: '250',
+              party_name: 'عرض DEMO',
+              party_reference: DEMO.bankVoucherDraft,
+              description: `${DEMO.bankVoucherDraft} — مسودة قبض مصرفي`,
+              created_by: userId,
+            });
+          });
+          console.log(
+            `✓ مسودة سند بنكي: ${draft.voucher_number} → /accounts/banks/vouchers/${draft.id}`
+          );
+        } catch (e) {
+          console.log('⚠ DEMO-BV-DRAFT:', e instanceof Error ? e.message : e);
+        }
+      }
+    }
+  }
+
   console.log('\n——— ملخص العرض ———');
   console.log(`صناديق: ${DEMO.cashBox} → ${DEMO.cashBoxDest}`);
   console.log(`مصرف: ${DEMO.bank} / ${DEMO.bankBranch} / ${DEMO.bankAccountIqd}`);
+  console.log(
+    `سندات بنكية: ${DEMO.bankVoucherReceipt} · ${DEMO.bankVoucherPayment} · ${DEMO.bankVoucherDraft}`
+  );
   console.log(`حسابات: ${DEMO.cashAccount} / ${DEMO.citAccount} / ${DEMO.bankGl}`);
   console.log(
-    'صفحات: /accounts/cashbox · /accounts/cashbox/transfers · /accounts/banks'
+    'صفحات: /accounts/cashbox · /accounts/cashbox/transfers · /accounts/banks · /accounts/banks/vouchers'
   );
   console.log(
     yearCreated

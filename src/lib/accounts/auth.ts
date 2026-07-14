@@ -197,6 +197,12 @@ export function mapPgError(error: unknown): NextResponse {
     if (err.constraint?.includes('uq_cash_vouchers_journal')) {
       return jsonError('القيد مرتبط بسند آخر مسبقاً', 409);
     }
+    if (err.constraint?.includes('uq_bank_vouchers_year_number')) {
+      return jsonError('رقم السند المصرفي مستخدم مسبقاً ضمن السنة المالية', 409);
+    }
+    if (err.constraint?.includes('uq_bank_vouchers_journal')) {
+      return jsonError('القيد مرتبط بسند مصرفي آخر مسبقاً', 409);
+    }
     if (err.constraint?.includes('uq_journal_entries_source')) {
       return jsonError('يوجد قيد مرحّل مسبقاً لهذا المصدر', 409);
     }

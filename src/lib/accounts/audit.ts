@@ -75,7 +75,12 @@ export type AuditAction =
   | 'bank_account.activated'
   | 'bank_account.closed'
   | 'bank_account.user_assigned'
-  | 'bank_account.user_removed';
+  | 'bank_account.user_removed'
+  | 'bank_voucher.created'
+  | 'bank_voucher.updated'
+  | 'bank_voucher.posted'
+  | 'bank_voucher.voided'
+  | 'bank_voucher.deleted';
 
 export async function writeFinancialAudit(
   client: TxClient,

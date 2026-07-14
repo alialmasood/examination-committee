@@ -779,13 +779,12 @@ export async function assignBankAccountUser(
     const upd = await txQuery<BankAccountUserRow>(
       client,
       `UPDATE accounts.bank_account_users SET
-         can_view = $3, can_prepare = $4, can_post = $5,
-         can_approve = $6, can_reconcile = $7
+         can_view = $2, can_prepare = $3, can_post = $4,
+         can_approve = $5, can_reconcile = $6
        WHERE id = $1::uuid
        RETURNING *`,
       [
         existing.rows[0].id,
-        userId,
         flags.can_view,
         flags.can_prepare,
         flags.can_post,
