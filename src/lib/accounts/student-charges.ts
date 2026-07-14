@@ -26,8 +26,13 @@ import {
   replaceJournalLines,
 } from './journal-entries';
 import {
+  moneyEquals,
   moneyIsPositive,
+  moneyIsZero,
+  moneyToMillis,
+  millisToMoney,
   normalizeMoneyInput,
+  normalizeSignedMoneyInput,
 } from './money';
 import { assertPostingAccount } from './posting-account';
 import {
@@ -570,6 +575,51 @@ async function insertLedgerCharge(
     description: string;
   }
 ): Promise<void> {
+  await writeStudentLedgerEntry(client, {
+    account: params.account,
+    entryDate: pgDateOnly(params.charge.charge_date),
+    entryType: params.entryType,
+    sourceType: 'STUDENT_CHARGE',
+    sourceId: params.charge.id,
+    description: params.description,
+    debit: params.debit,
+    credit: params.credit,
+    currencyCode: params.charge.currency_code,
+    journalEntryId: params.journalEntryId,
+    userId: params.userId,
+  });
+}
+
+export type StudentLedgerEntryType =
+  | 'CHARGE'
+  | 'CHARGE_REVERSAL'
+  | 'COLLECTION'
+  | 'COLLECTION_REVERSAL';
+
+export async function writeStudentLedgerEntry(
+  client: TxClient,
+  params: {
+    account: StudentAccountRow;
+    entryDate: string;
+    entryType: StudentLedgerEntryType;
+    sourceType: 'STUDENT_CHARGE' | 'STUDENT_COLLECTION';
+    sourceId: string;
+    description: string;
+    debit: string;
+    credit: string;
+    currencyCode: string;
+    journalEntryId: string | null;
+    userId: string;
+  }
+): Promise<void> {
+  const debit = normalizeMoneyInput(params.debit);
+  const credit = normalizeMoneyInput(params.credit);
+  if (
+    (moneyIsZero(debit) && moneyIsZero(credit)) ||
+    (moneyIsPositive(debit) && moneyIsPositive(credit))
+  ) {
+    throw new AccountsHttpError('قيد دفتر الطالب يجب أن يكون مديناً أو دائناً فقط', 400);
+  }
   await txQuery(
     client,
     `INSERT INTO accounts.student_ledger_entries (
@@ -579,24 +629,141 @@ async function insertLedgerCharge(
        journal_entry_id, created_by
      ) VALUES (
        $1::uuid,$2::uuid,$3::date,$4,
-       'STUDENT_CHARGE',$5::uuid,$6,
-       $7::numeric,$8::numeric,$9,
-       $10::uuid,$11::uuid
+       $5,$6::uuid,$7,
+       $8::numeric,$9::numeric,$10,
+       $11::uuid,$12::uuid
      )`,
     [
       params.account.id,
       params.account.student_id,
-      pgDateOnly(params.charge.charge_date),
+      pgDateOnly(params.entryDate),
       params.entryType,
-      params.charge.id,
+      params.sourceType,
+      params.sourceId,
       params.description,
-      params.debit,
-      params.credit,
-      params.charge.currency_code,
+      debit,
+      credit,
+      params.currencyCode,
       params.journalEntryId,
       params.userId,
     ]
   );
+}
+
+function resolveChargeStatusAfterAllocation(
+  original: string,
+  outstanding: string
+): StudentChargeStatus {
+  if (moneyIsZero(outstanding)) return 'SETTLED';
+  if (moneyEquals(outstanding, original)) return 'POSTED';
+  return 'PARTIALLY_SETTLED';
+}
+
+export async function applyChargeAllocation(
+  client: TxClient,
+  params: { chargeId: string; allocatedAmount: string }
+): Promise<StudentChargeRow> {
+  const allocated = normalizeMoneyInput(params.allocatedAmount);
+  if (!moneyIsPositive(allocated)) {
+    throw new AccountsHttpError('مبلغ التخصيص يجب أن يكون أكبر من صفر', 400);
+  }
+
+  const charge = await loadStudentCharge(client, params.chargeId, true);
+  if (
+    charge.status !== 'POSTED' &&
+    charge.status !== 'PARTIALLY_SETTLED' &&
+    charge.status !== 'SETTLED'
+  ) {
+    throw new AccountsHttpError('لا يمكن تخصيص تحصيل على مطالبة غير مرحّلة', 409);
+  }
+
+  const original = normalizeMoneyInput(charge.original_amount);
+  const outstanding = normalizeMoneyInput(charge.outstanding_amount);
+  const newOutstandingMillis =
+    moneyToMillis(outstanding) - moneyToMillis(allocated);
+  if (newOutstandingMillis < BigInt(0)) {
+    throw new AccountsHttpError(
+      'مبلغ التخصيص يتجاوز الرصيد المتبقي للمطالبة',
+      409
+    );
+  }
+
+  const newOutstanding = millisToMoney(newOutstandingMillis);
+  const newStatus = resolveChargeStatusAfterAllocation(original, newOutstanding);
+
+  const upd = await txQuery<StudentChargeRow>(
+    client,
+    `UPDATE accounts.student_charges SET
+       outstanding_amount = $2::numeric,
+       status = $3,
+       updated_at = NOW(),
+       version = version + 1
+     WHERE id = $1::uuid
+     RETURNING *`,
+    [charge.id, newOutstanding, newStatus]
+  );
+  return upd.rows[0];
+}
+
+export async function reverseChargeAllocation(
+  client: TxClient,
+  params: { chargeId: string; allocatedAmount: string }
+): Promise<StudentChargeRow> {
+  const allocated = normalizeMoneyInput(params.allocatedAmount);
+  if (!moneyIsPositive(allocated)) {
+    throw new AccountsHttpError('مبلغ عكس التخصيص يجب أن يكون أكبر من صفر', 400);
+  }
+
+  const charge = await loadStudentCharge(client, params.chargeId, true);
+  if (
+    charge.status !== 'POSTED' &&
+    charge.status !== 'PARTIALLY_SETTLED' &&
+    charge.status !== 'SETTLED'
+  ) {
+    throw new AccountsHttpError('لا يمكن عكس تخصيص على مطالبة غير مرحّلة', 409);
+  }
+
+  const original = normalizeMoneyInput(charge.original_amount);
+  const outstanding = normalizeMoneyInput(charge.outstanding_amount);
+  const newOutstandingMillis =
+    moneyToMillis(outstanding) + moneyToMillis(allocated);
+  if (newOutstandingMillis > moneyToMillis(original)) {
+    throw new AccountsHttpError(
+      'عكس التخصيص يتجاوز مبلغ المطالبة الأصلي',
+      409
+    );
+  }
+
+  const newOutstanding = millisToMoney(newOutstandingMillis);
+  const newStatus = resolveChargeStatusAfterAllocation(original, newOutstanding);
+
+  const upd = await txQuery<StudentChargeRow>(
+    client,
+    `UPDATE accounts.student_charges SET
+       outstanding_amount = $2::numeric,
+       status = $3,
+       updated_at = NOW(),
+       version = version + 1
+     WHERE id = $1::uuid
+     RETURNING *`,
+    [charge.id, newOutstanding, newStatus]
+  );
+  return upd.rows[0];
+}
+
+export async function getStudentAccountReceivableBalance(
+  client: TxClient,
+  studentAccountId: string
+): Promise<string> {
+  const r = await txQuery<{ balance: string }>(
+    client,
+    `SELECT COALESCE(SUM(debit_amount - credit_amount), 0)::text AS balance
+     FROM accounts.student_ledger_entries
+     WHERE student_account_id = $1::uuid
+       AND entry_type <> 'OPENING_REFERENCE'`,
+    [studentAccountId]
+  );
+  return normalizeSignedMoneyInput(r.rows[0]?.balance ?? '0');
 }
 
 export async function postStudentCharge(
