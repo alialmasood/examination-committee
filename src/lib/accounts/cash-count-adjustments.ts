@@ -32,6 +32,7 @@ import {
   normalizeMoneyInput,
   normalizeSignedMoneyInput,
 } from './money';
+import { assertPostingAccount as assertPostingAccountTx } from './posting-account';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
 
@@ -195,37 +196,6 @@ async function loadCurrentCount(
     throw new AccountsHttpError('سجل الجرد الحالي غير موجود', 409);
   }
   return r.rows[0];
-}
-
-async function assertPostingAccountTx(
-  client: TxClient,
-  accountId: string,
-  label: string
-): Promise<{ id: string; code: string; requires_cost_center: boolean }> {
-  const r = await txQuery<{
-    id: string;
-    code: string;
-    is_active: boolean;
-    is_group: boolean;
-    allow_posting: boolean;
-    requires_cost_center: boolean;
-  }>(
-    client,
-    `SELECT id, code, is_active, is_group, allow_posting, requires_cost_center
-     FROM accounts.chart_of_accounts WHERE id = $1::uuid`,
-    [accountId]
-  );
-  if (!r.rows[0]) {
-    throw new AccountsHttpError(`${label} غير موجود`, 404);
-  }
-  const a = r.rows[0];
-  if (!a.is_active || a.is_group || !a.allow_posting) {
-    throw new AccountsHttpError(
-      `${label} يجب أن يكون تفصيلياً وقابلاً للترحيل وفعّالاً`,
-      409
-    );
-  }
-  return a;
 }
 
 function shortId(id: string): string {

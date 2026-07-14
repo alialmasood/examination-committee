@@ -33,8 +33,15 @@ import {
   normalizeMoneyInput,
   normalizeSignedMoneyInput,
 } from './money';
+import {
+  acquireAccountingResourceLocks,
+  cashboxLock,
+  cashSessionLock,
+  chartAccountLock,
+} from './accounting-locks';
+import { assertPostingAccount } from './posting-account';
 import type { TxClient } from './with-transaction';
-import { acquireCashBoxesLock, txQuery } from './with-transaction';
+import { txQuery } from './with-transaction';
 
 export type CashVoucherType = 'CASH_RECEIPT' | 'CASH_PAYMENT';
 export type CashVoucherStatus = 'DRAFT' | 'POSTED' | 'VOID';
@@ -174,35 +181,6 @@ async function assertOpenSessionForVoucher(
       409
     );
   }
-}
-
-async function assertPostingAccount(
-  client: TxClient,
-  accountId: string,
-  label: string
-): Promise<{ id: string; code: string; requires_cost_center: boolean }> {
-  const r = await txQuery<{
-    id: string;
-    code: string;
-    is_active: boolean;
-    is_group: boolean;
-    allow_posting: boolean;
-    requires_cost_center: boolean;
-  }>(
-    client,
-    `SELECT id, code, is_active, is_group, allow_posting, requires_cost_center
-     FROM accounts.chart_of_accounts WHERE id = $1::uuid`,
-    [accountId]
-  );
-  if (!r.rows[0]) throw new AccountsHttpError(`${label} غير موجود`, 404);
-  const a = r.rows[0];
-  if (!a.is_active || a.is_group || !a.allow_posting) {
-    throw new AccountsHttpError(
-      `${label} يجب أن يكون تفصيلياً وقابلاً للترحيل وفعّالاً`,
-      409
-    );
-  }
-  return a;
 }
 
 export type SessionExpectedBalance = {
@@ -618,10 +596,12 @@ export async function postCashVoucher(
   const amount = normalizeMoneyInput(voucher.amount);
 
   if (voucher.voucher_type === 'CASH_PAYMENT') {
-    // تأمين ضد التزامن حتى لو نُسي القفل في الـ route
-    await acquireCashBoxesLock(client);
-    // قفل صف الجلسة أولاً (وليس فقط صفوف POSTED) حتى يتسلسل الترحيل
-    // عند عدم وجود سندات مرحّلة كافية — يمنع تجاوز الرصيد تحت READ COMMITTED
+    await acquireAccountingResourceLocks(client, [
+      cashboxLock(box.id),
+      cashSessionLock(session.id),
+      chartAccountLock(box.account_id),
+    ]);
+    // قفل صف الجلسة أولاً ثم سندات الجلسة — يمنع تجاوز الرصيد تحت READ COMMITTED
     await loadCashSession(client, session.id, true);
     await txQuery(
       client,

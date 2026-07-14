@@ -32,8 +32,14 @@ import {
   moneyToMillisSigned,
   normalizeMoneyInput,
 } from './money';
+import {
+  acquireAccountingResourceLocks,
+  bankAccountLock,
+  bankGlLock,
+} from './accounting-locks';
+import { assertPostingAccount } from './posting-account';
 import type { TxClient } from './with-transaction';
-import { acquireBanksLock, txQuery } from './with-transaction';
+import { txQuery } from './with-transaction';
 
 export type BankVoucherType = 'BANK_RECEIPT' | 'BANK_PAYMENT';
 export type BankVoucherStatus = 'DRAFT' | 'POSTED' | 'VOID';
@@ -244,39 +250,6 @@ async function resolveOpenFiscalForDate(
   };
 }
 
-async function assertPostingAccount(
-  client: TxClient,
-  accountId: string,
-  label: string
-): Promise<{ id: string; code: string; requires_cost_center: boolean }> {
-  const r = await txQuery<{
-    id: string;
-    code: string;
-    is_active: boolean;
-    is_group: boolean;
-    allow_posting: boolean;
-    requires_cost_center: boolean;
-  }>(
-    client,
-    `SELECT id, code, is_active, is_group, allow_posting, requires_cost_center
-     FROM accounts.chart_of_accounts WHERE id = $1::uuid`,
-    [accountId]
-  );
-  if (!r.rows[0]) throw new AccountsHttpError(`${label} غير موجود`, 404);
-  const a = r.rows[0];
-  if (!a.is_active || a.is_group || !a.allow_posting) {
-    throw new AccountsHttpError(
-      `${label} يجب أن يكون تفصيلياً وترحيلياً وفعّالاً`,
-      400
-    );
-  }
-  return {
-    id: a.id,
-    code: a.code,
-    requires_cost_center: a.requires_cost_center,
-  };
-}
-
 /**
  * التحقق من صلاحية الحساب البنكي للعمليات المالية الجديدة.
  */
@@ -457,7 +430,9 @@ export async function createBankVoucher(
       400
     );
   }
-  const counterAcc = await assertPostingAccount(client, counterId, 'الحساب المقابل');
+  const counterAcc = await assertPostingAccount(client, counterId, 'الحساب المقابل', {
+    invalidStatusCode: 400,
+  });
 
   const costCenterId: string | null =
     input.cost_center_id == null || input.cost_center_id === ''
@@ -630,7 +605,8 @@ export async function updateBankVoucher(
   const counterAcc = await assertPostingAccount(
     client,
     counterId,
-    'الحساب المقابل'
+    'الحساب المقابل',
+    { invalidStatusCode: 400 }
   );
 
   let costCenterId = voucher.cost_center_id;
@@ -731,8 +707,6 @@ export async function postBankVoucher(
     userId: params.userId,
   });
 
-  await acquireBanksLock(client);
-
   const bankAcc = await assertBankAccountOperational(
     client,
     voucher.bank_account_id,
@@ -741,6 +715,11 @@ export async function postBankVoucher(
       forPayment: voucher.voucher_type === 'BANK_PAYMENT',
     }
   );
+
+  await acquireAccountingResourceLocks(client, [
+    bankAccountLock(voucher.bank_account_id),
+    bankGlLock(bankAcc.gl_account_id),
+  ]);
 
   if (voucher.currency_code !== bankAcc.currency_code) {
     throw new AccountsHttpError(
@@ -765,12 +744,14 @@ export async function postBankVoucher(
   const bankGl = await assertPostingAccount(
     client,
     bankAcc.gl_account_id,
-    'حساب البنك GL'
+    'حساب البنك GL',
+    { invalidStatusCode: 400 }
   );
   const counterAcc = await assertPostingAccount(
     client,
     voucher.counter_account_id,
-    'الحساب المقابل'
+    'الحساب المقابل',
+    { invalidStatusCode: 400 }
   );
   const costCenterId = voucher.cost_center_id;
   if (
@@ -786,13 +767,8 @@ export async function postBankVoucher(
   const amount = normalizeMoneyInput(voucher.amount);
 
   if (voucher.voucher_type === 'BANK_PAYMENT') {
-    // تسلسل الصرف داخل نفس المعاملة بعد acquireBanksLock:
-    // 1) قفل صف الحساب البنكي
-    // 2) قفل صف Bank GL — يمنع تزامن أي عملية أخرى تقفل نفس الـ GL قبل الخصم
-    // 3) قفل سندات الحساب
-    // 4) حساب الرصيد من دفتر الأستاذ POSTED ثم الفحص
-    // سياسة: كل عملية بنكية مستقبلية تخصم من الرصيد يجب أن تستخدم acquireBanksLock
-    // وأن تقفل صف Bank GL (FOR UPDATE) قبل فحص الرصيد.
+    // بعد أقفال المورد الاستشارية (BANK_ACCOUNT + BANK_GL):
+    // FOR UPDATE على الصفوف ثم فحص الرصيد من دفتر POSTED.
     await loadBankAccount(client, voucher.bank_account_id, true);
     await txQuery(
       client,
@@ -948,6 +924,11 @@ export async function voidBankVoucher(
     userId: params.userId,
   });
 
+  const bankAccPeek = await loadBankAccount(client, voucher.bank_account_id, false);
+  await acquireAccountingResourceLocks(client, [
+    bankAccountLock(voucher.bank_account_id),
+    bankGlLock(bankAccPeek.gl_account_id),
+  ]);
   const bankAcc = await loadBankAccount(client, voucher.bank_account_id, true);
   if (bankAcc.status === 'CLOSED') {
     throw new AccountsHttpError(
@@ -978,7 +959,6 @@ export async function voidBankVoucher(
     throw new AccountsHttpError('حالة السند لا تسمح بالإلغاء', 409);
   }
 
-  await acquireBanksLock(client);
   const original = await loadJournalEntry(client, voucher.journal_entry_id);
   const reversalDate = pgDateOnly(voucher.voucher_date);
   const reversal = await createReversalEntry(client, {

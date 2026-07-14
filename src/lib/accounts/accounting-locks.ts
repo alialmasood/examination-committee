@@ -1,0 +1,119 @@
+/**
+ * أقفال استشارية على مستوى المورد المحاسبي (بدل الأقفال العالمية للبنوك/الصناديق).
+ *
+ * - مفتاح ثابت: domain + resourceId عبر PostgreSQL hashtext (مستقر داخل نفس القاعدة).
+ * - جميع الأقفال داخل معاملة (pg_advisory_xact_lock).
+ * - موارد متعددة: normalize → dedupe → sort → acquire بالترتيب.
+ * - بعدها يُفضَّل FOR UPDATE على الصفوف الفعلية.
+ *
+ * لا تستخدم hash عشوائي من JavaScript.
+ */
+import type { TxClient } from './with-transaction';
+import { txQuery } from './with-transaction';
+
+/** فضاء أسماء int4 للأقفال — منفصل عن 58001xxx العالمية القديمة */
+export const ADVISORY_LOCK_NAMESPACE_ACCOUNTING_RESOURCE = 58002001;
+
+export type AccountingLockDomain =
+  | 'BANK_ACCOUNT'
+  | 'BANK_GL'
+  | 'CASHBOX'
+  | 'CASH_SESSION'
+  | 'DOCUMENT_SEQUENCE'
+  | 'JOURNAL_SOURCE'
+  | 'CHART_ACCOUNT';
+
+export type AccountingLockResource = {
+  domain: AccountingLockDomain;
+  /** معرّف المورد (UUID أو مفتاح مركّب مثل SEQUENCE:TYPE:YEAR) */
+  resourceId: string;
+};
+
+export function accountingLockKey(
+  domain: AccountingLockDomain,
+  resourceId: string
+): string {
+  const id = String(resourceId ?? '').trim();
+  if (!id) {
+    throw new Error(`accountingLockKey: resourceId فارغ لـ ${domain}`);
+  }
+  return `${domain}:${id}`;
+}
+
+function normalizeResources(
+  resources: AccountingLockResource[]
+): AccountingLockResource[] {
+  const map = new Map<string, AccountingLockResource>();
+  for (const r of resources) {
+    if (!r?.domain || !r.resourceId) continue;
+    const id = String(r.resourceId).trim();
+    if (!id) continue;
+    const key = accountingLockKey(r.domain, id);
+    if (!map.has(key)) {
+      map.set(key, { domain: r.domain, resourceId: id });
+    }
+  }
+  return [...map.values()].sort((a, b) =>
+    accountingLockKey(a.domain, a.resourceId).localeCompare(
+      accountingLockKey(b.domain, b.resourceId),
+      'en'
+    )
+  );
+}
+
+/**
+ * يحصل على أقفال استشارية مرتّبة لمجوعة موارد.
+ * يعيد قائمة المفاتيح التي أُقفلت (مفيدة للاختبارات).
+ */
+export async function acquireAccountingResourceLocks(
+  client: TxClient,
+  resources: AccountingLockResource[]
+): Promise<string[]> {
+  const ordered = normalizeResources(resources);
+  const keys: string[] = [];
+  for (const r of ordered) {
+    const key = accountingLockKey(r.domain, r.resourceId);
+    await txQuery(
+      client,
+      `SELECT pg_advisory_xact_lock($1::integer, hashtext($2::text))`,
+      [ADVISORY_LOCK_NAMESPACE_ACCOUNTING_RESOURCE, key]
+    );
+    keys.push(key);
+  }
+  return keys;
+}
+
+/** مساعدات بناء موارد شائعة */
+export function bankAccountLock(id: string): AccountingLockResource {
+  return { domain: 'BANK_ACCOUNT', resourceId: id };
+}
+export function bankGlLock(glAccountId: string): AccountingLockResource {
+  return { domain: 'BANK_GL', resourceId: glAccountId };
+}
+export function cashboxLock(id: string): AccountingLockResource {
+  return { domain: 'CASHBOX', resourceId: id };
+}
+export function cashSessionLock(id: string): AccountingLockResource {
+  return { domain: 'CASH_SESSION', resourceId: id };
+}
+export function chartAccountLock(id: string): AccountingLockResource {
+  return { domain: 'CHART_ACCOUNT', resourceId: id };
+}
+export function documentSequenceLock(
+  documentType: string,
+  fiscalYearId: string
+): AccountingLockResource {
+  return {
+    domain: 'DOCUMENT_SEQUENCE',
+    resourceId: `${documentType}:${fiscalYearId}`,
+  };
+}
+export function journalSourceLock(
+  sourceType: string,
+  sourceId: string
+): AccountingLockResource {
+  return {
+    domain: 'JOURNAL_SOURCE',
+    resourceId: `${sourceType}:${sourceId}`,
+  };
+}

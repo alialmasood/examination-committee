@@ -5,9 +5,14 @@
  * بدون رسوم: Dr Destination / Cr Source
  * مع رسوم: Dr Destination (amount) + Dr Fees (fee) / Cr Source (amount+fee)
  *
- * التزامن: acquireBanksLock + قفل صفوف الحسابات البنكية و Bank GL بترتيب
- * UUID ثابت لتجنب deadlock عند التحويلات المتعاكسة.
+ * التزامن: أقفال موارد BANK_ACCOUNT + BANK_GL مرتّبة + قفل صفوف FOR UPDATE.
  */
+import {
+  acquireAccountingResourceLocks,
+  bankAccountLock,
+  bankGlLock,
+  chartAccountLock,
+} from './accounting-locks';
 import { getAccountBookBalanceTx } from './account-book-balance';
 import {
   assertCanPostBankAccount,
@@ -41,8 +46,9 @@ import {
   moneyToMillisSigned,
   normalizeMoneyInput,
 } from './money';
+import { assertPostingAccountWithType } from './posting-account';
 import type { TxClient } from './with-transaction';
-import { acquireBanksLock, txQuery } from './with-transaction';
+import { txQuery } from './with-transaction';
 
 export type BankTransferStatus = 'DRAFT' | 'POSTED' | 'VOID';
 
@@ -211,49 +217,6 @@ async function resolveOpenFiscalForDate(
   };
 }
 
-async function assertPostingAccount(
-  client: TxClient,
-  accountId: string,
-  label: string
-): Promise<{
-  id: string;
-  code: string;
-  requires_cost_center: boolean;
-  account_type_code: string;
-}> {
-  const r = await txQuery<{
-    id: string;
-    code: string;
-    is_active: boolean;
-    is_group: boolean;
-    allow_posting: boolean;
-    requires_cost_center: boolean;
-    account_type_code: string;
-  }>(
-    client,
-    `SELECT a.id, a.code, a.is_active, a.is_group, a.allow_posting,
-            a.requires_cost_center, t.code AS account_type_code
-     FROM accounts.chart_of_accounts a
-     JOIN accounts.account_types t ON t.id = a.account_type_id
-     WHERE a.id = $1::uuid`,
-    [accountId]
-  );
-  if (!r.rows[0]) throw new AccountsHttpError(`${label} غير موجود`, 404);
-  const a = r.rows[0];
-  if (!a.is_active || a.is_group || !a.allow_posting) {
-    throw new AccountsHttpError(
-      `${label} يجب أن يكون تفصيلياً وترحيلياً وفعّالاً`,
-      400
-    );
-  }
-  return {
-    id: a.id,
-    code: a.code,
-    requires_cost_center: a.requires_cost_center,
-    account_type_code: a.account_type_code,
-  };
-}
-
 /**
  * صلاحيات العرض: can_view على المصدر والوجهة (تحفظي) — Admin يتجاوز.
  */
@@ -324,7 +287,7 @@ export async function assertBankTransferAccounts(
 ): Promise<{
   source: BankAccountRow;
   destination: BankAccountRow;
-  feeAccount: Awaited<ReturnType<typeof assertPostingAccount>> | null;
+  feeAccount: Awaited<ReturnType<typeof assertPostingAccountWithType>> | null;
 }> {
   if (params.sourceId === params.destinationId) {
     throw new AccountsHttpError(
@@ -356,15 +319,18 @@ export async function assertBankTransferAccounts(
     );
   }
 
-  await assertPostingAccount(client, source.gl_account_id, 'حساب GL المصدر');
-  await assertPostingAccount(
+  await assertPostingAccountWithType(client, source.gl_account_id, 'حساب GL المصدر', {
+    invalidStatusCode: 400,
+  });
+  await assertPostingAccountWithType(
     client,
     destination.gl_account_id,
-    'حساب GL الوجهة'
+    'حساب GL الوجهة',
+    { invalidStatusCode: 400 }
   );
 
   const feeMillis = moneyToMillis(params.feeAmount);
-  let feeAccount: Awaited<ReturnType<typeof assertPostingAccount>> | null = null;
+  let feeAccount: Awaited<ReturnType<typeof assertPostingAccountWithType>> | null = null;
   if (feeMillis > BigInt(0)) {
     if (!params.feeExpenseAccountId) {
       throw new AccountsHttpError(
@@ -372,10 +338,11 @@ export async function assertBankTransferAccounts(
         400
       );
     }
-    feeAccount = await assertPostingAccount(
+    feeAccount = await assertPostingAccountWithType(
       client,
       params.feeExpenseAccountId,
-      'حساب مصروف الرسوم'
+      'حساب مصروف الرسوم',
+      { invalidStatusCode: 400 }
     );
     if (feeAccount.account_type_code !== 'EXPENSE') {
       throw new AccountsHttpError(
@@ -394,15 +361,17 @@ export async function assertBankTransferAccounts(
     }
   }
 
-  const sourceGl = await assertPostingAccount(
+  const sourceGl = await assertPostingAccountWithType(
     client,
     source.gl_account_id,
-    'حساب GL المصدر'
+    'حساب GL المصدر',
+    { invalidStatusCode: 400 }
   );
-  const destGl = await assertPostingAccount(
+  const destGl = await assertPostingAccountWithType(
     client,
     destination.gl_account_id,
-    'حساب GL الوجهة'
+    'حساب GL الوجهة',
+    { invalidStatusCode: 400 }
   );
   const needsCc =
     sourceGl.requires_cost_center ||
@@ -460,10 +429,18 @@ async function lockTransferBalanceParticipants(
     feeGlId: string | null;
   }
 ): Promise<void> {
-  const bankIds = [
-    params.source.id,
-    params.destination.id,
-  ].sort((a, b) => a.localeCompare(b));
+  const resources = [
+    bankAccountLock(params.source.id),
+    bankAccountLock(params.destination.id),
+    bankGlLock(params.source.gl_account_id),
+    bankGlLock(params.destination.gl_account_id),
+    ...(params.feeGlId ? [chartAccountLock(params.feeGlId)] : []),
+  ];
+  await acquireAccountingResourceLocks(client, resources);
+
+  const bankIds = [params.source.id, params.destination.id].sort((a, b) =>
+    a.localeCompare(b)
+  );
   for (const id of bankIds) {
     await loadBankAccount(client, id, true);
   }
@@ -481,7 +458,6 @@ async function lockTransferBalanceParticipants(
     );
   }
 
-  // قفل سندات/تحويلات مرتبطة بالمصدر (خصم) بنفس روح 4.B
   await txQuery(
     client,
     `SELECT id FROM accounts.bank_vouchers
@@ -808,8 +784,6 @@ export async function postBankTransfer(
     userId: params.userId,
   });
 
-  await acquireBanksLock(client);
-
   const amount = normalizeMoneyInput(transfer.amount);
   const feeAmount = normalizeMoneyInput(transfer.fee_amount ?? '0');
 
@@ -998,19 +972,32 @@ export async function voidBankTransfer(
     userId: params.userId,
   });
 
-  await acquireBanksLock(client);
-
-  // قفل الحسابات بترتيب UUID ثابت (ليس مصدر ثم وجهة) لتوافق POST والتحويلات المتعاكسة
-  const bankIds = [
+  const sourcePeek = await loadBankAccount(
+    client,
     transfer.source_bank_account_id,
+    false
+  );
+  const destPeek = await loadBankAccount(
+    client,
     transfer.destination_bank_account_id,
-  ].sort((a, b) => a.localeCompare(b));
-  const lockedBanks = new Map<string, BankAccountRow>();
-  for (const id of bankIds) {
-    lockedBanks.set(id, await loadBankAccount(client, id, true));
-  }
-  const sourceAcc = lockedBanks.get(transfer.source_bank_account_id)!;
-  const destAcc = lockedBanks.get(transfer.destination_bank_account_id)!;
+    false
+  );
+  await lockTransferBalanceParticipants(client, {
+    source: sourcePeek,
+    destination: destPeek,
+    feeGlId: transfer.fee_expense_account_id,
+  });
+
+  const sourceAcc = await loadBankAccount(
+    client,
+    transfer.source_bank_account_id,
+    false
+  );
+  const destAcc = await loadBankAccount(
+    client,
+    transfer.destination_bank_account_id,
+    false
+  );
   if (sourceAcc.status === 'CLOSED' || destAcc.status === 'CLOSED') {
     throw new AccountsHttpError(
       'لا يمكن إلغاء تحويل مرتبط بحساب مصرفي مغلق',

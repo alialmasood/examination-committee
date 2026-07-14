@@ -31,8 +31,15 @@ import {
   moneyToMillisSigned,
   normalizeMoneyInput,
 } from './money';
+import {
+  acquireAccountingResourceLocks,
+  cashboxLock,
+  cashSessionLock,
+  chartAccountLock,
+} from './accounting-locks';
+import { assertPostingAccount } from './posting-account';
 import type { TxClient } from './with-transaction';
-import { acquireCashBoxesLock, txQuery } from './with-transaction';
+import { txQuery } from './with-transaction';
 import { calculateSessionExpectedBalance } from './cash-vouchers';
 
 export type CashTransferStatus =
@@ -140,35 +147,6 @@ async function assertOpenSessionForTransfer(
       409
     );
   }
-}
-
-async function assertPostingAccount(
-  client: TxClient,
-  accountId: string,
-  label: string
-): Promise<{ id: string; code: string; requires_cost_center: boolean }> {
-  const r = await txQuery<{
-    id: string;
-    code: string;
-    is_active: boolean;
-    is_group: boolean;
-    allow_posting: boolean;
-    requires_cost_center: boolean;
-  }>(
-    client,
-    `SELECT id, code, is_active, is_group, allow_posting, requires_cost_center
-     FROM accounts.chart_of_accounts WHERE id = $1::uuid`,
-    [accountId]
-  );
-  if (!r.rows[0]) throw new AccountsHttpError(`${label} غير موجود`, 404);
-  const a = r.rows[0];
-  if (!a.is_active || a.is_group || !a.allow_posting) {
-    throw new AccountsHttpError(
-      `${label} يجب أن يكون تفصيلياً وقابلاً للترحيل وفعّالاً`,
-      409
-    );
-  }
-  return a;
 }
 
 async function resolveCitAccount(
@@ -480,7 +458,6 @@ export async function dispatchCashTransfer(
     updated_at: unknown;
   }
 ): Promise<{ transfer: CashTransferRow; created: boolean }> {
-  await acquireCashBoxesLock(client);
   const transfer = await loadCashTransfer(client, params.id, true);
 
   if (transfer.status === 'DISPATCHED' || transfer.status === 'RECEIVED') {
@@ -494,6 +471,16 @@ export async function dispatchCashTransfer(
   }
 
   assertOptimistic(transfer, params.version, params.updated_at);
+
+  const sourcePeek = await loadCashBox(client, transfer.source_cash_box_id, false);
+  const destPeek = await loadCashBox(client, transfer.destination_cash_box_id, false);
+  await acquireAccountingResourceLocks(client, [
+    cashboxLock(transfer.source_cash_box_id),
+    cashboxLock(transfer.destination_cash_box_id),
+    cashSessionLock(transfer.source_session_id),
+    ...(sourcePeek.account_id ? [chartAccountLock(sourcePeek.account_id)] : []),
+    ...(destPeek.account_id ? [chartAccountLock(destPeek.account_id)] : []),
+  ]);
 
   const sourceSession = await loadCashSession(client, transfer.source_session_id, true);
   await assertOpenSessionForTransfer(sourceSession, 'جلسة المرسل');
@@ -659,7 +646,6 @@ export async function receiveCashTransfer(
     destination_session_id?: unknown;
   }
 ): Promise<{ transfer: CashTransferRow; created: boolean }> {
-  await acquireCashBoxesLock(client);
   const transfer = await loadCashTransfer(client, params.id, true);
 
   if (transfer.status === 'RECEIVED') {
@@ -682,6 +668,19 @@ export async function receiveCashTransfer(
     }
     destSessionId = live.id;
   }
+
+  const destPeek = await loadCashBox(client, transfer.destination_cash_box_id, false);
+  const sourcePeek = await loadCashBox(client, transfer.source_cash_box_id, false);
+  await acquireAccountingResourceLocks(client, [
+    cashboxLock(transfer.source_cash_box_id),
+    cashboxLock(transfer.destination_cash_box_id),
+    cashSessionLock(destSessionId),
+    ...(transfer.source_session_id
+      ? [cashSessionLock(transfer.source_session_id)]
+      : []),
+    ...(sourcePeek.account_id ? [chartAccountLock(sourcePeek.account_id)] : []),
+    ...(destPeek.account_id ? [chartAccountLock(destPeek.account_id)] : []),
+  ]);
 
   const destSession = await loadCashSession(client, destSessionId, true);
   await assertOpenSessionForTransfer(destSession, 'جلسة المستلم');
@@ -834,7 +833,6 @@ export async function cancelCashTransfer(
   const reason = String(params.reason ?? '').trim();
   if (!reason) throw new AccountsHttpError('سبب الإلغاء مطلوب', 400);
 
-  await acquireCashBoxesLock(client);
   const transfer = await loadCashTransfer(client, params.id, true);
   assertOptimistic(transfer, params.version, params.updated_at);
 
@@ -848,6 +846,18 @@ export async function cancelCashTransfer(
       409
     );
   }
+
+  const sourcePeek = await loadCashBox(client, transfer.source_cash_box_id, false);
+  const destPeek = await loadCashBox(client, transfer.destination_cash_box_id, false);
+  await acquireAccountingResourceLocks(client, [
+    cashboxLock(transfer.source_cash_box_id),
+    cashboxLock(transfer.destination_cash_box_id),
+    ...(transfer.source_session_id
+      ? [cashSessionLock(transfer.source_session_id)]
+      : []),
+    ...(sourcePeek.account_id ? [chartAccountLock(sourcePeek.account_id)] : []),
+    ...(destPeek.account_id ? [chartAccountLock(destPeek.account_id)] : []),
+  ]);
 
   if (transfer.status === 'DRAFT') {
     await assertCanOperateCashSession(client, {
