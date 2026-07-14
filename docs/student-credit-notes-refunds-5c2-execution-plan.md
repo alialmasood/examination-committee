@@ -35,7 +35,23 @@ Credit Balance = max(0, −Student Balance)
    - لا يزيد `credit_note_amount` فوق حد التسوية
    - ينتج رصيد دائن في الـ Subledger فقط
 
-**Refund:** `amount ≤ Credit Balance` ومرتبط بتحصيلات عبر `student_refund_allocations`.
+**Refund:** `amount ≤ available_refund` ومرتبط بتحصيلات عبر `student_refund_allocations`.
+
+```
+available_refund = max(0, Credit Balance − reserved PENDING/APPROVED refunds)
+collection_refundable = collection.amount − Σ allocations على Refunds (POSTED|PENDING|APPROVED)
+```
+
+كلا الشرطين إلزاميان قبل Submit/Approve/Post.
+
+### حد CREDIT_BALANCE_CREATE
+`eligible = min(charge_collections − posted/reserved CN, account_headroom)`  
+حيث `account_headroom = net posted collections − posted credit CNs − reserved CNs − posted refunds − reserved refunds`.  
+ممنوع بلا تحصيل مرحّل على المطالبة.
+
+### تلوث unexplained
+اختبار قديم موّل الصندوق بـ counter = ذمم الطلبة (−20000 على DEMO-RECV-SCN-*). يُنظَّف idempotent عبر `DEMO-5C2-CLEANUP-FUNDING-*`.  
+المتبقّي `unexplained=560` = نشاط نقدي على GL `1111` المرتبط خطأً بحساب طالب `STA-2026-000001` (سابق لـ 5.C.2، ليس أثر Credit Note/Refund).
 
 ## القواعد المحاسبية
 

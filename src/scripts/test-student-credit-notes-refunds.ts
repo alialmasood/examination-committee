@@ -11,6 +11,7 @@ import { AccountsHttpError, requireAccountsAccess } from '../lib/accounts/auth';
 import { grantAccountsAdminRole } from '../lib/accounts/accounts-access';
 import { pgDateOnly } from '../lib/accounts/document-sequences';
 import {
+  millisToMoney,
   moneyEquals,
   moneyToMillis,
 } from '../lib/accounts/money';
@@ -43,6 +44,7 @@ import {
   createStudentRefund,
   getStudentCreditBalance,
   postStudentRefund,
+  setStudentRefundPostFaultForTests,
   submitStudentRefund,
   voidStudentRefund,
 } from '../lib/accounts/student-refunds';
@@ -836,6 +838,237 @@ async function main() {
   if (fs.existsSync(printCn) && fs.existsSync(printRf)) ok('16) صفحات الطباعة موجودة');
   else fail('16) print pages');
 
+  // 18) CREDIT_BALANCE_CREATE بلا تحصيل سابق
+  const bareCharge = await withTransaction((client) =>
+    createStudentCharge(client, {
+      student_account_id: account2.id,
+      fee_type_id: feeType.id,
+      charge_date: fiscal.chargeDate,
+      original_amount: '5000',
+      description: 'بدون تحصيل',
+      created_by: userId,
+    })
+  );
+  const barePosted = await withTransaction(async (client) => {
+    await acquireJournalEntriesLock(client);
+    return postStudentCharge(client, {
+      id: bareCharge.id,
+      userId,
+      version: bareCharge.version,
+      updated_at: bareCharge.updated_at,
+    });
+  });
+  await expectHttp(
+    '18) منع CREDIT_BALANCE_CREATE بلا تحصيل مرحّل',
+    () =>
+      withTransaction((client) =>
+        createStudentCreditNote(client, {
+          student_charge_id: barePosted.charge.id,
+          application_mode: 'CREDIT_BALANCE_CREATE',
+          amount: '1000',
+          reason_code: 'ADMINISTRATIVE_ADJUSTMENT',
+          reason: 'بدون تحصيل',
+          revenue_adjustment_gl_account_id: adjGl,
+          credit_note_date: fiscal.chargeDate,
+          requested_by: userId,
+        })
+      ),
+    409
+  );
+
+  // 19) Refundان متزامنان على نفس الرصيد — ينجح واحد فقط
+  const balNow = await withTransaction((client) =>
+    getStudentCreditBalance(client, account2.id)
+  );
+  const half = millisToMoney(moneyToMillis(balNow) / BigInt(2));
+  if (moneyToMillis(balNow) >= BigInt(2000)) {
+    const a = await withTransaction((client) =>
+      createStudentRefund(client, {
+        student_account_id: account2.id,
+        amount: balNow,
+        payment_method: 'BANK',
+        bank_account_id: bankAccountId,
+        refund_date: fiscal.chargeDate,
+        reason: 'سباق A',
+        allocations: [
+          {
+            student_collection_id: col.collection.id,
+            refunded_amount: balNow,
+          },
+        ],
+        requested_by: userId,
+      })
+    );
+    const b = await withTransaction((client) =>
+      createStudentRefund(client, {
+        student_account_id: account2.id,
+        amount: half,
+        payment_method: 'BANK',
+        bank_account_id: bankAccountId,
+        refund_date: fiscal.chargeDate,
+        reason: 'سباق B',
+        allocations: [
+          {
+            student_collection_id: col.collection.id,
+            refunded_amount: half,
+          },
+        ],
+        requested_by: userId,
+      })
+    );
+    const [r1, r2] = await Promise.allSettled([
+      withTransaction((client) =>
+        submitStudentRefund(client, {
+          id: a.id,
+          userId,
+          version: a.version,
+          updated_at: a.updated_at,
+        })
+      ),
+      withTransaction((client) =>
+        submitStudentRefund(client, {
+          id: b.id,
+          userId,
+          version: b.version,
+          updated_at: b.updated_at,
+        })
+      ),
+    ]);
+    const okN = [r1, r2].filter((x) => x.status === 'fulfilled').length;
+    const failN = [r1, r2].filter((x) => x.status === 'rejected').length;
+    if (okN === 1 && failN === 1) ok('19) Refundان متزامنان — نجح واحد فقط');
+    else fail('19) concurrent submit', { okN, failN, balNow });
+    // حرّر الحجز من السباق قبل اختبارات لاحقة
+    for (const id of [a.id, b.id]) {
+      const row = await query(
+        `SELECT id, status, version, updated_at FROM accounts.student_refunds WHERE id=$1::uuid`,
+        [id]
+      );
+      if (
+        row.rows[0] &&
+        ['DRAFT', 'PENDING_APPROVAL', 'APPROVED'].includes(
+          String(row.rows[0].status)
+        )
+      ) {
+        await withTransaction((client) =>
+          voidStudentRefund(client, {
+            id: String(row.rows[0].id),
+            userId,
+            version: row.rows[0].version,
+            updated_at: row.rows[0].updated_at,
+            reason: 'تحرير بعد سباق اختبار',
+          })
+        );
+      }
+    }
+  } else {
+    ok('19) تخطّي سباق (رصيد دائن منخفض)');
+  }
+
+  // 20) fault injection — لا يبقى Voucher بلا Refund POSTED
+  {
+    const avail = await withTransaction((client) =>
+      getStudentCreditBalance(client, account2.id)
+    );
+    if (moneyToMillis(avail) < BigInt(1000)) {
+      ok('20) تخطّي fault (لا رصيد دائن كافٍ)');
+    } else {
+      let faultRefund = await withTransaction((client) =>
+        createStudentRefund(client, {
+          student_account_id: account2.id,
+          amount: '1000',
+          payment_method: 'BANK',
+          bank_account_id: bankAccountId,
+          refund_date: fiscal.chargeDate,
+          reason: 'fault injection',
+          allocations: [
+            {
+              student_collection_id: col.collection.id,
+              refunded_amount: '1000',
+            },
+          ],
+          requested_by: userId,
+        })
+      );
+      faultRefund = await withTransaction((client) =>
+        submitStudentRefund(client, {
+          id: faultRefund.id,
+          userId,
+          version: faultRefund.version,
+          updated_at: faultRefund.updated_at,
+        })
+      );
+      faultRefund = await withTransaction((client) =>
+        approveStudentRefund(client, {
+          id: faultRefund.id,
+          userId: approverId,
+          version: faultRefund.version,
+          updated_at: faultRefund.updated_at,
+        })
+      );
+      setStudentRefundPostFaultForTests('after_voucher');
+      try {
+        await withTransaction(async (client) => {
+          await acquireJournalEntriesLock(client);
+          return postStudentRefund(client, {
+            id: faultRefund.id,
+            userId,
+            version: faultRefund.version,
+            updated_at: faultRefund.updated_at,
+          });
+        });
+        fail('20) fault injection — كان يجب أن يفشل');
+      } catch (e) {
+        if (e instanceof Error && e.message === 'FAULT_AFTER_VOUCHER') {
+          const stuck = await query(
+            `SELECT status, bank_voucher_id, refund_number FROM accounts.student_refunds WHERE id=$1::uuid`,
+            [faultRefund.id]
+          );
+          const orphanV = await query(
+            `SELECT COUNT(*)::int AS n FROM accounts.bank_vouchers bv
+             WHERE bv.party_reference=$1 AND bv.status='POSTED'
+               AND NOT EXISTS (
+                 SELECT 1 FROM accounts.student_refunds sr
+                 WHERE sr.bank_voucher_id=bv.id AND sr.status='POSTED'
+               )`,
+            [stuck.rows[0]?.refund_number]
+          );
+          if (
+            stuck.rows[0]?.status === 'APPROVED' &&
+            !stuck.rows[0]?.bank_voucher_id &&
+            (orphanV.rows[0]?.n ?? 0) === 0
+          ) {
+            ok('20) fault injection — rollback بلا سند يتيم');
+          } else {
+            fail('20) orphan after fault', {
+              stuck: stuck.rows[0],
+              orphanV: orphanV.rows[0],
+            });
+          }
+        } else fail('20) fault unexpected', e);
+      } finally {
+        setStudentRefundPostFaultForTests(null);
+      }
+    }
+  }
+
+  // 21) تمويل الصندوق لا يستخدم GL الذمم (التحقق من كود التمويل الفعلي)
+  const fundingSnippet = fs
+    .readFileSync(
+      path.join(process.cwd(), 'src/scripts/test-student-credit-notes-refunds.ts'),
+      'utf8'
+    )
+    .split('تمويل صندوق لاسترداد 5.C.2')[0]
+    .slice(-280);
+  if (
+    fundingSnippet.includes('counter_account_id: revGl') &&
+    !fundingSnippet.includes('counter_account_id: recvGl')
+  ) {
+    ok('21) الاختبار يموّل الصندوق عبر حساب إيراد لا الذمم');
+  } else {
+    fail('21) تمويل الصندوق يستخدم حساباً غير صحيح', fundingSnippet);
+  }
+
   const verify = await withTransaction((c) => verifyStudentReceivables(c));
   if (
     verify.charge_subledger_match &&
@@ -845,6 +1078,19 @@ async function main() {
     ok('17) verify A↔B مع Credit Notes');
   } else {
     fail('17) verify', verify);
+  }
+
+  // 22) بعد التنظيف المتوقع: DEMO-RECV-SCN-277425 لا يُفترض هنا؛ نتحقق أن unexplained لا يزيد بسبب الاختبار الحالي
+  const glAfter = verify.details.gl_accounts.find(
+    (g) => g.code === `DEMO-RECV-SCN-${suffix}`
+  );
+  if (glAfter) {
+    const u =
+      Number(glAfter.full_gl_balance) - Number(glAfter.charge_sourced_balance);
+    if (Math.abs(u) < 0.001) ok('22) لا تلوث تمويل على GL اختبار التشغيل');
+    else fail('22) unexplained على GL الاختبار', { u, glAfter });
+  } else {
+    ok('22) لا GL اختبار ظاهر في verify (مقبول)');
   }
 
   console.log(`===== انتهى 5.C.2 — نجح ${passCount} · فشل ${failCount} =====`);

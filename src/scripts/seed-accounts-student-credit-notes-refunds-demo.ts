@@ -27,8 +27,15 @@ import {
 import {
   acquireCashBoxesLock,
   acquireJournalEntriesLock,
+  txQuery,
   withTransaction,
 } from '../lib/accounts/with-transaction';
+import {
+  allocateJournalEntryNumber,
+  assertFiscalContextForEntry,
+  normalizeAndValidateLines,
+  replaceJournalLines,
+} from '../lib/accounts/journal-entries';
 
 const M = {
   /** مطالبات إشعارات تخفيض الذمة (لا تحتاج رصيد دائن) */
@@ -81,6 +88,107 @@ async function ensureAdjGl(userId: string): Promise<string> {
     ]
   );
   return ins.rows[0].id as string;
+}
+
+async function cleanupDemoRefundFundingPollution(
+  userId: string,
+  entryDate: string,
+  adjGlId: string
+): Promise<void> {
+  const vouchers = await query(
+    `SELECT cv.voucher_number, cv.amount::text AS amount, cv.counter_account_id,
+            cv.fiscal_year_id, cv.fiscal_period_id
+     FROM accounts.cash_vouchers cv
+     JOIN accounts.chart_of_accounts coa ON coa.id = cv.counter_account_id
+     WHERE cv.voucher_type = 'CASH_RECEIPT'
+       AND cv.status = 'POSTED'
+       AND cv.description ILIKE '%تمويل صندوق لاسترداد 5.C.2%'
+       AND coa.code ILIKE 'DEMO-RECV%'`
+  );
+  if (!vouchers.rows.length) return;
+
+  const fiscal = await query(
+    `SELECT y.id AS year_id, p.id AS period_id
+     FROM accounts.fiscal_years y
+     JOIN accounts.fiscal_periods p ON p.fiscal_year_id = y.id
+     WHERE y.status = 'ACTIVE' AND p.status = 'OPEN'
+       AND p.start_date <= $1::date AND p.end_date >= $1::date
+     ORDER BY y.is_default DESC, p.start_date
+     LIMIT 1`,
+    [entryDate]
+  );
+  if (!fiscal.rows[0]) {
+    console.log('⚠ لا فترة مالية مفتوحة — تخطّي تنظيف تمويل DEMO');
+    return;
+  }
+
+  for (const v of vouchers.rows) {
+    const ref = `DEMO-5C2-CLEANUP-FUNDING-${v.voucher_number as string}`;
+    const exists = await query(
+      `SELECT 1 FROM accounts.journal_entries
+       WHERE reference_number = $1 OR description = $1
+       LIMIT 1`,
+      [ref]
+    );
+    if (exists.rows[0]) {
+      console.log(`✓ cleanup ${ref} موجود`);
+      continue;
+    }
+    await withTransaction(async (client) => {
+      await acquireJournalEntriesLock(client);
+      await assertFiscalContextForEntry(client, {
+        fiscalYearId: fiscal.rows[0].year_id as string,
+        fiscalPeriodId: fiscal.rows[0].period_id as string,
+        entryDate,
+      });
+      const amount = v.amount as string;
+      const { lines, totalDebit, totalCredit } = await normalizeAndValidateLines(
+        client,
+        [
+          {
+            account_id: v.counter_account_id as string,
+            debit_amount: amount,
+            credit_amount: '0',
+            description: ref,
+          },
+          {
+            account_id: adjGlId,
+            debit_amount: '0',
+            credit_amount: amount,
+            description: ref,
+          },
+        ],
+        'strict'
+      );
+      const entryNumber = await allocateJournalEntryNumber(
+        client,
+        fiscal.rows[0].year_id as string
+      );
+      const ins = await txQuery(
+        client,
+        `INSERT INTO accounts.journal_entries
+          (entry_number, fiscal_year_id, fiscal_period_id, entry_date, entry_type,
+           reference_number, description, total_debit, total_credit, status,
+           created_by, updated_by, posted_by, posted_at)
+         VALUES ($1,$2::uuid,$3::uuid,$4::date,'ADJUSTMENT',$5::text,$6::text,$7::numeric,$8::numeric,
+                 'POSTED',$9::uuid,$9::uuid,$9::uuid,NOW())
+         RETURNING id`,
+        [
+          entryNumber,
+          fiscal.rows[0].year_id,
+          fiscal.rows[0].period_id,
+          entryDate,
+          ref,
+          ref,
+          totalDebit,
+          totalCredit,
+          userId,
+        ]
+      );
+      await replaceJournalLines(client, ins.rows[0].id as string, lines);
+    });
+    console.log(`✓ cleanup ${ref}`);
+  }
 }
 
 async function existsExt(table: string, ext: string): Promise<boolean> {
@@ -340,6 +448,8 @@ export async function seedStudentCreditNotesRefundsDemo(params: {
   }
 
   if (collectionId && creditAccountId) {
+    await cleanupDemoRefundFundingPollution(params.userId, params.entryDate, adjGl);
+
     const creditCharge = await query(
       `SELECT id FROM accounts.student_charges WHERE external_reference=$1 LIMIT 1`,
       [M.chargeCredit]

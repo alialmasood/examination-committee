@@ -36,7 +36,6 @@ import {
   recalculateStudentBillingPlanSettlement,
   recalculateStudentInstallmentSettlement,
   sumPostedCollectionsOnCharge,
-  sumPostedCreditNotesOnCharge,
 } from './student-settlement';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
@@ -101,10 +100,19 @@ export async function calculateCreditNoteEligibleAmount(client: TxClient, charge
     return eligible>BigInt(0)?millisToMoney(eligible):'0.000';
   }
   const collected=await sumPostedCollectionsOnCharge(client,chargeId);
-  const posted=await sumPostedCreditNotesOnCharge(client,chargeId); // only debt is deliberately excluded; credit-mode is queried below
-  const creditMode=await txQuery<{total:string}>(client,`SELECT COALESCE(SUM(amount),0)::text total FROM accounts.student_credit_notes WHERE student_charge_id=$1::uuid AND application_mode='CREDIT_BALANCE_CREATE' AND status='POSTED'`,[chargeId]);
-  void posted;
-  const eligible=moneyToMillis(collected)-moneyToMillis(normalizeMoneyInput(creditMode.rows[0]?.total??'0'))-moneyToMillis(reserved);
+  if (moneyToMillis(collected) <= BigInt(0)) return '0.000';
+  const creditModePosted=await txQuery<{total:string}>(client,`SELECT COALESCE(SUM(amount),0)::text total FROM accounts.student_credit_notes WHERE student_charge_id=$1::uuid AND application_mode='CREDIT_BALANCE_CREATE' AND status='POSTED'`,[chargeId]);
+  const chargeEligible=moneyToMillis(collected)-moneyToMillis(normalizeMoneyInput(creditModePosted.rows[0]?.total??'0'))-moneyToMillis(reserved);
+  const accountId=charge.student_account_id;
+  const accountCollected=await txQuery<{total:string}>(client,`SELECT COALESCE(SUM(amount),0)::text total FROM accounts.student_collections WHERE student_account_id=$1::uuid AND status='POSTED'`,[accountId]);
+  const accountPostedCreditCNs=await txQuery<{total:string}>(client,`SELECT COALESCE(SUM(amount),0)::text total FROM accounts.student_credit_notes WHERE student_account_id=$1::uuid AND application_mode='CREDIT_BALANCE_CREATE' AND status='POSTED'`,[accountId]);
+  const accountReservedCreditCNs=await txQuery<{total:string}>(client,`SELECT COALESCE(SUM(amount),0)::text total FROM accounts.student_credit_notes WHERE student_account_id=$1::uuid AND application_mode='CREDIT_BALANCE_CREATE' AND status IN ('PENDING_APPROVAL','APPROVED') AND ($2::uuid IS NULL OR id<>$2::uuid)`,[accountId,excludeId??null]);
+  const accountPostedRefunds=await txQuery<{total:string}>(client,`SELECT COALESCE(SUM(amount),0)::text total FROM accounts.student_refunds WHERE student_account_id=$1::uuid AND status='POSTED'`,[accountId]);
+  const accountReservedRefunds=await txQuery<{total:string}>(client,`SELECT COALESCE(SUM(amount),0)::text total FROM accounts.student_refunds WHERE student_account_id=$1::uuid AND status IN ('PENDING_APPROVAL','APPROVED')`,[accountId]);
+  const headroom=moneyToMillis(normalizeMoneyInput(accountCollected.rows[0]?.total??'0'))-moneyToMillis(normalizeMoneyInput(accountPostedCreditCNs.rows[0]?.total??'0'))-moneyToMillis(normalizeMoneyInput(accountReservedCreditCNs.rows[0]?.total??'0'))-moneyToMillis(normalizeMoneyInput(accountPostedRefunds.rows[0]?.total??'0'))-moneyToMillis(normalizeMoneyInput(accountReservedRefunds.rows[0]?.total??'0'));
+  const chargeEl=chargeEligible>BigInt(0)?chargeEligible:BigInt(0);
+  const headEl=headroom>BigInt(0)?headroom:BigInt(0);
+  const eligible=chargeEl<headEl?chargeEl:headEl;
   return eligible>BigInt(0)?millisToMoney(eligible):'0.000';
 }
 async function links(client: TxClient, chargeId: string) {
@@ -114,6 +122,12 @@ async function links(client: TxClient, chargeId: string) {
 export async function createStudentCreditNote(client: TxClient, input: Record<string,unknown>&{requested_by:string}) {
   const chargeId=text(input.student_charge_id,100); if(!chargeId) throw new AccountsHttpError('المطالبة المالية مطلوبة',400);
   const charge=await loadStudentCharge(client,chargeId,true); const applicationMode=mode(input.application_mode); const a=amount(input.amount);
+  if (applicationMode === 'CREDIT_BALANCE_CREATE') {
+    const collectedOnCharge = await sumPostedCollectionsOnCharge(client, chargeId);
+    if (moneyToMillis(collectedOnCharge) <= BigInt(0)) {
+      throw new AccountsHttpError('لا يمكن إنشاء إشعار رصيد دائن دون الحاجة لتحصيل مرحّل سابق على المطالبة', 409);
+    }
+  }
   const eligible=await calculateCreditNoteEligibleAmount(client,chargeId,applicationMode);
   if(moneyToMillis(a)>moneyToMillis(eligible)) throw new AccountsHttpError('مبلغ الإشعار الدائن يتجاوز الرصيد المؤهل للمطالبة',409);
   const account=await loadStudentAccount(client,charge.student_account_id,true); if(account.status==='CLOSED') throw new AccountsHttpError('لا يمكن إنشاء إشعار دائن على حساب مغلق',409);
