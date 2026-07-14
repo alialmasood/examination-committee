@@ -596,7 +596,11 @@ export type StudentLedgerEntryType =
   | 'COLLECTION'
   | 'COLLECTION_REVERSAL'
   | 'RELIEF'
-  | 'RELIEF_REVERSAL';
+  | 'RELIEF_REVERSAL'
+  | 'CREDIT_NOTE'
+  | 'CREDIT_NOTE_REVERSAL'
+  | 'REFUND'
+  | 'REFUND_REVERSAL';
 
 export async function writeStudentLedgerEntry(
   client: TxClient,
@@ -604,7 +608,12 @@ export async function writeStudentLedgerEntry(
     account: StudentAccountRow;
     entryDate: string;
     entryType: StudentLedgerEntryType;
-    sourceType: 'STUDENT_CHARGE' | 'STUDENT_COLLECTION' | 'STUDENT_RELIEF';
+    sourceType:
+      | 'STUDENT_CHARGE'
+      | 'STUDENT_COLLECTION'
+      | 'STUDENT_RELIEF'
+      | 'STUDENT_CREDIT_NOTE'
+      | 'STUDENT_REFUND';
     sourceId: string;
     description: string;
     debit: string;
@@ -770,6 +779,27 @@ export async function reverseChargeRelief(
   return reverseChargeAllocation(client, {
     chargeId: params.chargeId,
     allocatedAmount: params.reliefAmount,
+  });
+}
+
+/** الإشعار الدائن بخيار خفض الذمة يعامل كتسوية مطالبة، بلا تأثير على paid_amount. */
+export async function applyChargeCreditNote(
+  client: TxClient,
+  params: { chargeId: string; creditNoteAmount: string }
+): Promise<StudentChargeRow> {
+  return applyChargeAllocation(client, {
+    chargeId: params.chargeId,
+    allocatedAmount: params.creditNoteAmount,
+  });
+}
+
+export async function reverseChargeCreditNote(
+  client: TxClient,
+  params: { chargeId: string; creditNoteAmount: string }
+): Promise<StudentChargeRow> {
+  return reverseChargeAllocation(client, {
+    chargeId: params.chargeId,
+    allocatedAmount: params.creditNoteAmount,
   });
 }
 

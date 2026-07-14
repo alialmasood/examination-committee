@@ -64,15 +64,34 @@ export async function sumPostedReliefsOnCharge(
   return normalizeMoneyInput(r.rows[0]?.total ?? '0');
 }
 
+/** الإشعارات التي خفّضت الذمة فقط؛ إشعار الرصيد الدائن لا يمس استحقاق المطالبة. */
+export async function sumPostedCreditNotesOnCharge(
+  client: TxClient,
+  chargeId: string
+): Promise<string> {
+  const r = await txQuery<{ total: string }>(
+    client,
+    `SELECT COALESCE(SUM(amount), 0)::text AS total
+     FROM accounts.student_credit_notes
+     WHERE student_charge_id = $1::uuid
+       AND status = 'POSTED'
+       AND application_mode = 'DEBT_REDUCTION'`,
+    [chargeId]
+  );
+  return normalizeMoneyInput(r.rows[0]?.total ?? '0');
+}
+
 export function calculateChargeOutstanding(
   original: string,
   collectionsPosted: string,
-  reliefsPosted: string
+  reliefsPosted: string,
+  creditNotesPosted = '0'
 ): string {
   const origMillis = moneyToMillis(normalizeMoneyInput(original));
   const collMillis = moneyToMillis(normalizeMoneyInput(collectionsPosted));
   const reliefMillis = moneyToMillis(normalizeMoneyInput(reliefsPosted));
-  const outMillis = origMillis - collMillis - reliefMillis;
+  const creditNoteMillis = moneyToMillis(normalizeMoneyInput(creditNotesPosted));
+  const outMillis = origMillis - collMillis - reliefMillis - creditNoteMillis;
   if (outMillis < BigInt(0)) {
     return '0.000';
   }
@@ -90,8 +109,14 @@ export async function recalculateStudentChargeSettlement(
 
   const collections = await sumPostedCollectionsOnCharge(client, chargeId);
   const reliefs = await sumPostedReliefsOnCharge(client, chargeId);
+  const creditNotes = await sumPostedCreditNotesOnCharge(client, chargeId);
   const original = normalizeMoneyInput(charge.original_amount);
-  const outstanding = calculateChargeOutstanding(original, collections, reliefs);
+  const outstanding = calculateChargeOutstanding(
+    original,
+    collections,
+    reliefs,
+    creditNotes
+  );
   const status = resolveChargeStatusAfterSettlement(original, outstanding);
 
   const upd = await txQuery<StudentChargeRow>(
@@ -123,6 +148,22 @@ export async function sumPostedReliefsOnInstallment(
   return normalizeMoneyInput(r.rows[0]?.total ?? '0');
 }
 
+export async function sumPostedCreditNotesOnInstallment(
+  client: TxClient,
+  installmentId: string
+): Promise<string> {
+  const r = await txQuery<{ total: string }>(
+    client,
+    `SELECT COALESCE(SUM(amount), 0)::text AS total
+     FROM accounts.student_credit_notes
+     WHERE student_installment_id = $1::uuid
+       AND status = 'POSTED'
+       AND application_mode = 'DEBT_REDUCTION'`,
+    [installmentId]
+  );
+  return normalizeMoneyInput(r.rows[0]?.total ?? '0');
+}
+
 export async function recalculateStudentInstallmentSettlement(
   client: TxClient,
   installmentId: string,
@@ -130,12 +171,14 @@ export async function recalculateStudentInstallmentSettlement(
 ): Promise<void> {
   const inst = await loadStudentInstallment(client, installmentId, true);
   const relief = await sumPostedReliefsOnInstallment(client, installmentId);
+  const creditNote = await sumPostedCreditNotesOnInstallment(client, installmentId);
   const paid = normalizeMoneyInput(inst.paid_amount);
   const amount = normalizeMoneyInput(inst.amount);
   const outstanding = millisToMoney(
     moneyToMillis(amount) -
       moneyToMillis(paid) -
-      moneyToMillis(relief)
+      moneyToMillis(relief) -
+      moneyToMillis(creditNote)
   );
   const dueDate =
     inst.due_date instanceof Date
@@ -153,11 +196,12 @@ export async function recalculateStudentInstallmentSettlement(
     client,
     `UPDATE accounts.student_installments SET
        relief_amount = $2::numeric,
-       outstanding_amount = $3::numeric,
-       status = $4,
+       credit_note_amount = $3::numeric,
+       outstanding_amount = $4::numeric,
+       status = $5,
        updated_at = NOW()
      WHERE id = $1::uuid`,
-    [inst.id, relief, outstanding, status]
+    [inst.id, relief, creditNote, outstanding, status]
   );
 }
 
@@ -193,8 +237,17 @@ export async function recalculateStudentBillingPlanSettlement(
         )
       )
     );
+    const creditNoteSum = sumMoney(
+      installments.map((i) =>
+        normalizeMoneyInput(
+          (i as { credit_note_amount?: string }).credit_note_amount ?? '0'
+        )
+      )
+    );
     const settledSum = millisToMoney(
-      moneyToMillis(paidSum) + moneyToMillis(reliefSum)
+      moneyToMillis(paidSum) +
+        moneyToMillis(reliefSum) +
+        moneyToMillis(creditNoteSum)
     );
     const total = normalizeMoneyInput(plan.total_amount);
     const allOutstandingZero = installments.every((i) =>

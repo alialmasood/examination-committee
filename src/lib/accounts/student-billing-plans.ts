@@ -90,6 +90,7 @@ export type StudentInstallmentRow = {
   amount: string;
   paid_amount: string;
   relief_amount: string;
+  credit_note_amount: string;
   outstanding_amount: string;
   status: StudentInstallmentStatus;
   student_charge_id: string | null;
@@ -167,11 +168,13 @@ export function serializeStudentBillingPlan(row: StudentBillingPlanRow) {
 export function serializeStudentInstallment(row: StudentInstallmentRow) {
   const dueDate = pgDateOnly(row.due_date);
   const relief = normalizeMoneyInput(row.relief_amount ?? '0');
+  const creditNote = normalizeMoneyInput(row.credit_note_amount ?? '0');
   const base = {
     ...row,
     amount: normalizeMoneyInput(row.amount),
     paid_amount: normalizeMoneyInput(row.paid_amount),
     relief_amount: relief,
+    credit_note_amount: creditNote,
     outstanding_amount: normalizeMoneyInput(row.outstanding_amount),
     due_date: dueDate,
     created_at: iso(row.created_at)!,
