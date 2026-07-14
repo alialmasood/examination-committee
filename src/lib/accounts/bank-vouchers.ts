@@ -283,7 +283,11 @@ async function assertPostingAccount(
 export async function assertBankAccountOperational(
   client: TxClient,
   bankAccountId: string,
-  opts: { forReceipt?: boolean; forPayment?: boolean }
+  opts: {
+    forReceipt?: boolean;
+    forPayment?: boolean;
+    forTransfer?: boolean;
+  }
 ): Promise<BankAccountRow> {
   const acc = await loadBankAccount(client, bankAccountId, true);
   if (acc.status !== 'ACTIVE') {
@@ -311,6 +315,12 @@ export async function assertBankAccountOperational(
   if (opts.forPayment && !acc.allows_payments) {
     throw new AccountsHttpError(
       'هذا الحساب المصرفي لا يسمح بسندات الصرف',
+      409
+    );
+  }
+  if (opts.forTransfer && !acc.allows_transfers) {
+    throw new AccountsHttpError(
+      'هذا الحساب المصرفي لا يسمح بالتحويلات المصرفية',
       409
     );
   }

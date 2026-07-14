@@ -80,7 +80,12 @@ export type AuditAction =
   | 'bank_voucher.updated'
   | 'bank_voucher.posted'
   | 'bank_voucher.voided'
-  | 'bank_voucher.deleted';
+  | 'bank_voucher.deleted'
+  | 'bank_transfer.created'
+  | 'bank_transfer.updated'
+  | 'bank_transfer.posted'
+  | 'bank_transfer.voided'
+  | 'bank_transfer.deleted';
 
 export async function writeFinancialAudit(
   client: TxClient,

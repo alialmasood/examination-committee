@@ -24,6 +24,12 @@ import {
   VOUCHER_TYPE_LABEL,
   voucherStatusClass,
 } from '../vouchers/components/types';
+import {
+  BankTransferListItem,
+  BankTransferStats,
+  TRANSFER_STATUS_LABEL,
+  transferStatusClass,
+} from '../transfers/components/types';
 
 export default function BankAccountDetailPage() {
   const params = useParams();
@@ -33,6 +39,14 @@ export default function BankAccountDetailPage() {
   const [bookBalance, setBookBalance] = useState<BankBookBalance | null>(null);
   const [voucherStats, setVoucherStats] = useState<BankVoucherStats | null>(null);
   const [recentVouchers, setRecentVouchers] = useState<BankVoucherListItem[]>([]);
+  const [recentTransfers, setRecentTransfers] = useState<BankTransferListItem[]>(
+    []
+  );
+  const [transferStats, setTransferStats] = useState<BankTransferStats | null>(
+    null
+  );
+  const [outboundTotal, setOutboundTotal] = useState<string | null>(null);
+  const [inboundTotal, setInboundTotal] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -59,18 +73,28 @@ export default function BankAccountDetailPage() {
     async (showSpinner = false) => {
       if (!id) return;
       if (showSpinner) setLoading(true);
-      const [detail, opt, balanceOpt, vouchers] = await Promise.all([
-        bankApi<BankAccountDetail>(`/api/accounts/bank-accounts/${id}`),
-        bankApi<BankOptions>(
-          `/api/accounts/bank-accounts/options?exclude_bank_account_id=${id}`
-        ),
-        bankApi<{ book_balance?: BankBookBalance | null }>(
-          `/api/accounts/bank-vouchers/options?bank_account_id=${id}`
-        ),
-        bankApi<BankVoucherListItem[]>(
-          `/api/accounts/bank-vouchers?bank_account_id=${id}&page_size=10`
-        ),
-      ]);
+      const [detail, opt, balanceOpt, vouchers, transfers, outbound, inbound] =
+        await Promise.all([
+          bankApi<BankAccountDetail>(`/api/accounts/bank-accounts/${id}`),
+          bankApi<BankOptions>(
+            `/api/accounts/bank-accounts/options?exclude_bank_account_id=${id}`
+          ),
+          bankApi<{ book_balance?: BankBookBalance | null }>(
+            `/api/accounts/bank-vouchers/options?bank_account_id=${id}`
+          ),
+          bankApi<BankVoucherListItem[]>(
+            `/api/accounts/bank-vouchers?bank_account_id=${id}&page_size=10`
+          ),
+          bankApi<BankTransferListItem[]>(
+            `/api/accounts/bank-transfers?bank_account_id=${id}&page_size=10`
+          ),
+          bankApi<BankTransferListItem[]>(
+            `/api/accounts/bank-transfers?source_bank_account_id=${id}&status=POSTED&page_size=1`
+          ),
+          bankApi<BankTransferListItem[]>(
+            `/api/accounts/bank-transfers?destination_bank_account_id=${id}&status=POSTED&page_size=1`
+          ),
+        ]);
       if (opt.success && opt.data) setOptions(opt.data);
       if (balanceOpt.success && balanceOpt.data?.book_balance) {
         setBookBalance(balanceOpt.data.book_balance);
@@ -84,6 +108,17 @@ export default function BankAccountDetailPage() {
         setRecentVouchers([]);
         setVoucherStats(null);
       }
+      if (transfers.success) {
+        setRecentTransfers(transfers.data || []);
+        setTransferStats((transfers.stats as BankTransferStats) || null);
+      } else {
+        setRecentTransfers([]);
+        setTransferStats(null);
+      }
+      const outStats = outbound.stats as BankTransferStats | undefined;
+      const inStats = inbound.stats as BankTransferStats | undefined;
+      setOutboundTotal(outStats?.transfers_total ?? null);
+      setInboundTotal(inStats?.transfers_total ?? null);
       if (!detail.success || !detail.data) {
         setError(detail.message || 'تعذر تحميل الحساب');
         setAccount(null);
@@ -495,6 +530,141 @@ export default function BankAccountDetailPage() {
                     <td className="px-3 py-2">{v.party_name || '—'}</td>
                   </tr>
                 ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Bank transfers */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 md:p-6 space-y-4 print:hidden">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">
+              التحويلات المصرفية
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">
+              الصادر والوارد لهذا الحساب — الرصيد الدفتري أعلاه يشمل قيود التحويلات المرحّلة من الدفتر.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {account.allows_transfers && account.status === 'ACTIVE' && (
+              <Link
+                href={`/accounts/banks/transfers?source_bank_account_id=${account.id}`}
+                className="px-3 py-2 rounded-md bg-red-900 text-white text-sm hover:bg-red-800"
+              >
+                تحويل إلى حساب آخر
+              </Link>
+            )}
+            <Link
+              href={`/accounts/banks/transfers?bank_account_id=${account.id}`}
+              className="px-3 py-2 rounded-md border text-sm hover:bg-gray-50"
+            >
+              كل تحويلات الحساب
+            </Link>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+          <div className="rounded-lg border bg-gray-50 px-3 py-2">
+            <div className="text-xs text-gray-500">الصادر (مرحّل)</div>
+            <div className="font-semibold text-red-950">
+              {outboundTotal != null
+                ? formatMoney(outboundTotal, account.currency_code)
+                : '—'}
+            </div>
+          </div>
+          <div className="rounded-lg border bg-gray-50 px-3 py-2">
+            <div className="text-xs text-gray-500">الوارد (مرحّل)</div>
+            <div className="font-semibold text-red-950">
+              {inboundTotal != null
+                ? formatMoney(inboundTotal, account.currency_code)
+                : '—'}
+            </div>
+          </div>
+          <div className="rounded-lg border bg-gray-50 px-3 py-2">
+            <div className="text-xs text-gray-500">إجمالي الرسوم</div>
+            <div className="font-semibold text-red-950">
+              {transferStats
+                ? formatMoney(transferStats.fees_total, account.currency_code)
+                : '—'}
+            </div>
+          </div>
+          <div className="rounded-lg border bg-gray-50 px-3 py-2">
+            <div className="text-xs text-gray-500">مسودة / مرحّل / ملغى</div>
+            <div className="font-semibold text-red-950">
+              {transferStats
+                ? `${transferStats.draft} / ${transferStats.posted} / ${transferStats.voided}`
+                : '—'}
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto border rounded-md">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="text-right px-3 py-2 font-medium">الرقم</th>
+                <th className="text-right px-3 py-2 font-medium">التاريخ</th>
+                <th className="text-right px-3 py-2 font-medium">الاتجاه</th>
+                <th className="text-right px-3 py-2 font-medium">الطرف الآخر</th>
+                <th className="text-right px-3 py-2 font-medium">المبلغ</th>
+                <th className="text-right px-3 py-2 font-medium">الرسوم</th>
+                <th className="text-right px-3 py-2 font-medium">الحالة</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentTransfers.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-3 py-4 text-center text-gray-500">
+                    لا توجد تحويلات لهذا الحساب
+                  </td>
+                </tr>
+              ) : (
+                recentTransfers.map((t) => {
+                  const isOutbound = t.source_bank_account_id === account.id;
+                  const otherCode = isOutbound
+                    ? t.destination_code
+                    : t.source_code;
+                  const otherName = isOutbound
+                    ? t.destination_name_ar
+                    : t.source_name_ar;
+                  return (
+                    <tr key={t.id} className="border-t">
+                      <td className="px-3 py-2 font-mono text-xs">
+                        <Link
+                          href={`/accounts/banks/transfers/${t.id}`}
+                          className="text-red-900 underline"
+                        >
+                          {t.transfer_number}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2">
+                        {formatDateOnly(t.transfer_date)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {isOutbound ? 'صادر' : 'وارد'}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {otherCode}
+                        {otherName ? ` — ${otherName}` : ''}
+                      </td>
+                      <td className="px-3 py-2">
+                        {formatMoney(t.amount, t.currency_code)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {formatMoney(t.fee_amount, t.currency_code)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-xs ${transferStatusClass(t.status)}`}
+                        >
+                          {TRANSFER_STATUS_LABEL[t.status]}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

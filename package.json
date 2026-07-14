@@ -30,6 +30,7 @@
     "test:cash-transfers": "tsx src/scripts/test-cash-transfers.ts",
     "test:bank-accounts": "tsx src/scripts/test-bank-accounts.ts",
     "test:bank-vouchers": "tsx src/scripts/test-bank-vouchers.ts",
+    "test:bank-transfers": "tsx src/scripts/test-bank-transfers.ts",
     "seed:accounts-demo": "tsx src/scripts/seed-accounts-demo.ts",
     "seed:construction": "tsx src/scripts/add-construction-user.ts",
     "seed:oil": "tsx src/scripts/add-oil-user.ts",

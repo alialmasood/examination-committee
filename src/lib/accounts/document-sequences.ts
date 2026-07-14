@@ -10,6 +10,7 @@ export const DOCUMENT_SEQUENCE_DEFAULTS = [
   { document_type: 'OPENING_BALANCE', prefix: 'OB' },
   { document_type: 'BANK_RECEIPT_VOUCHER', prefix: 'BRV' },
   { document_type: 'BANK_PAYMENT_VOUCHER', prefix: 'BPV' },
+  { document_type: 'BANK_TRANSFER_VOUCHER', prefix: 'BTR' },
 ] as const;
 
 export type DocumentType = (typeof DOCUMENT_SEQUENCE_DEFAULTS)[number]['document_type'];

@@ -39,6 +39,10 @@ import {
   postBankVoucher,
 } from '../lib/accounts/bank-vouchers';
 import {
+  createBankTransfer,
+  postBankTransfer,
+} from '../lib/accounts/bank-transfers';
+import {
   getCashVarianceSettings,
   setCashVarianceSettings,
   getCashInTransitAccountId,
@@ -78,6 +82,12 @@ const DEMO = {
   bankVoucherReceipt: 'DEMO-BV-RECEIPT',
   bankVoucherPayment: 'DEMO-BV-PAYMENT',
   bankVoucherDraft: 'DEMO-BV-DRAFT',
+  bankAccountIqd2: 'DEMO-BA-IQD-2',
+  bankGl2: 'DEMO-BANK-GL-2',
+  bankFeeAccount: 'DEMO-BANK-FEE',
+  bankTransferPlain: 'DEMO-BT-PLAIN',
+  bankTransferFee: 'DEMO-BT-FEE',
+  bankTransferDraft: 'DEMO-BT-DRAFT',
   sessionZeroNotes: 'DEMO-SESSION-ZERO',
   sessionGainNotes: 'DEMO-SESSION-GAIN',
   sessionOpenNotes: 'DEMO-SESSION-OPEN',
@@ -1207,15 +1217,230 @@ async function main() {
     }
   }
 
+  // ——— 4.C: تحويلات بنكية DEMO ———
+  {
+    const ba1 = await query(
+      `SELECT id, bank_id, bank_branch_id FROM accounts.bank_accounts WHERE LOWER(code)=LOWER($1)`,
+      [DEMO.bankAccountIqd]
+    );
+    if (!ba1.rows[0]) {
+      console.log('⚠ تخطّي تحويلات بنكية DEMO (DEMO-BA-IQD غير موجود)');
+    } else {
+      const sourceBaId = ba1.rows[0].id as string;
+      const bankId = ba1.rows[0].bank_id as string;
+      const branchId = ba1.rows[0].bank_branch_id as string | null;
+
+      const bankGl2 = await ensureAccount({
+        code: DEMO.bankGl2,
+        nameAr: 'بنك GL ثانٍ DEMO',
+        typeCode: 'ASSET',
+        userId,
+      });
+      const feeAcc = await ensureAccount({
+        code: DEMO.bankFeeAccount,
+        nameAr: 'رسوم مصرفية DEMO',
+        typeCode: 'EXPENSE',
+        userId,
+      });
+
+      let destBaId: string | null = null;
+      const ba2Ex = await query(
+        `SELECT id FROM accounts.bank_accounts WHERE LOWER(code)=LOWER($1)`,
+        [DEMO.bankAccountIqd2]
+      );
+      if (ba2Ex.rows[0]) {
+        destBaId = ba2Ex.rows[0].id as string;
+        console.log(`✓ حساب بنكي IQD ثانٍ DEMO موجود: ${DEMO.bankAccountIqd2}`);
+      } else {
+        try {
+          const ba2 = await withTransaction(async (client) => {
+            await acquireBanksLock(client);
+            return createBankAccount(client, {
+              code: DEMO.bankAccountIqd2,
+              bank_id: bankId,
+              bank_branch_id: branchId,
+              account_name_ar: 'حساب كلية الشرق دينار ثانٍ DEMO',
+              account_number: '112233445566',
+              currency_code: 'IQD',
+              gl_account_id: bankGl2.id,
+              account_type: 'CURRENT',
+              is_primary: false,
+              allows_receipts: true,
+              allows_payments: true,
+              allows_transfers: true,
+              allows_cheques: false,
+              created_by: userId,
+            });
+          });
+          destBaId = ba2.id;
+          console.log(
+            `✓ حساب بنكي IQD ثانٍ: ${ba2.code} → /accounts/banks/${ba2.id}`
+          );
+        } catch (e) {
+          console.log('⚠ DEMO-BA-IQD-2:', e instanceof Error ? e.message : e);
+        }
+      }
+
+      if (destBaId) {
+        const assignIds = new Set<string>([userId]);
+        const accountsUser = await query(
+          `SELECT u.id FROM student_affairs.users u
+           WHERE LOWER(u.username) = 'accounts' AND u.is_active LIMIT 1`
+        );
+        if (accountsUser.rows[0]) assignIds.add(accountsUser.rows[0].id as string);
+        for (const uid of assignIds) {
+          for (const baId of [sourceBaId, destBaId]) {
+            try {
+              await withTransaction(async (client) => {
+                await acquireBanksLock(client);
+                return assignBankAccountUser(client, {
+                  bank_account_id: baId,
+                  user_id: uid,
+                  can_view: true,
+                  can_prepare: true,
+                  can_post: true,
+                  created_by: userId,
+                });
+              });
+            } catch {
+              /* موجود مسبقاً */
+            }
+          }
+        }
+
+        const hasBt = async (marker: string) => {
+          const r = await query(
+            `SELECT id, status, transfer_number FROM accounts.bank_transfers
+             WHERE description ILIKE '%' || $1 || '%'
+                OR COALESCE(external_reference,'') = $1
+             LIMIT 1`,
+            [marker]
+          );
+          return r.rows[0] as
+            | { id: string; status: string; transfer_number: string }
+            | undefined;
+        };
+
+        const existingPlain = await hasBt(DEMO.bankTransferPlain);
+        if (existingPlain) {
+          console.log(
+            `✓ تحويل بنكي بدون رسوم DEMO موجود: ${existingPlain.transfer_number} → /accounts/banks/transfers/${existingPlain.id}`
+          );
+        } else {
+          try {
+            const posted = await withTransaction(async (client) => {
+              await acquireBanksLock(client);
+              await acquireJournalEntriesLock(client);
+              const t = await createBankTransfer(client, {
+                source_bank_account_id: sourceBaId,
+                destination_bank_account_id: destBaId,
+                transfer_date: entryDate,
+                amount: '800',
+                fee_amount: '0',
+                external_reference: DEMO.bankTransferPlain,
+                description: `${DEMO.bankTransferPlain} — تحويل بدون رسوم`,
+                created_by: userId,
+              });
+              const p = await postBankTransfer(client, {
+                id: t.id,
+                userId,
+                version: t.version,
+                updated_at: t.updated_at,
+              });
+              return p.transfer;
+            });
+            console.log(
+              `✓ تحويل بدون رسوم: ${posted.transfer_number} → /accounts/banks/transfers/${posted.id}`
+            );
+          } catch (e) {
+            console.log('⚠ DEMO-BT-PLAIN:', e instanceof Error ? e.message : e);
+          }
+        }
+
+        const existingFee = await hasBt(DEMO.bankTransferFee);
+        if (existingFee) {
+          console.log(
+            `✓ تحويل بنكي برسوم DEMO موجود: ${existingFee.transfer_number} → /accounts/banks/transfers/${existingFee.id}`
+          );
+        } else {
+          try {
+            const posted = await withTransaction(async (client) => {
+              await acquireBanksLock(client);
+              await acquireJournalEntriesLock(client);
+              const t = await createBankTransfer(client, {
+                source_bank_account_id: sourceBaId,
+                destination_bank_account_id: destBaId,
+                transfer_date: entryDate,
+                amount: '300',
+                fee_amount: '5',
+                fee_expense_account_id: feeAcc.id,
+                external_reference: DEMO.bankTransferFee,
+                description: `${DEMO.bankTransferFee} — تحويل مع رسوم`,
+                created_by: userId,
+              });
+              const p = await postBankTransfer(client, {
+                id: t.id,
+                userId,
+                version: t.version,
+                updated_at: t.updated_at,
+              });
+              return p.transfer;
+            });
+            console.log(
+              `✓ تحويل مع رسوم: ${posted.transfer_number} → /accounts/banks/transfers/${posted.id}`
+            );
+          } catch (e) {
+            console.log('⚠ DEMO-BT-FEE:', e instanceof Error ? e.message : e);
+          }
+        }
+
+        const existingDraft = await hasBt(DEMO.bankTransferDraft);
+        if (existingDraft) {
+          console.log(
+            `✓ مسودة تحويل بنكي DEMO موجودة: ${existingDraft.transfer_number} → /accounts/banks/transfers/${existingDraft.id}`
+          );
+        } else {
+          try {
+            const draft = await withTransaction(async (client) => {
+              await acquireBanksLock(client);
+              return createBankTransfer(client, {
+                source_bank_account_id: sourceBaId,
+                destination_bank_account_id: destBaId,
+                transfer_date: entryDate,
+                amount: '100',
+                fee_amount: '0',
+                external_reference: DEMO.bankTransferDraft,
+                description: `${DEMO.bankTransferDraft} — مسودة تحويل`,
+                created_by: userId,
+              });
+            });
+            console.log(
+              `✓ مسودة تحويل: ${draft.transfer_number} → /accounts/banks/transfers/${draft.id}`
+            );
+          } catch (e) {
+            console.log('⚠ DEMO-BT-DRAFT:', e instanceof Error ? e.message : e);
+          }
+        }
+      }
+    }
+  }
+
   console.log('\n——— ملخص العرض ———');
   console.log(`صناديق: ${DEMO.cashBox} → ${DEMO.cashBoxDest}`);
-  console.log(`مصرف: ${DEMO.bank} / ${DEMO.bankBranch} / ${DEMO.bankAccountIqd}`);
+  console.log(
+    `مصرف: ${DEMO.bank} / ${DEMO.bankBranch} / ${DEMO.bankAccountIqd} → ${DEMO.bankAccountIqd2}`
+  );
   console.log(
     `سندات بنكية: ${DEMO.bankVoucherReceipt} · ${DEMO.bankVoucherPayment} · ${DEMO.bankVoucherDraft}`
   );
-  console.log(`حسابات: ${DEMO.cashAccount} / ${DEMO.citAccount} / ${DEMO.bankGl}`);
   console.log(
-    'صفحات: /accounts/cashbox · /accounts/cashbox/transfers · /accounts/banks · /accounts/banks/vouchers'
+    `تحويلات بنكية: ${DEMO.bankTransferPlain} · ${DEMO.bankTransferFee} · ${DEMO.bankTransferDraft}`
+  );
+  console.log(
+    `حسابات: ${DEMO.cashAccount} / ${DEMO.citAccount} / ${DEMO.bankGl} / ${DEMO.bankFeeAccount}`
+  );
+  console.log(
+    'صفحات: /accounts/cashbox · /accounts/cashbox/transfers · /accounts/banks · /accounts/banks/vouchers · /accounts/banks/transfers'
   );
   console.log(
     yearCreated
