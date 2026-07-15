@@ -933,6 +933,13 @@ async function main() {
         ),
       409
     );
+    // إعادة المسودة حتى لا تلوّث verify-supplier-payables (محاكاة بلا قيد/دفتر)
+    await query(
+      `UPDATE accounts.supplier_invoices
+       SET status = 'DRAFT', outstanding_amount = total_amount, updated_at = NOW(), version = version + 1
+       WHERE id = $1`,
+      [d.id]
+    );
   }
 
   // 6) إغلاق: يتطلّب إغلاق الحساب المالي أولاً ثم إغلاق المورد
