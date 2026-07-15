@@ -1,0 +1,4 @@
+'use client';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import{useEffect,useState}from'react';import{useParams}from'next/navigation';
+export default function PrintInvoice(){const{id}=useParams<{id:string}>();const[i,setI]=useState<any>();useEffect(()=>{fetch(`/api/accounts/supplier-invoices/${id}`).then(r=>r.json()).then(x=>setI(x.data))},[id]);if(!i)return null;return <main dir="rtl" className="p-10 print:p-0"><button className="print:hidden mb-6" onClick={()=>window.print()}>طباعة</button><h1 className="text-2xl font-bold">فاتورة مورد</h1><p>رقم النظام: {i.invoice_number}</p><p>المورد: {i.supplier_name_ar}</p><p>رقم فاتورة المورد: {i.supplier_invoice_number}</p><p>التاريخ: {i.invoice_date}</p><hr className="my-4"/><p>الوصف: {i.description}</p><p className="text-xl font-bold mt-4">الإجمالي: {i.total_amount} د.ع</p><p>الحالة: {i.status}</p></main>}

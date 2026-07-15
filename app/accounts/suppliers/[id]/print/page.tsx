@@ -1,0 +1,4 @@
+'use client';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import {useEffect,useState}from'react';import{useParams}from'next/navigation';
+export default function PrintSupplierStatement(){const{id}=useParams<{id:string}>();const[s,setS]=useState<any>();useEffect(()=>{fetch(`/api/accounts/suppliers/${id}`).then(r=>r.json()).then(x=>setS(x.data))},[id]);if(!s)return null;return <main dir="rtl" className="p-10 print:p-0"><button className="print:hidden mb-6" onClick={()=>window.print()}>طباعة</button><h1 className="text-2xl font-bold">كشف حساب مورد</h1><p>{s.name_ar} — {s.supplier_number}</p><p className="my-4">الرصيد المستحق: <b>{s.balance}</b></p><table className="w-full border"><thead><tr><th>الرقم</th><th>التاريخ</th><th>المبلغ</th><th>الحالة</th></tr></thead><tbody>{s.invoices?.map((x:any)=><tr key={x.id}><td>{x.invoice_number}</td><td>{x.invoice_date}</td><td>{x.total_amount}</td><td>{x.status}</td></tr>)}</tbody></table></main>}

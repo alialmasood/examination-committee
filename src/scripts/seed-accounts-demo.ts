@@ -55,6 +55,7 @@ import { seedStudentBillingDemo } from './seed-accounts-student-billing-demo';
 import { seedStudentReceivablesDemo } from './seed-accounts-student-receivables-demo';
 import { seedStudentReliefsDemo } from './seed-accounts-student-reliefs-demo';
 import { seedStudentCreditNotesRefundsDemo } from './seed-accounts-student-credit-notes-refunds-demo';
+import { seedSupplierPayablesDemo } from './seed-accounts-supplier-payables-demo';
 import {
   allocateJournalEntryNumber,
   assertFiscalContextForEntry,
@@ -1500,6 +1501,16 @@ async function main() {
     await seedStudentCreditNotesRefundsDemo({ userId, entryDate });
   } catch (e) {
     console.log('⚠ 5.C.2 seed:', e instanceof Error ? e.message : e);
+  }
+
+  try {
+    await seedSupplierPayablesDemo({
+      userId,
+      entryDate,
+      ensureAccount,
+    });
+  } catch (e) {
+    console.log('⚠ 6.A seed:', e instanceof Error ? e.message : e);
   }
 
   console.log('\n——— ملخص العرض ———');

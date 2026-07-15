@@ -220,6 +220,25 @@ export default function AccountsLayout({
               حسابات الطلبة
             </Link>
 
+            <Link
+              href="/accounts/suppliers"
+              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+                pathname === '/accounts/suppliers' || pathname?.startsWith('/accounts/suppliers/')
+                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4'
+                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
+              }`}
+            >
+              <div className="flex items-center">
+                {(pathname === '/accounts/suppliers' || pathname?.startsWith('/accounts/suppliers/')) && (
+                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
+                )}
+                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h18M5 7v13h14V7M8 11h8m-8 4h8M9 3h6v4H9z" />
+                </svg>
+              </div>
+              الموردون والذمم الدائنة
+            </Link>
+
             {/* Installments */}
             <Link
               href="/accounts/installments"
