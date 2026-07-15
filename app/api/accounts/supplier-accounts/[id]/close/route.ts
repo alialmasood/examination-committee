@@ -9,7 +9,8 @@ import {
 } from '@/src/lib/accounts/auth';
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
 import {
-  createSupplierAccount,
+  closeSupplierAccount,
+  loadSupplierAccount,
   serializeSupplierAccount,
 } from '@/src/lib/accounts/supplier-accounts';
 import {
@@ -23,36 +24,43 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function POST(request: NextRequest, context: Ctx) {
   const auth = await requireAccountsAccess(request);
   if (isAuthFailure(auth)) return auth.response;
+
   try {
     const { id } = await context.params;
-    const body = await request.json();
-    const row = await withTransaction(async (client) => {
+    const body = await request.json().catch(() => ({}));
+
+    const closed = await withTransaction(async (client) => {
       await assertSupplierPayablesCapability(
         client,
         auth.user.id,
-        SUPPLIER_PAYABLES_CAPABILITIES.MANAGE
+        SUPPLIER_PAYABLES_CAPABILITIES.CLOSE
       );
-      const account = await createSupplierAccount(client, {
-        ...body,
-        supplier_id: id,
-        created_by: auth.user.id,
+      const before = await loadSupplierAccount(client, id);
+      const row = await closeSupplierAccount(client, {
+        id,
+        userId: auth.user.id,
+        version: body.version,
+        updated_at: body.updated_at,
       });
       await writeFinancialAudit(client, {
         userId: auth.user.id,
-        action: 'SUPPLIER_ACCOUNT_CREATED',
+        action: 'SUPPLIER_ACCOUNT_CLOSED',
         entityType: 'supplier_account',
-        entityId: account.id,
-        newValues: serializeSupplierAccount(account),
-        description: `إنشاء حساب مالي للمورد ${account.account_number}`,
+        entityId: row.id,
+        oldValues: serializeSupplierAccount(before),
+        newValues: serializeSupplierAccount(row),
+        description: `إغلاق الحساب المالي للمورد ${row.account_number}`,
         ipAddress: auth.ipAddress,
         userAgent: auth.userAgent,
       });
-      return account;
+      return row;
     });
-    return jsonSuccess({ data: serializeSupplierAccount(row) }, 201);
+
+    return jsonSuccess({ data: serializeSupplierAccount(closed) });
   } catch (error) {
-    return error instanceof AccountsHttpError
-      ? jsonError(error.message, error.status)
-      : mapPgError(error);
+    if (error instanceof AccountsHttpError) {
+      return jsonError(error.message, error.status);
+    }
+    return mapPgError(error);
   }
 }

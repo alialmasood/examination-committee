@@ -30,7 +30,7 @@ export default function SupplierListPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
+    let cancelled = false;
     const sp = new URLSearchParams({
       page: String(page),
       page_size: '20',
@@ -40,17 +40,27 @@ export default function SupplierListPage() {
     if (supplierType) sp.set('supplier_type', supplierType);
     if (hasBalance) sp.set('has_balance', hasBalance);
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch list + pagination
+    setLoading(true);
     fetch(`/api/accounts/suppliers?${sp}`)
       .then((r) => r.json())
       .then((x) => {
+        if (cancelled) return;
         if (!x.success) throw new Error(x.message || 'فشل التحميل');
         setRows(x.data || []);
         setTotal(x.pagination?.total ?? 0);
         setTotalPages(x.pagination?.total_pages ?? 1);
         setError('');
       })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((e: Error) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [page, q, status, supplierType, hasBalance]);
 
   return (

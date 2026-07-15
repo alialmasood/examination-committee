@@ -15,7 +15,6 @@ import {
 import {
   moneyEquals,
   moneyIsZero,
-  moneyToMillisSigned,
   normalizeSignedMoneyInput,
 } from './money';
 import type { TxClient } from './with-transaction';
@@ -525,6 +524,11 @@ export async function activateSupplier(
   return upd.rows[0];
 }
 
+/**
+ * إغلاق المورد (كيان رئيسي) — نهائي.
+ * يشترط: رصيد صفر · لا فواتير DRAFT/POSTED/PARTIALLY_PAID · جميع الحسابات المالية CLOSED.
+ * فرق السياسة: إغلاق Supplier Account يغلق قناة الفوترة/الحساب؛ إغلاق Supplier يغلق سجل المورد كله.
+ */
 export async function closeSupplier(
   client: TxClient,
   params: { id: string; userId: string; version: unknown; updated_at: unknown }
@@ -534,13 +538,7 @@ export async function closeSupplier(
   if (row.status === 'CLOSED') return row;
 
   const balance = await getSupplierBalanceBySupplierId(client, row.id);
-  if (!moneyIsZero(balance) && moneyToMillisSigned(balance) !== BigInt(0)) {
-    throw new AccountsHttpError(
-      'لا يمكن إغلاق مورد برصيد مستحق غير صفر',
-      409
-    );
-  }
-  if (!moneyEquals(balance, '0.000') && !moneyIsZero(balance)) {
+  if (!moneyIsZero(balance) && !moneyEquals(balance, '0.000')) {
     throw new AccountsHttpError(
       'لا يمكن إغلاق مورد برصيد مستحق غير صفر',
       409
@@ -558,6 +556,20 @@ export async function closeSupplier(
   if (openInv.rows[0]) {
     throw new AccountsHttpError(
       'لا يمكن إغلاق مورد بوجود فواتير مفتوحة أو مسودة',
+      409
+    );
+  }
+
+  const openAcc = await txQuery<{ account_number: string; status: string }>(
+    client,
+    `SELECT account_number, status FROM accounts.supplier_accounts
+     WHERE supplier_id = $1::uuid AND status <> 'CLOSED'
+     LIMIT 1`,
+    [row.id]
+  );
+  if (openAcc.rows[0]) {
+    throw new AccountsHttpError(
+      `لا يمكن إغلاق المورد قبل إغلاق الحساب المالي (${openAcc.rows[0].account_number}). أغلق الحساب أولاً عبر إغلاق الحساب المالي.`,
       409
     );
   }

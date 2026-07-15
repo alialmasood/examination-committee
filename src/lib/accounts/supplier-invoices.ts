@@ -362,6 +362,15 @@ async function assertUniqueSupplierInvoiceNumber(
   }
 }
 
+/** حقن أعطال للاختبارات — يثبت rollback إن فشل الدفتر بعد إنشاء القيد */
+let __supplierInvoicePostFault: null | 'after_journal' | 'after_ledger' =
+  null;
+export function setSupplierInvoicePostFaultForTests(
+  v: typeof __supplierInvoicePostFault
+): void {
+  __supplierInvoicePostFault = v;
+}
+
 async function insertSupplierLedger(
   client: TxClient,
   params: {
@@ -996,6 +1005,10 @@ export async function postSupplierInvoice(
   const journalId = jeIns.rows[0].id as string;
   await replaceJournalLines(client, journalId, lines);
 
+  if (__supplierInvoicePostFault === 'after_journal') {
+    throw new Error('FAULT_AFTER_JOURNAL');
+  }
+
   await insertSupplierLedger(client, {
     accountId: account.id,
     supplierId: account.supplier_id,
@@ -1010,6 +1023,10 @@ export async function postSupplierInvoice(
     journalEntryId: journalId,
     userId: params.userId,
   });
+
+  if (__supplierInvoicePostFault === 'after_ledger') {
+    throw new Error('FAULT_AFTER_LEDGER');
+  }
 
   const posted = await txQuery<SupplierInvoiceRow>(
     client,

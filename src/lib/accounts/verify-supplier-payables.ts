@@ -229,6 +229,42 @@ export async function verifySupplierPayables(
      FROM accounts.supplier_ledger_entries`
   );
 
+  // أيتام: دفتر بلا قيد / قيود ترحيل بلا دفتر INVOICE
+  const ledgerNoJe = await txQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int AS n
+     FROM accounts.supplier_ledger_entries
+     WHERE entry_type IN ('INVOICE', 'INVOICE_REVERSAL')
+       AND journal_entry_id IS NULL`
+  );
+  if ((ledgerNoJe.rows[0]?.n ?? 0) > 0) {
+    invoiceLedgerMatch = false;
+    mismatches.push({
+      kind: 'LEDGER_WITHOUT_JOURNAL',
+      detail: `count=${ledgerNoJe.rows[0].n}`,
+    });
+  }
+
+  const jeNoLedger = await txQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int AS n
+     FROM accounts.journal_entries je
+     WHERE je.status = 'POSTED'
+       AND je.source_type = 'SUPPLIER_INVOICE'
+       AND NOT EXISTS (
+         SELECT 1 FROM accounts.supplier_ledger_entries le
+         WHERE le.source_id = je.source_id
+           AND le.entry_type = 'INVOICE'
+       )`
+  );
+  if ((jeNoLedger.rows[0]?.n ?? 0) > 0) {
+    invoiceLedgerMatch = false;
+    mismatches.push({
+      kind: 'JOURNAL_WITHOUT_LEDGER',
+      detail: `count=${jeNoLedger.rows[0].n}`,
+    });
+  }
+
   const postedCount = posted.rows.filter((r) => r.status === 'POSTED').length;
   const voidPosted = posted.rows.filter(
     (r) => r.status === 'VOID' && r.journal_entry_id

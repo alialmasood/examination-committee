@@ -10,12 +10,11 @@ import { closePool, query } from '../lib/db';
 import { AccountsHttpError, requireAccountsAccess } from '../lib/accounts/auth';
 import { grantAccountsAdminRole } from '../lib/accounts/accounts-access';
 import {
-  activateSupplierAccount,
   assertValidPayableGlAccount,
   closeSupplierAccount,
   createSupplierAccount,
   getSupplierAccountBalance,
-  suspendSupplierAccount,
+  loadSupplierAccount,
 } from '../lib/accounts/supplier-accounts';
 import {
   createSupplierInvoiceType,
@@ -28,6 +27,7 @@ import {
   getSupplierLedger,
   listSupplierInvoices,
   postSupplierInvoice,
+  setSupplierInvoicePostFaultForTests,
   updateSupplierInvoice,
   voidSupplierInvoice,
 } from '../lib/accounts/supplier-invoices';
@@ -935,7 +935,7 @@ async function main() {
     );
   }
 
-  // 6) إغلاق برصيد صفر — مورد بدون فواتير مرحّلة متبقية
+  // 6) إغلاق: يتطلّب إغلاق الحساب المالي أولاً ثم إغلاق المورد
   {
     const zeroSup = await withTransaction(async (client) => {
       const s = await createSupplier(client, {
@@ -943,23 +943,45 @@ async function main() {
         name_ar: 'مورد رصيد صفر للإغلاق',
         created_by: userId,
       });
-      await createSupplierAccount(client, {
+      const a = await createSupplierAccount(client, {
         supplier_id: s.id,
         payable_gl_account_id: payGl,
         created_by: userId,
       });
-      return s;
+      return { s, a };
     });
-    const closed = await withTransaction((client) =>
-      closeSupplier(client, {
-        id: zeroSup.id,
+    await expectHttp(
+      '06a) منع إغلاق المورد قبل إغلاق الحساب',
+      () =>
+        withTransaction((client) =>
+          closeSupplier(client, {
+            id: zeroSup.s.id,
+            userId,
+            version: zeroSup.s.version,
+            updated_at: zeroSup.s.updated_at,
+          })
+        ),
+      409
+    );
+    const closedAcc = await withTransaction((client) =>
+      closeSupplierAccount(client, {
+        id: zeroSup.a.id,
         userId,
-        version: zeroSup.version,
-        updated_at: zeroSup.updated_at,
+        version: zeroSup.a.version,
+        updated_at: zeroSup.a.updated_at,
       })
     );
-    if (closed.status === 'CLOSED') ok('06) إغلاق برصيد صفر');
-    else fail('06) إغلاق برصيد صفر');
+    const closed = await withTransaction((client) =>
+      closeSupplier(client, {
+        id: zeroSup.s.id,
+        userId,
+        version: zeroSup.s.version,
+        updated_at: zeroSup.s.updated_at,
+      })
+    );
+    if (closedAcc.status === 'CLOSED' && closed.status === 'CLOSED') {
+      ok('06) إغلاق الحساب ثم المورد برصيد صفر');
+    } else fail('06) إغلاق الحساب ثم المورد برصيد صفر');
   }
 
   // 7) منع إغلاق برصيد غير صفر
@@ -1133,11 +1155,16 @@ async function main() {
       const c1 = fs.readFileSync(printInvoice, 'utf8');
       const c2 = fs.readFileSync(printStmt, 'utf8');
       if (
-        (c1.includes('كلية') || c1.includes('print')) &&
-        (c2.includes('كشف') || c2.includes('print'))
+        c1.includes('كلية الشرق') &&
+        c1.includes('توقيع المحاسب') &&
+        c1.includes('print:hidden') &&
+        c2.includes('كلية الشرق') &&
+        c2.includes('running_balance') &&
+        c2.includes('التدقيق') &&
+        c2.includes('print:hidden')
       ) {
-        ok('44) الطباعة');
-      } else ok('44) الطباعة (ملفات موجودة)');
+        ok('44) الطباعة (كلية + توقيعات + رصيد تراكمي)');
+      } else fail('44) الطباعة ناقصة العناصر', { c1: c1.length, c2: c2.length });
     } else fail('44) الطباعة — ملفات مفقودة');
   }
 
@@ -1200,10 +1227,312 @@ async function main() {
     else fail('50) verify-balances');
   }
 
-  // أغلق الحساب إن رصيد صفر (اختياري)
-  void activateSupplierAccount;
-  void suspendSupplierAccount;
-  void closeSupplierAccount;
+  // ——— Harden 6.A acceptance ———
+
+  // H1) قيم حدّية للتقريب
+  {
+    const t1 = computeInvoiceTotalSafe({
+      subtotal: '0.001',
+      discount: '0',
+      tax: '0',
+    });
+    const t2 = computeInvoiceTotalSafe({
+      subtotal: '1000.001',
+      discount: '0.001',
+      tax: '0',
+    });
+    try {
+      computeInvoiceTotalSafe({ subtotal: '1', discount: '2', tax: '0' });
+      fail('H1) خصم يتجاوز الفرعي يجب أن يفشل');
+    } catch (e) {
+      if (e instanceof AccountsHttpError && moneyEquals(t1.total, '0.001') && moneyEquals(t2.total, '1000.000')) {
+        ok('H1) فروق التقريب والقيم الحدية');
+      } else fail('H1) فروق التقريب', e);
+    }
+  }
+
+  // H2) ترحيل مسودة بعد تعليق المورد
+  {
+    const pack = await withTransaction(async (client) => {
+      const s = await createSupplier(client, {
+        code: `SUPH2-${suffix}`,
+        name_ar: 'مورد لتعليق بعد المسودة',
+        created_by: userId,
+      });
+      const a = await createSupplierAccount(client, {
+        supplier_id: s.id,
+        payable_gl_account_id: payGl,
+        created_by: userId,
+      });
+      const inv = await createSupplierInvoice(client, {
+        supplier_account_id: a.id,
+        supplier_invoice_number: `EXT-H2-${suffix}`,
+        invoice_date: fiscal.invoiceDate,
+        subtotal_amount: '1500',
+        expense_gl_account_id: expGl,
+        description: 'مسودة قبل التعليق',
+        created_by: userId,
+      });
+      const sus = await suspendSupplier(client, {
+        id: s.id,
+        userId,
+        version: s.version,
+        updated_at: s.updated_at,
+      });
+      return { inv, sus };
+    });
+    await expectHttp(
+      'H2) منع ترحيل DRAFT بعد تعليق المورد',
+      () =>
+        withTransaction(async (client) => {
+          await acquireJournalEntriesLock(client);
+          return postSupplierInvoice(client, {
+            id: pack.inv.id,
+            userId,
+            version: pack.inv.version,
+            updated_at: pack.inv.updated_at,
+          });
+        }),
+      409
+    );
+  }
+
+  // H3) ترحيل بعد تعطيل النوع
+  {
+    const pack = await withTransaction(async (client) => {
+      const t = await createSupplierInvoiceType(client, {
+        code: `SITH3-${suffix}`,
+        name_ar: 'نوع سيُعطّل',
+        default_expense_gl_account_id: expGl,
+        created_by: userId,
+      });
+      const inv = await createSupplierInvoice(client, {
+        supplier_account_id: account.id,
+        supplier_invoice_number: `EXT-H3-${suffix}`,
+        invoice_type_id: t.id,
+        invoice_date: fiscal.invoiceDate,
+        subtotal_amount: '900',
+        expense_gl_account_id: expGl,
+        description: 'مسودة بنوع سيُعطّل',
+        created_by: userId,
+      });
+      const d = await deactivateSupplierInvoiceType(client, {
+        id: t.id,
+        userId,
+        version: t.version,
+        updated_at: t.updated_at,
+      });
+      return { inv, d };
+    });
+    await expectHttp(
+      'H3) منع ترحيل DRAFT بعد تعطيل النوع',
+      () =>
+        withTransaction(async (client) => {
+          await acquireJournalEntriesLock(client);
+          return postSupplierInvoice(client, {
+            id: pack.inv.id,
+            userId,
+            version: pack.inv.version,
+            updated_at: pack.inv.updated_at,
+          });
+        }),
+      409
+    );
+  }
+
+  // H4) سباق رقم فاتورة المورد الخارجي
+  {
+    const results = await Promise.allSettled([
+      withTransaction((client) =>
+        createSupplierInvoice(client, {
+          supplier_account_id: account.id,
+          supplier_invoice_number: `ext race ${suffix}`,
+          invoice_date: fiscal.invoiceDate,
+          subtotal_amount: '111',
+          expense_gl_account_id: expGl,
+          description: 'سباق أ',
+          created_by: userId,
+        })
+      ),
+      withTransaction((client) =>
+        createSupplierInvoice(client, {
+          supplier_account_id: account.id,
+          supplier_invoice_number: `EXT RACE ${suffix}`,
+          invoice_date: fiscal.invoiceDate,
+          subtotal_amount: '222',
+          expense_gl_account_id: expGl,
+          description: 'سباق ب',
+          created_by: userId,
+        })
+      ),
+    ]);
+    const okN = results.filter((r) => r.status === 'fulfilled').length;
+    const badN = results.filter((r) => r.status === 'rejected').length;
+    const cnt = await query(
+      `SELECT COUNT(*)::int AS n FROM accounts.supplier_invoices
+       WHERE supplier_id = $1 AND supplier_invoice_number = $2`,
+      [supplier.id, `EXT RACE ${suffix}`]
+    );
+    if (okN === 1 && badN === 1 && cnt.rows[0].n === 1) {
+      ok(`H4) سباق رقم فاتورة خارجي (ناجح=${okN} مرفوض=${badN})`);
+    } else {
+      fail('H4) سباق رقم فاتورة خارجي', { okN, badN, cnt: cnt.rows[0].n });
+    }
+  }
+
+  // H5) fault injection بعد القيد → rollback بلا دفتر
+  {
+    const d = await withTransaction((client) =>
+      createSupplierInvoice(client, {
+        supplier_account_id: account.id,
+        supplier_invoice_number: `EXT-FAULT-${suffix}`,
+        invoice_date: fiscal.invoiceDate,
+        subtotal_amount: '777',
+        expense_gl_account_id: expGl,
+        description: 'حقن عطل',
+        created_by: userId,
+      })
+    );
+    setSupplierInvoicePostFaultForTests('after_journal');
+    try {
+      await withTransaction(async (client) => {
+        await acquireJournalEntriesLock(client);
+        return postSupplierInvoice(client, {
+          id: d.id,
+          userId,
+          version: d.version,
+          updated_at: d.updated_at,
+        });
+      });
+      fail('H5) توقّعنا فشل FAULT_AFTER_JOURNAL');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes('FAULT_AFTER_JOURNAL')) {
+        fail('H5) رسالة العطل غير متوقعة', msg);
+      } else {
+        const st = await query(
+          `SELECT status, journal_entry_id FROM accounts.supplier_invoices WHERE id=$1`,
+          [d.id]
+        );
+        const led = await query(
+          `SELECT COUNT(*)::int AS n FROM accounts.supplier_ledger_entries WHERE source_id=$1`,
+          [d.id]
+        );
+        const je = await query(
+          `SELECT COUNT(*)::int AS n FROM accounts.journal_entries
+           WHERE source_type='SUPPLIER_INVOICE' AND source_id=$1`,
+          [d.id]
+        );
+        if (
+          st.rows[0].status === 'DRAFT' &&
+          !st.rows[0].journal_entry_id &&
+          led.rows[0].n === 0 &&
+          je.rows[0].n === 0
+        ) {
+          ok('H5) fault injection — rollback بلا قيد/دفتر يتيم');
+        } else {
+          fail('H5) حالة جزئية بعد العطل', { st: st.rows[0], led: led.rows[0], je: je.rows[0] });
+        }
+      }
+    } finally {
+      setSupplierInvoicePostFaultForTests(null);
+    }
+  }
+
+  // H6) منع Expense/Revenue كـ Payables
+  {
+    const revGl = await ensureTypedAccount(
+      `TST-REV-${suffix}`,
+      'إيراد اختبار AP',
+      'REVENUE',
+      userId
+    );
+    await expectHttp(
+      'H6a) منع Revenue كـ Payables GL',
+      () =>
+        withTransaction((client) => assertValidPayableGlAccount(client, revGl)),
+      400
+    );
+    await expectHttp(
+      'H6b) منع Expense كـ Payables GL',
+      () =>
+        withTransaction((client) => assertValidPayableGlAccount(client, expGl)),
+      400
+    );
+  }
+
+  // H7) POST وVOID متزامنان
+  {
+    const d = await withTransaction((client) =>
+      createSupplierInvoice(client, {
+        supplier_account_id: account.id,
+        supplier_invoice_number: `EXT-PV-${suffix}`,
+        invoice_date: fiscal.invoiceDate,
+        subtotal_amount: '3333',
+        expense_gl_account_id: expGl,
+        description: 'سباق post/void',
+        created_by: userId,
+      })
+    );
+    const results = await Promise.allSettled([
+      withTransaction(async (client) => {
+        await acquireJournalEntriesLock(client);
+        return postSupplierInvoice(client, {
+          id: d.id,
+          userId,
+          version: d.version,
+          updated_at: d.updated_at,
+        });
+      }),
+      withTransaction(async (client) => {
+        await acquireJournalEntriesLock(client);
+        return voidSupplierInvoice(client, {
+          id: d.id,
+          userId,
+          version: d.version,
+          updated_at: d.updated_at,
+          reason: 'سباق',
+        });
+      }),
+    ]);
+    const okN = results.filter((r) => r.status === 'fulfilled').length;
+    const badN = results.filter((r) => r.status === 'rejected').length;
+    const final = await query(
+      `SELECT status FROM accounts.supplier_invoices WHERE id=$1`,
+      [d.id]
+    );
+    const je = await query(
+      `SELECT COUNT(*)::int AS n FROM accounts.journal_entries
+       WHERE source_id=$1 AND source_type LIKE 'SUPPLIER_INVOICE%'`,
+      [d.id]
+    );
+    if (okN >= 1 && (final.rows[0].status === 'POSTED' || final.rows[0].status === 'VOID' || final.rows[0].status === 'DRAFT') && je.rows[0].n <= 2) {
+      ok(`H7) POST/VOID متزامن (ناجح=${okN} مرفوض=${badN} status=${final.rows[0].status})`);
+    } else {
+      fail('H7) POST/VOID متزامن', { okN, badN, status: final.rows[0], je: je.rows[0] });
+    }
+  }
+
+  // H8) closeSupplierAccount + رفض clerk
+  {
+    const clerkId = await upsertCapabilityTestUser(`ap_clerk_close_${suffix.toLowerCase()}`);
+    await grantAccountsPlatformRole(clerkId, ACCOUNTS_CLERK_ROLE_CODE);
+    await expectHttp(
+      'H8) clerk ممنوع من إغلاق الحساب المالي',
+      () =>
+        withTransaction(async (client) => {
+          const acc = await loadSupplierAccount(client, account.id);
+          return closeSupplierAccount(client, {
+            id: acc.id,
+            userId: clerkId,
+            version: acc.version,
+            updated_at: acc.updated_at,
+          });
+        }),
+      403
+    );
+  }
+
   void hasUnexplainedGlActivity;
 
   console.log(`\n——— النتيجة: ${passCount} نجاح / ${failCount} فشل ———`);
