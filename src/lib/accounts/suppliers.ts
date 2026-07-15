@@ -709,12 +709,20 @@ export async function listSuppliers(
 export async function getSupplierDashboardSummary(client: TxClient): Promise<{
   active_suppliers: number;
   total_payables: string;
+  paid_to_suppliers: string;
+  remaining_payables: string;
+  cash_supplier_payments: string;
+  bank_supplier_payments: string;
+  cash_direct_expenses: string;
+  bank_direct_expenses: string;
   draft_invoices: number;
   posted_invoices: number;
   void_invoices: number;
   due_invoices: number;
   overdue_invoices: number;
   recent_invoices: Array<Record<string, unknown>>;
+  recent_payments: Array<Record<string, unknown>>;
+  recent_expenses: Array<Record<string, unknown>>;
 }> {
   const active = await txQuery<{ n: number }>(
     client,
@@ -726,6 +734,25 @@ export async function getSupplierDashboardSummary(client: TxClient): Promise<{
      FROM accounts.supplier_ledger_entries
      WHERE entry_type <> 'OPENING_REFERENCE'`
   );
+  const paid = await txQuery<{ total: string }>(
+    client,
+    `SELECT COALESCE(SUM(amount), 0)::text AS total
+     FROM accounts.supplier_payments WHERE status = 'POSTED'`
+  );
+  const payByMethod = await txQuery<{ payment_method: string; total: string }>(
+    client,
+    `SELECT payment_method, COALESCE(SUM(amount), 0)::text AS total
+     FROM accounts.supplier_payments WHERE status = 'POSTED'
+     GROUP BY payment_method`
+  );
+  const expByMethod = await txQuery<{ payment_method: string; total: string }>(
+    client,
+    `SELECT payment_method, COALESCE(SUM(amount), 0)::text AS total
+     FROM accounts.direct_expenses WHERE status = 'POSTED'
+     GROUP BY payment_method`
+  );
+  const payMethod = Object.fromEntries(payByMethod.rows.map((r) => [r.payment_method, r.total]));
+  const expMethod = Object.fromEntries(expByMethod.rows.map((r) => [r.payment_method, r.total]));
   const counts = await txQuery<{ status: string; n: number }>(
     client,
     `SELECT status, COUNT(*)::int AS n
@@ -736,13 +763,13 @@ export async function getSupplierDashboardSummary(client: TxClient): Promise<{
   const due = await txQuery<{ n: number }>(
     client,
     `SELECT COUNT(*)::int AS n FROM accounts.supplier_invoices
-     WHERE status = 'POSTED' AND outstanding_amount > 0
+     WHERE status IN ('POSTED','PARTIALLY_PAID') AND outstanding_amount > 0
        AND (due_date IS NULL OR due_date >= CURRENT_DATE)`
   );
   const overdue = await txQuery<{ n: number }>(
     client,
     `SELECT COUNT(*)::int AS n FROM accounts.supplier_invoices
-     WHERE status = 'POSTED' AND outstanding_amount > 0
+     WHERE status IN ('POSTED','PARTIALLY_PAID') AND outstanding_amount > 0
        AND due_date IS NOT NULL AND due_date < CURRENT_DATE`
   );
   const recent = await txQuery(
@@ -755,16 +782,46 @@ export async function getSupplierDashboardSummary(client: TxClient): Promise<{
      ORDER BY si.created_at DESC
      LIMIT 8`
   );
+  const recentPayments = await txQuery(
+    client,
+    `SELECT sp.id, sp.payment_number, sp.status, sp.amount::text AS amount,
+            sp.payment_method, sp.payment_date::text AS payment_date,
+            s.name_ar AS supplier_name_ar
+     FROM accounts.supplier_payments sp
+     JOIN accounts.suppliers s ON s.id = sp.supplier_id
+     ORDER BY sp.created_at DESC
+     LIMIT 6`
+  );
+  const recentExpenses = await txQuery(
+    client,
+    `SELECT de.id, de.expense_number, de.status, de.amount::text AS amount,
+            de.payment_method, de.expense_date::text AS expense_date,
+            de.beneficiary_name
+     FROM accounts.direct_expenses de
+     ORDER BY de.created_at DESC
+     LIMIT 6`
+  );
+
+  const remaining = normalizeSignedMoneyInput(payables.rows[0]?.total ?? '0');
+  const paidTotal = normalizeSignedMoneyInput(paid.rows[0]?.total ?? '0');
 
   return {
     active_suppliers: active.rows[0]?.n ?? 0,
-    total_payables: normalizeSignedMoneyInput(payables.rows[0]?.total ?? '0'),
+    total_payables: remaining,
+    paid_to_suppliers: paidTotal,
+    remaining_payables: remaining,
+    cash_supplier_payments: normalizeSignedMoneyInput(payMethod.CASH ?? '0'),
+    bank_supplier_payments: normalizeSignedMoneyInput(payMethod.BANK ?? '0'),
+    cash_direct_expenses: normalizeSignedMoneyInput(expMethod.CASH ?? '0'),
+    bank_direct_expenses: normalizeSignedMoneyInput(expMethod.BANK ?? '0'),
     draft_invoices: byStatus.DRAFT ?? 0,
     posted_invoices: byStatus.POSTED ?? 0,
     void_invoices: byStatus.VOID ?? 0,
     due_invoices: due.rows[0]?.n ?? 0,
     overdue_invoices: overdue.rows[0]?.n ?? 0,
     recent_invoices: recent.rows,
+    recent_payments: recentPayments.rows,
+    recent_expenses: recentExpenses.rows,
   };
 }
 
