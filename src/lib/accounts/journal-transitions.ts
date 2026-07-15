@@ -159,7 +159,7 @@ export const TYPE_LABEL_AR: Record<JournalEntryType, string> = {
   TRANSFER: 'تحويل',
   STUDENT_FEE: 'أقساط طلبة',
   SALARY: 'رواتب',
-  ADJUSTMENT: 'تسوية',
+  ADJUSTMENT: 'تسوية', // يشمل استحقاق فواتير الموردين (6.A)
   CLOSING: 'إقفال',
   REVERSAL: 'عكسي',
 };

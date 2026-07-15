@@ -20,6 +20,9 @@ export const DOCUMENT_SEQUENCE_DEFAULTS = [
   { document_type: 'BANK_STATEMENT', prefix: 'BST' },
   { document_type: 'STUDENT_ACCOUNT', prefix: 'STA' },
   { document_type: 'STUDENT_CHARGE', prefix: 'SCH' },
+  { document_type: 'SUPPLIER', prefix: 'SUP' },
+  { document_type: 'SUPPLIER_ACCOUNT', prefix: 'SPA' },
+  { document_type: 'SUPPLIER_INVOICE', prefix: 'SIN' },
 ] as const;
 
 export type DocumentType = (typeof DOCUMENT_SEQUENCE_DEFAULTS)[number]['document_type'];

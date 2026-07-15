@@ -31,7 +31,12 @@ export type AccountingLockDomain =
   | 'STUDENT_COLLECTION'
   | 'STUDENT_RELIEF'
   | 'STUDENT_CREDIT_NOTE'
-  | 'STUDENT_REFUND';
+  | 'STUDENT_REFUND'
+  | 'SUPPLIER'
+  | 'SUPPLIER_ACCOUNT'
+  | 'SUPPLIER_INVOICE'
+  | 'SUPPLIER_LEDGER'
+  | 'GL_ACCOUNT';
 
 export type AccountingLockResource = {
   domain: AccountingLockDomain;
@@ -156,4 +161,20 @@ export function studentCreditNoteLock(id: string): AccountingLockResource {
 }
 export function studentRefundLock(id: string): AccountingLockResource {
   return { domain: 'STUDENT_REFUND', resourceId: id };
+}
+export function supplierLock(id: string): AccountingLockResource {
+  return { domain: 'SUPPLIER', resourceId: id };
+}
+export function supplierAccountLock(id: string): AccountingLockResource {
+  return { domain: 'SUPPLIER_ACCOUNT', resourceId: id };
+}
+export function supplierInvoiceLock(id: string): AccountingLockResource {
+  return { domain: 'SUPPLIER_INVOICE', resourceId: id };
+}
+export function supplierLedgerLock(supplierAccountId: string): AccountingLockResource {
+  return { domain: 'SUPPLIER_LEDGER', resourceId: supplierAccountId };
+}
+/** قفل GL للحسابات المستخدمة في ذمم الموردين (6.A) — موازٍ لـ CHART_ACCOUNT */
+export function glAccountLock(glAccountId: string): AccountingLockResource {
+  return { domain: 'GL_ACCOUNT', resourceId: glAccountId };
 }
