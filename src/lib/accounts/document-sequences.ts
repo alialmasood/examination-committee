@@ -23,6 +23,8 @@ export const DOCUMENT_SEQUENCE_DEFAULTS = [
   { document_type: 'SUPPLIER', prefix: 'SUP' },
   { document_type: 'SUPPLIER_ACCOUNT', prefix: 'SPA' },
   { document_type: 'SUPPLIER_INVOICE', prefix: 'SIN' },
+  { document_type: 'SUPPLIER_PAYMENT', prefix: 'SPY' },
+  { document_type: 'DIRECT_EXPENSE', prefix: 'DEX' },
 ] as const;
 
 export type DocumentType = (typeof DOCUMENT_SEQUENCE_DEFAULTS)[number]['document_type'];

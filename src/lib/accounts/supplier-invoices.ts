@@ -371,13 +371,13 @@ export function setSupplierInvoicePostFaultForTests(
   __supplierInvoicePostFault = v;
 }
 
-async function insertSupplierLedger(
+export async function writeSupplierLedgerEntry(
   client: TxClient,
   params: {
     accountId: string;
     supplierId: string;
     entryDate: string;
-    entryType: 'INVOICE' | 'INVOICE_REVERSAL';
+    entryType: 'INVOICE' | 'INVOICE_REVERSAL' | 'PAYMENT' | 'PAYMENT_REVERSAL';
     sourceType: string;
     sourceId: string;
     description: string;
@@ -1009,7 +1009,7 @@ export async function postSupplierInvoice(
     throw new Error('FAULT_AFTER_JOURNAL');
   }
 
-  await insertSupplierLedger(client, {
+  await writeSupplierLedgerEntry(client, {
     accountId: account.id,
     supplierId: account.supplier_id,
     entryDate: invoiceDate,
@@ -1165,7 +1165,7 @@ export async function voidSupplierInvoice(
   );
 
   const amount = normalizeMoneyInput(invoice.total_amount);
-  await insertSupplierLedger(client, {
+  await writeSupplierLedgerEntry(client, {
     accountId: account.id,
     supplierId: account.supplier_id,
     entryDate: reversalDate,

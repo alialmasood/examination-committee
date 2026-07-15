@@ -1,6 +1,6 @@
 /**
  * تحقق ذمم الموردين (6.A):
- * يقارن فواتير POSTED/VOID مع الدفتر الفرعي وقيود GL و outstanding.
+ * يقارن الفواتير والدفعات مع الدفتر الفرعي وقيود GL و outstanding.
  */
 import {
   moneyEquals,
@@ -61,7 +61,7 @@ export async function verifySupplierPayables(
     `SELECT id, invoice_number, total_amount::text, outstanding_amount::text,
             status, journal_entry_id, reversal_journal_entry_id
      FROM accounts.supplier_invoices
-     WHERE status IN ('POSTED', 'VOID')`
+     WHERE status IN ('POSTED', 'PARTIALLY_PAID', 'PAID', 'VOID')`
   );
 
   let invoiceLedgerMatch = true;
@@ -89,7 +89,7 @@ export async function verifySupplierPayables(
     const row = led.rows[0];
     const total = normalizeMoneyInput(inv.total_amount);
 
-    if (inv.status === 'POSTED') {
+    if (inv.status === 'POSTED' || inv.status === 'PARTIALLY_PAID' || inv.status === 'PAID') {
       if (row.inv_cnt !== 1 || !moneyEquals(row.credits, total)) {
         invoiceLedgerMatch = false;
         mismatches.push({
@@ -106,12 +106,38 @@ export async function verifySupplierPayables(
           detail: inv.invoice_number,
         });
       }
-      if (!moneyEquals(inv.outstanding_amount, total)) {
+      const paid = await txQuery<{ total: string }>(
+        client,
+        `SELECT COALESCE(SUM(a.allocated_amount),0)::text AS total
+         FROM accounts.supplier_payment_allocations a
+         JOIN accounts.supplier_payments p ON p.id = a.supplier_payment_id
+         WHERE a.supplier_invoice_id = $1::uuid AND p.status = 'POSTED'`,
+        [inv.id]
+      );
+      const expectedOutstandingMillis = ms(total) - ms(paid.rows[0]?.total ?? '0');
+      const expectedOutstanding = (() => {
+        const integer = expectedOutstandingMillis / BigInt(1000);
+        const fraction = (expectedOutstandingMillis % BigInt(1000))
+          .toString()
+          .padStart(3, '0');
+        return `${integer}.${fraction}`;
+      })();
+      const expectedStatus =
+        expectedOutstandingMillis === BigInt(0)
+          ? 'PAID'
+          : moneyEquals(expectedOutstanding, total)
+            ? 'POSTED'
+            : 'PARTIALLY_PAID';
+      if (
+        expectedOutstandingMillis < BigInt(0) ||
+        !moneyEquals(inv.outstanding_amount, expectedOutstanding) ||
+        inv.status !== expectedStatus
+      ) {
         outstandingOk = false;
         mismatches.push({
           kind: 'OUTSTANDING',
           invoice_id: inv.id,
-          detail: `${inv.invoice_number}: outstanding=${inv.outstanding_amount}`,
+          detail: `${inv.invoice_number}: outstanding=${inv.outstanding_amount} expected=${expectedOutstanding} status=${inv.status} expected_status=${expectedStatus}`,
         });
       }
       if (!inv.journal_entry_id) {
@@ -160,6 +186,83 @@ export async function verifySupplierPayables(
     }
   }
 
+  const payments = await txQuery<{
+    id: string;
+    payment_number: string;
+    amount: string;
+    status: string;
+    supplier_account_id: string;
+    cash_voucher_id: string | null;
+    bank_voucher_id: string | null;
+  }>(
+    client,
+    `SELECT id,payment_number,amount::text,status,supplier_account_id,cash_voucher_id,bank_voucher_id
+     FROM accounts.supplier_payments WHERE status IN ('POSTED','VOID')`
+  );
+  for (const payment of payments.rows) {
+    const ledger = await txQuery<{ debit:string; credit:string; pay_cnt:number; rev_cnt:number }>(
+      client,
+      `SELECT
+        COALESCE(SUM(CASE WHEN entry_type='PAYMENT' THEN debit_amount ELSE 0 END),0)::text debit,
+        COALESCE(SUM(CASE WHEN entry_type='PAYMENT_REVERSAL' THEN credit_amount ELSE 0 END),0)::text credit,
+        COUNT(*) FILTER (WHERE entry_type='PAYMENT')::int pay_cnt,
+        COUNT(*) FILTER (WHERE entry_type='PAYMENT_REVERSAL')::int rev_cnt
+       FROM accounts.supplier_ledger_entries
+       WHERE source_id=$1::uuid AND entry_type IN ('PAYMENT','PAYMENT_REVERSAL')`,
+      [payment.id]
+    );
+    const allocated = await txQuery<{ total:string }>(
+      client,
+      `SELECT COALESCE(SUM(allocated_amount),0)::text total
+       FROM accounts.supplier_payment_allocations WHERE supplier_payment_id=$1::uuid`,
+      [payment.id]
+    );
+    const voucherId = payment.cash_voucher_id ?? payment.bank_voucher_id;
+    const voucherTable = payment.cash_voucher_id ? 'cash_vouchers' : 'bank_vouchers';
+    const voucher = voucherId
+      ? await txQuery<{ status:string; counter_account_id:string; journal_entry_id:string|null }>(
+          client,
+          `SELECT status,counter_account_id,journal_entry_id FROM accounts.${voucherTable} WHERE id=$1::uuid`,
+          [voucherId]
+        )
+      : { rows: [] as Array<{status:string;counter_account_id:string;journal_entry_id:string|null}> };
+    const payable = await txQuery<{ payable_gl_account_id:string }>(
+      client,
+      `SELECT payable_gl_account_id FROM accounts.supplier_accounts WHERE id=$1::uuid`,
+      [payment.supplier_account_id]
+    );
+    const l = ledger.rows[0];
+    if (payment.status === 'POSTED') {
+      if (l.pay_cnt !== 1 || !moneyEquals(l.debit, payment.amount) ||
+          !moneyEquals(allocated.rows[0]?.total ?? '0', payment.amount) ||
+          voucher.rows[0]?.status !== 'POSTED' ||
+          voucher.rows[0]?.counter_account_id !== payable.rows[0]?.payable_gl_account_id) {
+        invoiceLedgerMatch = false;
+        mismatches.push({ kind:'PAYMENT_POSTED', detail:`${payment.payment_number}: دفتر/تخصيص/سند غير مطابق` });
+      }
+    } else if (payment.status === 'VOID') {
+      // إلغاء مسودة: بلا سند/دفتر. إلغاء مرحّل: PAYMENT + PAYMENT_REVERSAL + سند VOID.
+      if (!voucherId) {
+        if (l.pay_cnt !== 0 || l.rev_cnt !== 0) {
+          voidReversalOk = false;
+          mismatches.push({
+            kind: 'PAYMENT_VOID',
+            detail: `${payment.payment_number}: إلغاء مسودة يحتوي حركات دفتر غير متوقعة`,
+          });
+        }
+      } else if (
+        l.pay_cnt !== 1 ||
+        l.rev_cnt !== 1 ||
+        !moneyEquals(l.debit, payment.amount) ||
+        !moneyEquals(l.credit, payment.amount) ||
+        !['VOID', 'POSTED'].includes(voucher.rows[0]?.status ?? '')
+      ) {
+        voidReversalOk = false;
+        mismatches.push({ kind: 'PAYMENT_VOID', detail: `${payment.payment_number}: عكس الدفعة غير مطابق` });
+      }
+    }
+  }
+
   // صافي دفتر فرعي (بدون OPENING_REFERENCE)
   const subNet = await txQuery<{ net: string }>(
     client,
@@ -168,14 +271,33 @@ export async function verifySupplierPayables(
      WHERE entry_type <> 'OPENING_REFERENCE'`
   );
 
-  // صافي Payables من مصادر فواتير الموردين فقط (بدون تضاعف JOIN)
+  // صافي Payables من الفواتير وسندات الدفعات المرتبطة صراحةً بها.
   const apFromSources = await txQuery<{ net: string }>(
     client,
     `SELECT COALESCE(SUM(jl.credit_amount - jl.debit_amount), 0)::text AS net
      FROM accounts.journal_entry_lines jl
      JOIN accounts.journal_entries je ON je.id = jl.journal_entry_id
      WHERE je.status = 'POSTED'
-       AND je.source_type IN ('SUPPLIER_INVOICE', 'SUPPLIER_INVOICE_REVERSAL')
+       AND (
+         je.source_type IN ('SUPPLIER_INVOICE', 'SUPPLIER_INVOICE_REVERSAL')
+         OR je.id IN (
+           SELECT cv.journal_entry_id FROM accounts.supplier_payments sp
+           JOIN accounts.cash_vouchers cv ON cv.id=sp.cash_voucher_id
+           WHERE sp.status IN ('POSTED','VOID') AND cv.journal_entry_id IS NOT NULL
+           UNION
+           SELECT cv.reversal_journal_entry_id FROM accounts.supplier_payments sp
+           JOIN accounts.cash_vouchers cv ON cv.id=sp.cash_voucher_id
+           WHERE sp.status = 'VOID' AND cv.reversal_journal_entry_id IS NOT NULL
+           UNION
+           SELECT bv.journal_entry_id FROM accounts.supplier_payments sp
+           JOIN accounts.bank_vouchers bv ON bv.id=sp.bank_voucher_id
+           WHERE sp.status IN ('POSTED','VOID') AND bv.journal_entry_id IS NOT NULL
+           UNION
+           SELECT bv.reversal_journal_entry_id FROM accounts.supplier_payments sp
+           JOIN accounts.bank_vouchers bv ON bv.id=sp.bank_voucher_id
+           WHERE sp.status = 'VOID' AND bv.reversal_journal_entry_id IS NOT NULL
+         )
+       )
        AND jl.account_id IN (
          SELECT DISTINCT payable_gl_account_id FROM accounts.supplier_accounts
        )`
@@ -265,7 +387,7 @@ export async function verifySupplierPayables(
     });
   }
 
-  const postedCount = posted.rows.filter((r) => r.status === 'POSTED').length;
+  const postedCount = posted.rows.filter((r) => ['POSTED','PARTIALLY_PAID','PAID'].includes(r.status)).length;
   const voidPosted = posted.rows.filter(
     (r) => r.status === 'VOID' && r.journal_entry_id
   ).length;

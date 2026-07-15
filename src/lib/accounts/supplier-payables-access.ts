@@ -1,14 +1,5 @@
 /**
- * صلاحيات الموردين والذمم الدائنة (6.A).
- *
- * المصدر الرسمي: دور platform ACCOUNTS عبر user_system_roles
- * (accounts_viewer | accounts_clerk | accounts_admin).
- *
- * سياسة:
- * - Viewer: عرض فقط
- * - Clerk: إدارة موردين + إعداد فواتير DRAFT + أنواع فواتير — دون POST/VOID
- * - Admin: الكل بما فيه إغلاق الحساب المالي
- *
+ * صلاحيات الموردين والذمم + الدفعات والمصروفات المباشرة (6.A / 6.B).
  * لا username override.
  */
 import { AccountsHttpError } from './auth';
@@ -35,27 +26,49 @@ export const SUPPLIER_PAYABLES_CAPABILITIES = {
   INVOICES_POST: 'supplier_invoices.post',
   INVOICES_VOID: 'supplier_invoices.void',
   CLOSE: 'supplier_accounts.close',
+  PAYMENTS_VIEW: 'supplier_payments.view',
+  PAYMENTS_PREPARE: 'supplier_payments.prepare',
+  PAYMENTS_POST: 'supplier_payments.post',
+  PAYMENTS_VOID: 'supplier_payments.void',
+  DIRECT_EXPENSES_VIEW: 'direct_expenses.view',
+  DIRECT_EXPENSES_PREPARE: 'direct_expenses.prepare',
+  DIRECT_EXPENSES_POST: 'direct_expenses.post',
+  DIRECT_EXPENSES_VOID: 'direct_expenses.void',
+  DIRECT_EXPENSE_TYPES_MANAGE: 'direct_expense_types.manage',
 } as const;
 
 export type SupplierPayablesCapability =
   (typeof SUPPLIER_PAYABLES_CAPABILITIES)[keyof typeof SUPPLIER_PAYABLES_CAPABILITIES];
 
-const VIEW_ONLY = new Set<string>([SUPPLIER_PAYABLES_CAPABILITIES.VIEW]);
+const VIEW_ONLY = new Set<string>([
+  SUPPLIER_PAYABLES_CAPABILITIES.VIEW,
+  SUPPLIER_PAYABLES_CAPABILITIES.PAYMENTS_VIEW,
+  SUPPLIER_PAYABLES_CAPABILITIES.DIRECT_EXPENSES_VIEW,
+]);
 
 const CLERK_CAPS = new Set<string>([
   SUPPLIER_PAYABLES_CAPABILITIES.VIEW,
   SUPPLIER_PAYABLES_CAPABILITIES.MANAGE,
   SUPPLIER_PAYABLES_CAPABILITIES.INVOICE_TYPES_MANAGE,
   SUPPLIER_PAYABLES_CAPABILITIES.INVOICES_PREPARE,
+  SUPPLIER_PAYABLES_CAPABILITIES.PAYMENTS_VIEW,
+  SUPPLIER_PAYABLES_CAPABILITIES.PAYMENTS_PREPARE,
+  SUPPLIER_PAYABLES_CAPABILITIES.DIRECT_EXPENSES_VIEW,
+  SUPPLIER_PAYABLES_CAPABILITIES.DIRECT_EXPENSES_PREPARE,
+  SUPPLIER_PAYABLES_CAPABILITIES.DIRECT_EXPENSE_TYPES_MANAGE,
 ]);
 
-const APPROVER_CAPS = new Set<string>([SUPPLIER_PAYABLES_CAPABILITIES.VIEW]);
+const APPROVER_CAPS = new Set<string>([...VIEW_ONLY]);
 
 const ADMIN_CAPS = new Set<string>([
   ...CLERK_CAPS,
   SUPPLIER_PAYABLES_CAPABILITIES.INVOICES_POST,
   SUPPLIER_PAYABLES_CAPABILITIES.INVOICES_VOID,
   SUPPLIER_PAYABLES_CAPABILITIES.CLOSE,
+  SUPPLIER_PAYABLES_CAPABILITIES.PAYMENTS_POST,
+  SUPPLIER_PAYABLES_CAPABILITIES.PAYMENTS_VOID,
+  SUPPLIER_PAYABLES_CAPABILITIES.DIRECT_EXPENSES_POST,
+  SUPPLIER_PAYABLES_CAPABILITIES.DIRECT_EXPENSES_VOID,
 ]);
 
 type Runner = (
@@ -113,18 +126,10 @@ export async function getSupplierPayablesCapabilities(
 
   const roleCode = await loadAccountsPlatformRoleCode(runner, userId);
 
-  if (roleCode === ACCOUNTS_ADMIN_ROLE_CODE) {
-    return new Set(ADMIN_CAPS);
-  }
-  if (roleCode === ACCOUNTS_CLERK_ROLE_CODE) {
-    return new Set(CLERK_CAPS);
-  }
-  if (roleCode === ACCOUNTS_APPROVER_ROLE_CODE) {
-    return new Set(APPROVER_CAPS);
-  }
-  if (roleCode === ACCOUNTS_VIEWER_ROLE_CODE) {
-    return new Set(VIEW_ONLY);
-  }
+  if (roleCode === ACCOUNTS_ADMIN_ROLE_CODE) return new Set(ADMIN_CAPS);
+  if (roleCode === ACCOUNTS_CLERK_ROLE_CODE) return new Set(CLERK_CAPS);
+  if (roleCode === ACCOUNTS_APPROVER_ROLE_CODE) return new Set(APPROVER_CAPS);
+  if (roleCode === ACCOUNTS_VIEWER_ROLE_CODE) return new Set(VIEW_ONLY);
 
   if (await hasAccountsSystemMembership(runner, userId)) {
     return new Set(CLERK_CAPS);

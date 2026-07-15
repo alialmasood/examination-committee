@@ -36,6 +36,8 @@ export type AccountingLockDomain =
   | 'SUPPLIER_ACCOUNT'
   | 'SUPPLIER_INVOICE'
   | 'SUPPLIER_LEDGER'
+  | 'SUPPLIER_PAYMENT'
+  | 'DIRECT_EXPENSE'
   | 'GL_ACCOUNT';
 
 export type AccountingLockResource = {
@@ -173,6 +175,12 @@ export function supplierInvoiceLock(id: string): AccountingLockResource {
 }
 export function supplierLedgerLock(supplierAccountId: string): AccountingLockResource {
   return { domain: 'SUPPLIER_LEDGER', resourceId: supplierAccountId };
+}
+export function supplierPaymentLock(id: string): AccountingLockResource {
+  return { domain: 'SUPPLIER_PAYMENT', resourceId: id };
+}
+export function directExpenseLock(id: string): AccountingLockResource {
+  return { domain: 'DIRECT_EXPENSE', resourceId: id };
 }
 /** قفل GL للحسابات المستخدمة في ذمم الموردين (6.A) — موازٍ لـ CHART_ACCOUNT */
 export function glAccountLock(glAccountId: string): AccountingLockResource {
