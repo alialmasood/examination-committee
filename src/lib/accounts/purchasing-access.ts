@@ -118,13 +118,19 @@ export async function getPurchasingCapabilities(
   if (code === ACCOUNTS_APPROVER_ROLE_CODE) return new Set(APPROVER_CAPS);
   if (code === ACCOUNTS_VIEWER_ROLE_CODE) return new Set(VIEW_ONLY);
   if (code === ACCOUNTS_CLERK_ROLE_CODE) return new Set(CLERK_CAPS);
+  /**
+   * Least Privilege (7.A):
+   * عضوية ACCOUNTS وحدها دون دور platform صريح → VIEW_ONLY فقط.
+   * إعداد/موافقة/ترحيل يتطلب accounts_clerk / accounts_approver / accounts_admin (أو admin النظام).
+   * لا ترقية ضمنية إلى CLERK_CAPS.
+   */
   const membership = await runner(
     `SELECT 1 FROM student_affairs.user_systems us
      JOIN student_affairs.systems s ON s.id = us.system_id AND s.code = 'ACCOUNTS'
      WHERE us.user_id = $1::uuid LIMIT 1`,
     [userId]
   );
-  if (membership.rows[0]) return new Set(CLERK_CAPS);
+  if (membership.rows[0]) return new Set(VIEW_ONLY);
   return new Set();
 }
 

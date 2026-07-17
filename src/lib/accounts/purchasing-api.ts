@@ -12,6 +12,7 @@ import { withTransaction } from './with-transaction';
 import {
   PURCHASING_CAPABILITIES as C,
   assertPurchasingCapability,
+  getPurchasingCapabilities,
   type PurchasingCapability,
 } from './purchasing-access';
 import {
@@ -582,16 +583,38 @@ export async function supplierInvoiceFromPurchaseOrder(request: NextRequest) {
         ...b,
         created_by: a.user.id,
       });
+      const auditExtra =
+        b.override_tolerance === true
+          ? {
+              override_tolerance: true,
+              price_tolerance_percent: await getPriceTolerancePercent(c),
+              override_reason:
+                typeof b.override_reason === 'string' ? b.override_reason.slice(0, 500) : null,
+              lines: x.lines.map((l) => ({
+                purchase_order_line_id: l.purchase_order_line_id,
+                quantity: l.quantity,
+                unit_price: l.unit_price,
+                line_total: l.line_total,
+              })),
+            }
+          : {};
       await writeFinancialAudit(c, {
         userId: a.user.id,
-        action: 'SUPPLIER_INVOICE_FROM_PO_CREATED',
+        action:
+          b.override_tolerance === true
+            ? 'PURCHASE_INVOICE_MATCH_TOLERANCE_OVERRIDE'
+            : 'SUPPLIER_INVOICE_FROM_PO_CREATED',
         entityType: 'supplier_invoice',
         entityId: x.invoice.id,
         newValues: {
           ...serializeSupplierInvoice(x.invoice),
           lines: x.lines.map(serializeSupplierInvoiceLine),
+          ...auditExtra,
         },
-        description: `إنشاء فاتورة من أمر شراء ${x.invoice.invoice_number}`,
+        description:
+          b.override_tolerance === true
+            ? `تجاوز تسامح السعر — فاتورة من أمر شراء ${x.invoice.invoice_number}`
+            : `إنشاء فاتورة من أمر شراء ${x.invoice.invoice_number}`,
         ipAddress: a.ipAddress,
         userAgent: a.userAgent,
       });
@@ -622,7 +645,7 @@ export async function purchasingOptions(request: NextRequest) {
   if (isAuthFailure(a)) return a.response;
   try {
     const dashboard = request.nextUrl.searchParams.get('dashboard') === '1';
-    const [suppliers, glAccounts, costCenters, departments, tolerance] = await Promise.all([
+    const [suppliers, glAccounts, costCenters, departments, tolerance, caps] = await Promise.all([
       query(
         `SELECT sa.id AS supplier_account_id, sa.account_number, sa.currency_code,
                 s.id AS supplier_id, s.supplier_number, s.name_ar, s.status
@@ -642,6 +665,7 @@ export async function purchasingOptions(request: NextRequest) {
       ),
       query(`SELECT id, name_ar FROM student_affairs.departments ORDER BY name_ar`),
       withTransaction((c) => getPriceTolerancePercent(c)),
+      getPurchasingCapabilities(null, a.user.id),
     ]);
 
     const base = {
@@ -650,6 +674,8 @@ export async function purchasingOptions(request: NextRequest) {
       cost_centers: costCenters.rows,
       departments: departments.rows,
       price_tolerance_percent: tolerance,
+      capabilities: [...caps],
+      can_override_price_tolerance: caps.has(C.MATCH_OVERRIDE),
       purchase_kinds: [
         'SERVICE',
         'NON_STOCK_ITEM',

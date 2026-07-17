@@ -886,9 +886,11 @@ export async function cancelPurchaseOrder(
 }
 
 /**
- * إغلاق يدوي: مسموح فقط عندما لا تبقى كمية مفتوحة للاستلام على أي سطر نشط.
- * open_receive = ordered − cancelled − received
- * إن وُجدت كمية مفتوحة يُرفض الإغلاق — استخدم الاستلام أو إلغاء الأمر بدلًا من ذلك.
+ * إغلاق يدوي لرأس الأمر فقط (حل B في 7.A):
+ * - لا يكتب cancelled_quantity ولا يحدّث سطور الأمر إلى CLOSED/CANCELLED.
+ * - حالات السطر CANCELLED/CLOSED تمهيدية لمرحلة لاحقة (إلغاء سطر جزئي).
+ * - رأس CLOSED يمنع الاستلام/الفوترة عبر بوابات الحالة حتى لو بقيت حالات السطور تاريخية.
+ * open_receive = ordered − cancelled − received يجب أن يكون 0 لكل سطر نشط قبل الإغلاق.
  */
 export async function closePurchaseOrder(
   c: TxClient,

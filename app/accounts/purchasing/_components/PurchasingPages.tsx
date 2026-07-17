@@ -839,12 +839,17 @@ export function MatchingPage() {
   const [poId, setPoId] = useState(poIdParam);
   const [matchable, setMatchable] = useState<any[]>([]);
   const [tolerance, setTolerance] = useState(0);
+  const [overrideTolerance, setOverrideTolerance] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [confirmOverride, setConfirmOverride] = useState(false);
   const [f, setF] = useState<any>({
     supplier_invoice_number: '',
     invoice_date: new Date().toISOString().slice(0, 10),
   });
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const canOverride = Boolean(opts?.data?.can_override_price_tolerance);
 
   useEffect(() => {
     fetchJson(`${API.options}?dashboard=1`).then(setOpts);
@@ -863,6 +868,7 @@ export function MatchingPage() {
             ...l,
             quantity: l.available_to_invoice ?? l.available_quantity ?? '0',
             unit_price: l.unit_price ?? l.po_unit_price ?? '0',
+            po_unit_price: l.unit_price ?? l.po_unit_price ?? '0',
           }))
         );
       });
@@ -873,7 +879,23 @@ export function MatchingPage() {
 
   const openPos = opts?.data?.dashboard?.open_purchase_orders ?? [];
 
-  async function createInvoice() {
+  function priceOutsideTolerance(): boolean {
+    if (tolerance <= 0) {
+      return matchable.some(
+        (l) => Number(l.quantity) > 0 && Number(l.unit_price) !== Number(l.po_unit_price ?? l.unit_price)
+      );
+    }
+    return matchable.some((l) => {
+      if (!(Number(l.quantity) > 0)) return false;
+      const po = Number(l.po_unit_price ?? l.unit_price);
+      const inv = Number(l.unit_price);
+      if (!po) return inv !== po;
+      const diff = Math.abs(inv - po);
+      return diff > (po * tolerance) / 100;
+    });
+  }
+
+  async function doCreate(withOverride: boolean) {
     setMsg('');
     setBusy(true);
     try {
@@ -885,16 +907,30 @@ export function MatchingPage() {
           unit_price: l.unit_price,
         }));
       if (!lines.length) return setMsg('أدخل كمية واحدة على الأقل');
+      const body: any = { purchase_order_id: poId, ...f, lines };
+      if (withOverride) {
+        body.override_tolerance = true;
+        if (overrideReason.trim()) body.override_reason = overrideReason.trim();
+      }
       const r = await fetchJson(API.invoiceFromPo, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ purchase_order_id: poId, ...f, lines }),
+        body: JSON.stringify(body),
       });
       if (!r.data) return setMsg(errMsg(r));
       location.href = `/accounts/suppliers/invoices/${r.data.id}`;
     } finally {
       setBusy(false);
+      setConfirmOverride(false);
     }
+  }
+
+  async function createInvoice() {
+    if (overrideTolerance && canOverride && priceOutsideTolerance()) {
+      setConfirmOverride(true);
+      return;
+    }
+    await doCreate(overrideTolerance && canOverride);
   }
 
   return (
@@ -908,21 +944,56 @@ export function MatchingPage() {
             <option key={p.id} value={p.id}>{p.purchase_order_number} — {p.supplier_name_ar}</option>
           ))}
         </select>
-        <p className="text-gray-500 text-xs">تسامح السعر: {tolerance}%</p>
+        <p className="text-gray-500 text-xs">تسامح السعر: {tolerance}% (متماثل زيادة/نقصان)</p>
         <input className="border p-2" placeholder="رقم فاتورة المورد *" value={f.supplier_invoice_number} onChange={(e) => setF({ ...f, supplier_invoice_number: e.target.value })} />
         <input className="border p-2" type="date" value={f.invoice_date} onChange={(e) => setF({ ...f, invoice_date: e.target.value })} />
         {matchable.map((ln, i) => (
           <div key={ln.purchase_order_line_id} className="border rounded p-2 grid md:grid-cols-4 gap-2">
             <span className="md:col-span-4">{ln.line_number}. {ln.description}</span>
-            <span className="text-gray-500">متاح: {ln.available_to_invoice ?? ln.available_quantity}</span>
+            <span className="text-gray-500">متاح: {ln.available_to_invoice ?? ln.available_quantity} · سعر الأمر: {ln.po_unit_price}</span>
             <input className="border p-1" type="number" placeholder="الكمية" value={ln.quantity} onChange={(e) => { const n = [...matchable]; n[i] = { ...ln, quantity: e.target.value }; setMatchable(n); }} />
             <input className="border p-1" type="number" placeholder="السعر" value={ln.unit_price} onChange={(e) => { const n = [...matchable]; n[i] = { ...ln, unit_price: e.target.value }; setMatchable(n); }} />
           </div>
         ))}
         {!matchable.length && poId && <p className="text-gray-400">لا توجد سطور قابلة للمطابقة</p>}
+        {canOverride && (
+          <label className="flex items-start gap-2 border rounded p-2 bg-amber-50">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={overrideTolerance}
+              onChange={(e) => setOverrideTolerance(e.target.checked)}
+            />
+            <span>
+              <strong>تجاوز فرق السعر المسموح</strong>
+              <span className="block text-xs text-amber-800 mt-1">
+                سيُسجَّل التجاوز في سجل التدقيق المالي مع أسعار الأمر والفاتورة والمستخدم.
+              </span>
+              {overrideTolerance && (
+                <textarea
+                  className="border w-full mt-2 p-2 text-sm"
+                  placeholder="سبب التجاوز (اختياري)"
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                />
+              )}
+            </span>
+          </label>
+        )}
         <button className="bg-blue-600 text-white rounded p-2" disabled={busy || !poId} onClick={() => void createInvoice()}>إنشاء فاتورة</button>
         {msg && <p className="text-red-600">{msg}</p>}
       </div>
+      <ConfirmDialog
+        open={confirmOverride}
+        title="تأكيد تجاوز تسامح السعر"
+        message="السعر خارج نطاق التسامح المعتمد. سيتم تسجيل التجاوز في التدقيق. هل تريد المتابعة؟"
+        confirmLabel="تجاوز وإنشاء"
+        danger
+        busy={busy}
+        error={msg || null}
+        onClose={() => setConfirmOverride(false)}
+        onConfirm={() => void doCreate(true)}
+      />
     </main>
   );
 }

@@ -27,7 +27,10 @@ export type PurchasingVerifyMismatch = {
 
 export type PurchasingVerifyResult = {
   ok: boolean;
+  strict: boolean;
   mismatches: PurchasingVerifyMismatch[];
+  warnings: PurchasingVerifyMismatch[];
+  unexplained: PurchasingVerifyMismatch[];
   summary: {
     requisitions: number;
     purchase_orders: number;
@@ -483,10 +486,26 @@ export async function verifyPurchasing(
     `SELECT COUNT(*)::int AS n FROM accounts.journal_entries
      WHERE source_type IN ('PURCHASE_REQUISITION','PURCHASE_ORDER','PURCHASE_RECEIPT')`
   );
+  const warnings: PurchasingVerifyMismatch[] = [];
+  const unexplained: PurchasingVerifyMismatch[] = [];
+
   if ((orphanPurchasingJe.rows[0]?.n ?? 0) > 0) {
     mismatches.push({
       kind: 'ORPHAN_PURCHASING_JOURNAL',
       detail: `count=${orphanPurchasingJe.rows[0]?.n}`,
+    });
+  }
+
+  // تحذير غير قاتل في الوضع العادي: فواتير PO DRAFT كثيرة بلا ترحيل
+  const draftPoInv = await txQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int AS n FROM accounts.supplier_invoices
+     WHERE invoice_source='PURCHASE_ORDER' AND status='DRAFT'`
+  );
+  if ((draftPoInv.rows[0]?.n ?? 0) > 50) {
+    warnings.push({
+      kind: 'WARN_MANY_DRAFT_PO_INVOICES',
+      detail: `count=${draftPoInv.rows[0]?.n}`,
     });
   }
 
@@ -500,9 +519,16 @@ export async function verifyPurchasing(
      WHERE invoice_source = 'PURCHASE_ORDER' AND status IN ('POSTED','PARTIALLY_PAID','PAID')`
   );
 
+  const ok =
+    mismatches.length === 0 &&
+    (!strict || (warnings.length === 0 && unexplained.length === 0));
+
   return {
-    ok: mismatches.length === 0,
+    ok,
+    strict,
     mismatches,
+    warnings,
+    unexplained,
     summary: {
       requisitions: reqs.rows.length,
       purchase_orders: poHeaders.rows.length,

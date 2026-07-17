@@ -2342,6 +2342,254 @@ async function main() {
     }
   }
 
+  // 69) Least Privilege: عضوية ACCOUNTS بلا دور platform → VIEW فقط
+  {
+    const bareId = await upsertCapabilityTestUser(`pur-bare-${suffix}`);
+    // لا grantAccountsPlatformRole
+    const canView = await hasPurchasingCapability(null, bareId, PURCHASING_CAPABILITIES.REQ_VIEW);
+    const canPrep = await hasPurchasingCapability(null, bareId, PURCHASING_CAPABILITIES.REQ_PREPARE);
+    const canPo = await hasPurchasingCapability(null, bareId, PURCHASING_CAPABILITIES.PO_DIRECT);
+    const canMatch = await hasPurchasingCapability(null, bareId, PURCHASING_CAPABILITIES.MATCH_PREPARE);
+    if (canView && !canPrep && !canPo && !canMatch) ok('69) Least Privilege — عضوية بلا role = VIEW_ONLY');
+    else fail('69) least privilege', { canView, canPrep, canPo, canMatch });
+    await expectHttp(
+      '69b) PREPARE مرفوض لعضو بلا role',
+      () => assertPurchasingCapability(null, bareId, PURCHASING_CAPABILITIES.REQ_PREPARE),
+      403
+    );
+  }
+
+  // 70) SUSPENDED بعد اعتماد PO: الاستلام مسموح؛ CLOSED يرفض
+  {
+    const po = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'استلام بعد تعليق',
+            ordered_quantity: '2',
+            unit_price: '11',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    const supRow = await query(
+      `SELECT version, updated_at FROM accounts.suppliers WHERE id=$1`,
+      [supplier.id]
+    );
+    await withTransaction((c) =>
+      suspendSupplier(c, {
+        id: supplier.id,
+        userId,
+        version: supRow.rows[0]!.version,
+        updated_at: supRow.rows[0]!.updated_at,
+      })
+    );
+    const pl = (await withTransaction((c) => listPurchaseOrderLines(c, po.id)))[0]!;
+    try {
+      const rc = await withTransaction(async (c) => {
+        const r = await createPurchaseReceipt(c, {
+          purchase_order_id: po.id,
+          receipt_date: fiscal.entryDate,
+          received_by: userId,
+          lines: [{ purchase_order_line_id: pl.id, received_quantity: '1', accepted_quantity: '1' }],
+          created_by: userId,
+        });
+        return postPurchaseReceipt(c, { id: r.id, userId, version: r.version, updated_at: r.updated_at });
+      });
+      if (rc.receipt.status === 'POSTED') ok('70) استلام مسموح بعد SUSPENDED على PO معتمد');
+      else fail('70) receipt status', rc.receipt.status);
+    } catch (e) {
+      fail('70) استلام بعد SUSPENDED', e);
+    }
+    await query(`UPDATE accounts.suppliers SET status='CLOSED', updated_at=NOW() WHERE id=$1`, [supplier.id]);
+    await expectHttp(
+      '70b) استلام مرفوض لمورد CLOSED',
+      () =>
+        withTransaction((c) =>
+          createPurchaseReceipt(c, {
+            purchase_order_id: po.id,
+            receipt_date: fiscal.entryDate,
+            received_by: userId,
+            lines: [{ purchase_order_line_id: pl.id, received_quantity: '1', accepted_quantity: '1' }],
+            created_by: userId,
+          })
+        ),
+      409
+    );
+    await query(`UPDATE accounts.suppliers SET status='ACTIVE', updated_at=NOW() WHERE id=$1`, [supplier.id]);
+  }
+
+  // 71) Matching fault after_first_po_line
+  {
+    const po = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'NON_STOCK_ITEM',
+            description: 'fault match',
+            ordered_quantity: '4',
+            unit_price: '20',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    const pl = (await withTransaction((c) => listPurchaseOrderLines(c, po.id)))[0]!;
+    await withTransaction(async (c) => {
+      const rc = await createPurchaseReceipt(c, {
+        purchase_order_id: po.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [{ purchase_order_line_id: pl.id, received_quantity: '4', accepted_quantity: '4' }],
+        created_by: userId,
+      });
+      await postPurchaseReceipt(c, { id: rc.id, userId, version: rc.version, updated_at: rc.updated_at });
+    });
+    const inv = await withTransaction((c) =>
+      createSupplierInvoiceFromPurchaseOrder(c, {
+        purchase_order_id: po.id,
+        supplier_invoice_number: `FLT-${suffix}`,
+        invoice_date: fiscal.entryDate,
+        lines: [{ purchase_order_line_id: pl.id, quantity: '4', unit_price: '20' }],
+        created_by: userId,
+      })
+    );
+    setPurchaseInvoiceMatchPostFaultForTests('after_first_po_line');
+    try {
+      await withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        return postSupplierInvoice(c, {
+          id: inv.invoice.id,
+          userId,
+          version: inv.invoice.version,
+          updated_at: inv.invoice.updated_at,
+        });
+      });
+      fail('71) توقّعنا فشل fault matching');
+    } catch {
+      const st = await query(`SELECT status, invoiced_quantity::text i FROM accounts.purchase_order_lines WHERE id=$1`, [
+        pl.id,
+      ]);
+      const invSt = await query(`SELECT status FROM accounts.supplier_invoices WHERE id=$1`, [inv.invoice.id]);
+      if (
+        invSt.rows[0]?.status === 'DRAFT' &&
+        moneyEquals(String(st.rows[0]?.i), '0.000')
+      ) {
+        ok('71) fault matching after_first_po_line — rollback');
+      } else fail('71) leftover after match fault', { st: st.rows[0], invSt: invSt.rows[0] });
+    } finally {
+      setPurchaseInvoiceMatchPostFaultForTests(null);
+    }
+  }
+
+  // 72) verifyPurchasing strict=true مثبت في النتيجة
+  {
+    const v = await withTransaction((c) => verifyPurchasing(c, { strict: true }));
+    if (v.ok && v.strict === true && Array.isArray(v.warnings) && Array.isArray(v.unexplained)) {
+      ok('72) verifyPurchasing({strict:true}) — strict=true في النتيجة');
+    } else fail('72) strict proof', { ok: v.ok, strict: v.strict, w: v.warnings?.length });
+  }
+
+  // 73) لا Journal من PRQ/PO/Receipt في نافذة حديثة لهذه الجداول (source_type)
+  {
+    const je = await query(
+      `SELECT COUNT(*)::int n FROM accounts.journal_entries
+       WHERE source_type IN ('PURCHASE_REQUISITION','PURCHASE_ORDER','PURCHASE_RECEIPT')`
+    );
+    if (Number(je.rows[0]?.n) === 0) ok('73) لا JE بمصدر PRQ/PO/Receipt');
+    else fail('73) orphan purchasing JE', je.rows[0]);
+  }
+
+  // 74) PARTIALLY_INVOICED: رفض over-receive على سطر مكتمل
+  {
+    // يعتمد على بيانات الاختبار 68 إن وُجدت — إنشاء سيناريو مختصر
+    const po = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'NON_STOCK_ITEM',
+            description: 'A',
+            ordered_quantity: '1',
+            unit_price: '5',
+            expense_gl_account_id: expGl,
+          },
+          {
+            purchase_kind: 'NON_STOCK_ITEM',
+            description: 'B',
+            ordered_quantity: '1',
+            unit_price: '5',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    const lines = await withTransaction((c) => listPurchaseOrderLines(c, po.id));
+    const a = lines.find((l) => l.line_number === 1)!;
+    await withTransaction(async (c) => {
+      const rc = await createPurchaseReceipt(c, {
+        purchase_order_id: po.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [{ purchase_order_line_id: a.id, received_quantity: '1', accepted_quantity: '1' }],
+        created_by: userId,
+      });
+      await postPurchaseReceipt(c, { id: rc.id, userId, version: rc.version, updated_at: rc.updated_at });
+    });
+    const inv = await withTransaction((c) =>
+      createSupplierInvoiceFromPurchaseOrder(c, {
+        purchase_order_id: po.id,
+        supplier_invoice_number: `OV-${suffix}`,
+        invoice_date: fiscal.entryDate,
+        lines: [{ purchase_order_line_id: a.id, quantity: '1', unit_price: '5' }],
+        created_by: userId,
+      })
+    );
+    await withTransaction(async (c) => {
+      await acquireJournalEntriesLock(c);
+      return postSupplierInvoice(c, {
+        id: inv.invoice.id,
+        userId,
+        version: inv.invoice.version,
+        updated_at: inv.invoice.updated_at,
+      });
+    });
+    await expectHttp(
+      '74) رفض over-receive على سطر مفوتر بالكامل',
+      () =>
+        withTransaction(async (c) => {
+          const rc = await createPurchaseReceipt(c, {
+            purchase_order_id: po.id,
+            receipt_date: fiscal.entryDate,
+            received_by: userId,
+            lines: [{ purchase_order_line_id: a.id, received_quantity: '1', accepted_quantity: '1' }],
+            created_by: userId,
+          });
+          return postPurchaseReceipt(c, {
+            id: rc.id,
+            userId,
+            version: rc.version,
+            updated_at: rc.updated_at,
+          });
+        }),
+      409
+    );
+    ok('74) over-receive على سطر بلا open_receive مرفوض');
+  }
+
   console.log(
     `\n===== النتيجة: ${failCount ? 'فشل' : 'نجاح'} — نجح ${passCount} / فشل ${failCount} =====`
   );

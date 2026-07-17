@@ -1,19 +1,21 @@
 /** بيانات عرض المشتريات 7.A — idempotent عبر أكواد DEMO في justification/description/notes/external_reference. */
 import { query } from '../lib/db';
 import {
-  approvePurchaseOrder,
-  createPurchaseOrder,
-  createPurchaseOrderFromRequisition,
-  listPurchaseOrderLines,
-  submitPurchaseOrder,
-} from '../lib/accounts/purchase-orders';
-import {
   approvePurchaseRequisition,
+  cancelPurchaseRequisition,
   createPurchaseRequisition,
   listPurchaseRequisitionLines,
   rejectPurchaseRequisition,
   submitPurchaseRequisition,
 } from '../lib/accounts/purchase-requisitions';
+import {
+  approvePurchaseOrder,
+  createPurchaseOrder,
+  createPurchaseOrderFromRequisition,
+  listPurchaseOrderLines,
+  rejectPurchaseOrder,
+  submitPurchaseOrder,
+} from '../lib/accounts/purchase-orders';
 import {
   createPurchaseReceipt,
   postPurchaseReceipt,
@@ -33,13 +35,17 @@ const MARK = {
   prqSubmitted: 'DEMO-PRQ-SUBMITTED',
   prqApproved: 'DEMO-PRQ-APPROVED',
   prqRejected: 'DEMO-PRQ-REJECTED',
+  prqCancelled: 'DEMO-PRQ-CANCELLED',
   porApproved: 'DEMO-POR-APPROVED',
   porPartial: 'DEMO-POR-PARTIAL',
   porReceived: 'DEMO-POR-RECEIVED',
+  porMulti: 'DEMO-POR-MULTI-PARTIAL-INV',
+  porRejected: 'DEMO-POR-REJECTED',
   prcPosted: 'DEMO-PRC-POSTED',
   prcVoid: 'DEMO-PRC-VOID',
   invPartial: 'DEMO-SIN-PO-PARTIAL',
   invFull: 'DEMO-SIN-PO-FULL',
+  invMulti: 'DEMO-SIN-PO-MULTI',
 } as const;
 
 type SeedP = {
@@ -233,6 +239,27 @@ export async function seedPurchasingDemo(p: SeedP): Promise<void> {
           version: sub.version,
           updated_at: sub.updated_at,
           reason: 'رفض عرض DEMO',
+        });
+      })
+    );
+  }
+
+  if (!(await existsMarker(MARK.prqCancelled, 'purchase_requisitions'))) {
+    await seedSection('PRQ cancelled', () =>
+      withTransaction(async (c) => {
+        const req = await createPurchaseRequisition(c, {
+          requisition_date: p.entryDate,
+          requested_by: p.userId,
+          justification: `${MARK.prqCancelled} — طلب ملغى`,
+          lines: [line(p, expenseGl.id, '2', '50')],
+          created_by: p.userId,
+        });
+        await cancelPurchaseRequisition(c, {
+          id: req.id,
+          userId: p.userId,
+          version: req.version,
+          updated_at: req.updated_at,
+          reason: 'إلغاء عرض DEMO',
         });
       })
     );
@@ -509,6 +536,136 @@ export async function seedPurchasingDemo(p: SeedP): Promise<void> {
           userId: p.userId,
           version: draft.invoice.version,
           updated_at: draft.invoice.updated_at,
+        });
+      })
+    );
+  }
+
+  if (!(await existsMarker(MARK.porMulti, 'purchase_orders'))) {
+    await seedSection('PO multi partial invoice', () =>
+      withTransaction(async (c) => {
+        const expenseGl2 = await p.ensureAccount({
+          code: 'DEMO-PUR-EXP-2',
+          nameAr: 'مصروف مشتريات DEMO 2',
+          typeCode: 'EXPENSE',
+          userId: p.userId,
+        });
+        const po = await createPurchaseOrder(c, {
+          supplier_account_id: accountId,
+          order_date: p.entryDate,
+          description: `${MARK.porMulti} — أمر متعدد السطور جزئي الفوترة`,
+          lines: [
+            {
+              purchase_kind: 'NON_STOCK_ITEM',
+              description: 'سطر مفوتر DEMO',
+              ordered_quantity: '2',
+              unit_price: '40',
+              expense_gl_account_id: expenseGl.id,
+              cost_center_id: cc.rows[0]?.id ?? null,
+            },
+            {
+              purchase_kind: 'NON_STOCK_ITEM',
+              description: 'سطر قابل للاستلام DEMO',
+              ordered_quantity: '3',
+              unit_price: '30',
+              expense_gl_account_id: expenseGl2.id,
+              cost_center_id: cc.rows[0]?.id ?? null,
+            },
+          ],
+          created_by: p.userId,
+        });
+        const sub = await submitPurchaseOrder(c, {
+          id: po.id,
+          userId: p.userId,
+          version: po.version,
+          updated_at: po.updated_at,
+        });
+        const app = await approvePurchaseOrder(c, {
+          id: sub.id,
+          userId: p.userId,
+          version: sub.version,
+          updated_at: sub.updated_at,
+        });
+        const lines = await listPurchaseOrderLines(c, app.id);
+        const lineA = lines.find((l) => l.line_number === 1)!;
+        const rc = await createPurchaseReceipt(c, {
+          purchase_order_id: app.id,
+          receipt_date: p.entryDate,
+          received_by: p.userId,
+          notes: `${MARK.prcPosted}-MULTI`,
+          lines: [
+            {
+              purchase_order_line_id: lineA.id,
+              received_quantity: '2',
+              accepted_quantity: '2',
+            },
+          ],
+          created_by: p.userId,
+        });
+        await postPurchaseReceipt(c, {
+          id: rc.id,
+          userId: p.userId,
+          version: rc.version,
+          updated_at: rc.updated_at,
+        });
+        if (!(await existsInvoiceRef(MARK.invMulti))) {
+          const draft = await createSupplierInvoiceFromPurchaseOrder(c, {
+            purchase_order_id: app.id,
+            supplier_invoice_number: 'DEMO-VINV-MULTI',
+            invoice_date: p.entryDate,
+            external_reference: MARK.invMulti,
+            lines: [
+              {
+                purchase_order_line_id: lineA.id,
+                quantity: '2',
+                unit_price: '40',
+              },
+            ],
+            created_by: p.userId,
+          });
+          await acquireJournalEntriesLock(c);
+          await postSupplierInvoice(c, {
+            id: draft.invoice.id,
+            userId: p.userId,
+            version: draft.invoice.version,
+            updated_at: draft.invoice.updated_at,
+          });
+        }
+        return app.id;
+      })
+    );
+  }
+
+  if (!(await existsMarker(MARK.porRejected, 'purchase_orders'))) {
+    await seedSection('PO rejected', () =>
+      withTransaction(async (c) => {
+        const po = await createPurchaseOrder(c, {
+          supplier_account_id: accountId,
+          order_date: p.entryDate,
+          description: `${MARK.porRejected} — أمر مرفوض DEMO`,
+          lines: [
+            {
+              purchase_kind: 'SERVICE',
+              description: 'خدمة مرفوضة',
+              ordered_quantity: '1',
+              unit_price: '10',
+              expense_gl_account_id: expenseGl.id,
+            },
+          ],
+          created_by: p.userId,
+        });
+        const sub = await submitPurchaseOrder(c, {
+          id: po.id,
+          userId: p.userId,
+          version: po.version,
+          updated_at: po.updated_at,
+        });
+        await rejectPurchaseOrder(c, {
+          id: sub.id,
+          userId: p.userId,
+          version: sub.version,
+          updated_at: sub.updated_at,
+          reason: 'رفض عرض DEMO',
         });
       })
     );

@@ -25,6 +25,8 @@ import {
   type PurchaseOrderLineRow,
   type PurchaseOrderRow,
 } from './purchase-orders';
+import { loadSupplierAccount } from './supplier-accounts';
+import { loadSupplier } from './suppliers';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
 
@@ -215,6 +217,22 @@ async function replaceReceiptLines(
 }
 
 /**
+ * سياسة المورد عند الاستلام (7.A):
+ * - SUSPENDED: مسموح — الاستلام ينفّذ التزام PO معتمد قائم ولا ينشئ التزامًا جديدًا.
+ * - CLOSED (مورد أو حساب): مرفوض — لا استلام جديد على علاقة مغلقة.
+ */
+async function assertSupplierAllowsReceipt(c: TxClient, po: PurchaseOrderRow) {
+  const supplier = await loadSupplier(c, po.supplier_id);
+  if (supplier.status === 'CLOSED') {
+    throw new AccountsHttpError('لا يمكن الاستلام لمورد مغلق', 409);
+  }
+  const account = await loadSupplierAccount(c, po.supplier_account_id);
+  if (account.status === 'CLOSED') {
+    throw new AccountsHttpError('لا يمكن الاستلام على حساب مورد مغلق', 409);
+  }
+}
+
+/**
  * يسمح بالاستلام طالما الأمر قابل تشغيلياً ولم يُغلق/يُلغَ.
  * يشمل PARTIALLY_INVOICED: سطر واحد قد يُفوتر بينما سطور أخرى ما زالت مفتوحة للاستلام.
  */
@@ -323,6 +341,7 @@ export async function createPurchaseReceipt(
   if (!poId) throw new AccountsHttpError('أمر الشراء مطلوب', 400);
   const po = await loadPurchaseOrder(c, poId);
   assertPoReceivable(po);
+  await assertSupplierAllowsReceipt(c, po);
   const date = input.receipt_date ? pgDateOnly(String(input.receipt_date)) : pgDateOnly(new Date());
   const f = await fiscal(c, date);
   await assertFiscalContextForEntry(c, { fiscalYearId: f.year_id, fiscalPeriodId: f.period_id, entryDate: date });
@@ -434,6 +453,7 @@ export async function postPurchaseReceipt(
   if (row.status !== 'DRAFT') throw new AccountsHttpError('يمكن ترحيل مسودات محاضر الاستلام فقط', 409);
   const po = await loadPurchaseOrder(c, row.purchase_order_id, true);
   assertPoReceivable(po);
+  await assertSupplierAllowsReceipt(c, po);
   const lines = await listPurchaseReceiptLines(c, row.id);
   if (!lines.length) throw new AccountsHttpError('لا يمكن ترحيل محضر بلا سطور', 409);
   let lineIndex = 0;

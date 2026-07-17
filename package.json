@@ -46,6 +46,7 @@
     "accounts:verify-student-receivables": "tsx src/scripts/verify-student-receivables.ts",
     "accounts:verify-supplier-payables": "tsx src/scripts/verify-supplier-payables.ts",
     "accounts:verify-purchasing": "tsx src/scripts/verify-purchasing.ts",
+    "accounts:verify-purchasing:strict": "tsx src/scripts/verify-purchasing.ts --strict",
     "accounts:benchmark-balance": "tsx src/scripts/benchmark-gl-balance.ts",
     "seed:accounts-demo": "tsx src/scripts/seed-accounts-demo.ts",
     "seed:construction": "tsx src/scripts/add-construction-user.ts",
