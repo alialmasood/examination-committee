@@ -2228,6 +2228,120 @@ async function main() {
     }
   }
 
+  // 68) PO متعدد السطور: فوترة سطر لا تحجب استلام السطر الآخر
+  {
+    const multi = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'NON_STOCK_ITEM',
+            description: 'سطر يُفوتر أولاً',
+            ordered_quantity: '2',
+            unit_price: '10',
+            expense_gl_account_id: expGl,
+          },
+          {
+            purchase_kind: 'NON_STOCK_ITEM',
+            description: 'سطر يُستلم لاحقاً',
+            ordered_quantity: '3',
+            unit_price: '8',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    const mls = await withTransaction((c) => listPurchaseOrderLines(c, multi.id));
+    const lineA = mls.find((l) => l.line_number === 1)!;
+    const lineB = mls.find((l) => l.line_number === 2)!;
+    await withTransaction(async (c) => {
+      const rc = await createPurchaseReceipt(c, {
+        purchase_order_id: multi.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [
+          {
+            purchase_order_line_id: lineA.id,
+            received_quantity: '2',
+            accepted_quantity: '2',
+            rejected_quantity: '0',
+          },
+        ],
+        created_by: userId,
+      });
+      await postPurchaseReceipt(c, {
+        id: rc.id,
+        userId,
+        version: rc.version,
+        updated_at: rc.updated_at,
+      });
+    });
+    const invA = await withTransaction((c) =>
+      createSupplierInvoiceFromPurchaseOrder(c, {
+        purchase_order_id: multi.id,
+        supplier_invoice_number: `ML-${suffix}`,
+        invoice_date: fiscal.entryDate,
+        lines: [{ purchase_order_line_id: lineA.id, quantity: '2', unit_price: '10' }],
+        created_by: userId,
+      })
+    );
+    await withTransaction(async (c) => {
+      await acquireJournalEntriesLock(c);
+      return postSupplierInvoice(c, {
+        id: invA.invoice.id,
+        userId,
+        version: invA.invoice.version,
+        updated_at: invA.invoice.updated_at,
+      });
+    });
+    const poAfter = await query(`SELECT status FROM accounts.purchase_orders WHERE id=$1`, [
+      multi.id,
+    ]);
+    if (poAfter.rows[0]?.status !== 'PARTIALLY_INVOICED') {
+      fail('68) توقّعنا PARTIALLY_INVOICED', poAfter.rows[0]);
+    } else {
+      try {
+        const rc2 = await withTransaction(async (c) => {
+          const rc = await createPurchaseReceipt(c, {
+            purchase_order_id: multi.id,
+            receipt_date: fiscal.entryDate,
+            received_by: userId,
+            lines: [
+              {
+                purchase_order_line_id: lineB.id,
+                received_quantity: '3',
+                accepted_quantity: '3',
+                rejected_quantity: '0',
+              },
+            ],
+            created_by: userId,
+          });
+          return postPurchaseReceipt(c, {
+            id: rc.id,
+            userId,
+            version: rc.version,
+            updated_at: rc.updated_at,
+          });
+        });
+        const recvB = await query(
+          `SELECT received_quantity::text r FROM accounts.purchase_order_lines WHERE id=$1`,
+          [lineB.id]
+        );
+        if (
+          rc2.receipt.status === 'POSTED' &&
+          moneyEquals(String(recvB.rows[0]?.r), '3.000')
+        ) {
+          ok('68) استلام سطر مفتوح بعد PARTIALLY_INVOICED على سطر آخر');
+        } else fail('68) استلام السطر الثاني', { rc2: rc2.receipt.status, recvB: recvB.rows[0] });
+      } catch (e) {
+        fail('68) استلام محجوب بعد فوترة جزئية', e);
+      }
+    }
+  }
+
   console.log(
     `\n===== النتيجة: ${failCount ? 'فشل' : 'نجاح'} — نجح ${passCount} / فشل ${failCount} =====`
   );

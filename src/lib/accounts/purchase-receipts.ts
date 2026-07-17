@@ -214,9 +214,19 @@ async function replaceReceiptLines(
   }
 }
 
+/**
+ * يسمح بالاستلام طالما الأمر قابل تشغيلياً ولم يُغلق/يُلغَ.
+ * يشمل PARTIALLY_INVOICED: سطر واحد قد يُفوتر بينما سطور أخرى ما زالت مفتوحة للاستلام.
+ */
 function assertPoReceivable(po: PurchaseOrderRow) {
-  if (!['APPROVED', 'PARTIALLY_RECEIVED', 'RECEIVED'].includes(po.status))
-    throw new AccountsHttpError('لا يمكن الاستلام إلا على أمر معتمد أو قيد الاستلام', 409);
+  if (
+    !['APPROVED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'PARTIALLY_INVOICED'].includes(po.status)
+  ) {
+    throw new AccountsHttpError(
+      'لا يمكن الاستلام إلا على أمر معتمد أو قيد الاستلام/الفوترة الجزئية',
+      409
+    );
+  }
 }
 
 export function serializePurchaseReceipt(r: PurchaseReceiptRow) {
