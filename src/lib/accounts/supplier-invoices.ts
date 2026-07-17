@@ -6,8 +6,11 @@ import {
   acquireAccountingResourceLocks,
   glAccountLock,
   journalSourceLock,
+  purchaseOrderLineLock,
+  purchaseOrderLock,
   supplierAccountLock,
   supplierInvoiceLock,
+  supplierInvoiceMatchLock,
   supplierLedgerLock,
   supplierLock,
 } from './accounting-locks';
@@ -59,6 +62,8 @@ export type SupplierInvoiceStatus =
   | 'PAID'
   | 'VOID';
 
+export type SupplierInvoiceSource = 'MANUAL' | 'PURCHASE_ORDER';
+
 export type SupplierInvoiceRow = {
   id: string;
   invoice_number: string;
@@ -76,10 +81,12 @@ export type SupplierInvoiceRow = {
   total_amount: string;
   outstanding_amount: string;
   currency_code: string;
-  expense_gl_account_id: string;
+  expense_gl_account_id: string | null;
   cost_center_id: string | null;
   description: string;
   external_reference: string | null;
+  invoice_source: SupplierInvoiceSource;
+  purchase_order_id: string | null;
   status: SupplierInvoiceStatus;
   journal_entry_id: string | null;
   reversal_journal_entry_id: string | null;
@@ -93,6 +100,23 @@ export type SupplierInvoiceRow = {
   updated_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
+};
+
+export type SupplierInvoiceLineRow = {
+  id: string;
+  supplier_invoice_id: string;
+  purchase_order_line_id: string | null;
+  purchase_receipt_line_id: string | null;
+  line_number: number;
+  description: string;
+  quantity: string;
+  unit_price: string;
+  discount_amount: string;
+  tax_amount: string;
+  line_total: string;
+  expense_gl_account_id: string;
+  cost_center_id: string | null;
+  created_at: Date | string;
 };
 
 export type SupplierInvoiceListRow = SupplierInvoiceRow & {
@@ -322,6 +346,20 @@ export async function loadSupplierInvoice(
   );
   if (!r.rows[0]) throw new AccountsHttpError('فاتورة المورد غير موجودة', 404);
   return r.rows[0];
+}
+
+export async function listSupplierInvoiceLines(
+  client: TxClient,
+  supplierInvoiceId: string
+): Promise<SupplierInvoiceLineRow[]> {
+  const r = await txQuery<SupplierInvoiceLineRow>(
+    client,
+    `SELECT * FROM accounts.supplier_invoice_lines
+     WHERE supplier_invoice_id = $1::uuid
+     ORDER BY line_number`,
+    [supplierInvoiceId]
+  );
+  return r.rows;
 }
 
 async function assertCostCenterActive(
@@ -714,6 +752,9 @@ export async function updateSupplierInvoice(
     );
     expenseGlId = gl.id;
   }
+  if (!expenseGlId) {
+    throw new AccountsHttpError('حساب المصروف مطلوب', 400);
+  }
   const expenseGl = await assertValidExpenseGlAccount(client, expenseGlId);
   if (expenseGlId === account.payable_gl_account_id) {
     throw new AccountsHttpError(
@@ -861,15 +902,44 @@ export async function postSupplierInvoice(
     false
   );
 
-  await acquireAccountingResourceLocks(client, [
+  const invoiceLines = await listSupplierInvoiceLines(client, invoice.id);
+  const isPoInvoice = invoice.invoice_source === 'PURCHASE_ORDER';
+  const hasLines = invoiceLines.length > 0;
+
+  if (isPoInvoice && !hasLines) {
+    throw new AccountsHttpError('فاتورة أمر الشراء يجب أن تحتوي على سطور', 409);
+  }
+  if (!isPoInvoice && !hasLines && !invoice.expense_gl_account_id) {
+    throw new AccountsHttpError('حساب المصروف مطلوب', 400);
+  }
+
+  const lockResources = [
     supplierInvoiceLock(invoice.id),
     supplierAccountLock(invoice.supplier_account_id),
     supplierLedgerLock(invoice.supplier_account_id),
     supplierLock(invoice.supplier_id),
     glAccountLock(accountPeek.payable_gl_account_id),
-    glAccountLock(invoice.expense_gl_account_id),
     journalSourceLock('SUPPLIER_INVOICE', invoice.id),
-  ]);
+  ];
+  if (invoice.expense_gl_account_id) {
+    lockResources.push(glAccountLock(invoice.expense_gl_account_id));
+  }
+  if (isPoInvoice && invoice.purchase_order_id) {
+    lockResources.push(purchaseOrderLock(invoice.purchase_order_id));
+    lockResources.push(supplierInvoiceMatchLock(invoice.purchase_order_id));
+    for (const l of invoiceLines) {
+      if (l.purchase_order_line_id) {
+        lockResources.push(purchaseOrderLineLock(l.purchase_order_line_id));
+      }
+      lockResources.push(glAccountLock(l.expense_gl_account_id));
+    }
+  } else if (hasLines) {
+    for (const l of invoiceLines) {
+      lockResources.push(glAccountLock(l.expense_gl_account_id));
+    }
+  }
+
+  await acquireAccountingResourceLocks(client, lockResources);
 
   const account = await loadSupplierAccount(
     client,
@@ -902,16 +972,11 @@ export async function postSupplierInvoice(
     client,
     account.payable_gl_account_id
   );
-  const expenseGl = await assertValidExpenseGlAccount(
-    client,
-    invoice.expense_gl_account_id
-  );
-  await assertPostingAccount(
-    client,
-    invoice.expense_gl_account_id,
-    'حساب المصروف',
-    { invalidStatusCode: 400 }
-  );
+
+  const amount = normalizeMoneyInput(invoice.total_amount);
+  if (!moneyIsPositive(amount)) {
+    throw new AccountsHttpError('إجمالي الفاتورة غير صالح', 400);
+  }
 
   let costCenterId = invoice.cost_center_id;
   let typeRequiresCc = false;
@@ -924,37 +989,90 @@ export async function postSupplierInvoice(
     typeRequiresCc = invType.requires_cost_center;
     if (!costCenterId) costCenterId = invType.default_cost_center_id;
   }
-  if (
-    (typeRequiresCc ||
-      expenseGl.requires_cost_center ||
-      payableGl.requires_cost_center) &&
-    !costCenterId
-  ) {
-    throw new AccountsHttpError('أحد الحسابات يتطلب مركز كلفة', 409);
-  }
-  if (costCenterId) await assertCostCenterActive(client, costCenterId);
 
-  const amount = normalizeMoneyInput(invoice.total_amount);
-  if (!moneyIsPositive(amount)) {
-    throw new AccountsHttpError('إجمالي الفاتورة غير صالح', 400);
-  }
+  const linesInput: Array<{
+    account_id: string;
+    cost_center_id: string | null;
+    debit_amount: string;
+    credit_amount: string;
+    description: string;
+  }> = [];
 
-  const linesInput = [
-    {
-      account_id: invoice.expense_gl_account_id,
-      cost_center_id: costCenterId,
-      debit_amount: amount,
-      credit_amount: '0',
-      description: invoice.description,
-    },
-    {
+  if (hasLines) {
+    for (const line of invoiceLines) {
+      const expenseGl = await assertValidExpenseGlAccount(
+        client,
+        line.expense_gl_account_id
+      );
+      await assertPostingAccount(
+        client,
+        line.expense_gl_account_id,
+        'حساب المصروف',
+        { invalidStatusCode: 400 }
+      );
+      const lineCc = line.cost_center_id ?? costCenterId;
+      if (
+        (typeRequiresCc ||
+          expenseGl.requires_cost_center ||
+          payableGl.requires_cost_center) &&
+        !lineCc
+      ) {
+        throw new AccountsHttpError('أحد الحسابات يتطلب مركز كلفة', 409);
+      }
+      if (lineCc) await assertCostCenterActive(client, lineCc);
+      const lineAmount = normalizeMoneyInput(line.line_total);
+      linesInput.push({
+        account_id: line.expense_gl_account_id,
+        cost_center_id: lineCc,
+        debit_amount: lineAmount,
+        credit_amount: '0',
+        description: line.description,
+      });
+    }
+    linesInput.push({
       account_id: account.payable_gl_account_id,
       cost_center_id: costCenterId,
       debit_amount: '0',
       credit_amount: amount,
       description: `ذمم دائنة — ${invoice.invoice_number}`,
-    },
-  ];
+    });
+  } else {
+    const expenseGl = await assertValidExpenseGlAccount(
+      client,
+      invoice.expense_gl_account_id!
+    );
+    await assertPostingAccount(
+      client,
+      invoice.expense_gl_account_id!,
+      'حساب المصروف',
+      { invalidStatusCode: 400 }
+    );
+    if (
+      (typeRequiresCc ||
+        expenseGl.requires_cost_center ||
+        payableGl.requires_cost_center) &&
+      !costCenterId
+    ) {
+      throw new AccountsHttpError('أحد الحسابات يتطلب مركز كلفة', 409);
+    }
+    if (costCenterId) await assertCostCenterActive(client, costCenterId);
+    linesInput.push(
+      {
+        account_id: invoice.expense_gl_account_id!,
+        cost_center_id: costCenterId,
+        debit_amount: amount,
+        credit_amount: '0',
+        description: invoice.description,
+      },
+      {
+        account_id: account.payable_gl_account_id,
+        cost_center_id: costCenterId,
+        debit_amount: '0',
+        credit_amount: amount,
+        description: `ذمم دائنة — ${invoice.invoice_number}`,
+      }
+    );
+  }
 
   const { lines, totalDebit, totalCredit } = await normalizeAndValidateLines(
     client,
@@ -1028,6 +1146,13 @@ export async function postSupplierInvoice(
     throw new Error('FAULT_AFTER_LEDGER');
   }
 
+  if (isPoInvoice) {
+    const { applyPurchaseOrderInvoicePostQuantities } = await import(
+      './purchase-invoice-matching'
+    );
+    await applyPurchaseOrderInvoicePostQuantities(client, invoice.id);
+  }
+
   const posted = await txQuery<SupplierInvoiceRow>(
     client,
     `UPDATE accounts.supplier_invoices SET
@@ -1077,16 +1202,32 @@ export async function voidSupplierInvoice(
     false
   );
 
-  await acquireAccountingResourceLocks(client, [
+  const isPoInvoice = invoice.invoice_source === 'PURCHASE_ORDER';
+  const voidLocks = [
     supplierInvoiceLock(invoice.id),
     supplierAccountLock(invoice.supplier_account_id),
     supplierLedgerLock(invoice.supplier_account_id),
     supplierLock(invoice.supplier_id),
     glAccountLock(accountPeek.payable_gl_account_id),
-    glAccountLock(invoice.expense_gl_account_id),
     journalSourceLock('SUPPLIER_INVOICE', invoice.id),
     journalSourceLock('SUPPLIER_INVOICE_REVERSAL', invoice.id),
-  ]);
+  ];
+  if (invoice.expense_gl_account_id) {
+    voidLocks.push(glAccountLock(invoice.expense_gl_account_id));
+  }
+  if (isPoInvoice && invoice.purchase_order_id) {
+    voidLocks.push(purchaseOrderLock(invoice.purchase_order_id));
+    voidLocks.push(supplierInvoiceMatchLock(invoice.purchase_order_id));
+    const invLines = await listSupplierInvoiceLines(client, invoice.id);
+    for (const l of invLines) {
+      if (l.purchase_order_line_id) {
+        voidLocks.push(purchaseOrderLineLock(l.purchase_order_line_id));
+      }
+      voidLocks.push(glAccountLock(l.expense_gl_account_id));
+    }
+  }
+
+  await acquireAccountingResourceLocks(client, voidLocks);
 
   const account = await loadSupplierAccount(
     client,
@@ -1179,6 +1320,13 @@ export async function voidSupplierInvoice(
     journalEntryId: reversal.id,
     userId: params.userId,
   });
+
+  if (isPoInvoice) {
+    const { reversePurchaseOrderInvoicePostQuantities } = await import(
+      './purchase-invoice-matching'
+    );
+    await reversePurchaseOrderInvoicePostQuantities(client, invoice.id);
+  }
 
   const upd = await txQuery<SupplierInvoiceRow>(
     client,
