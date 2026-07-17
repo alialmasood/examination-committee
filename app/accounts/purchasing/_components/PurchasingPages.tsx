@@ -211,7 +211,9 @@ export function RequisitionDetail({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const load = () => fetchJson(`${API.requisitions}/${id}`).then(setR);
-  useEffect(() => { void load(); }, [id]);
+  useEffect(() => {
+    void fetchJson(`${API.requisitions}/${id}`).then(setR);
+  }, [id]);
   const x = r?.data;
 
   async function act(action: string, body: any = {}) {
@@ -482,7 +484,9 @@ export function OrderDetail({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const load = () => fetchJson(`${API.orders}/${id}`).then(setR);
-  useEffect(() => { void load(); }, [id]);
+  useEffect(() => {
+    void fetchJson(`${API.orders}/${id}`).then(setR);
+  }, [id]);
   const x = r?.data;
 
   async function act(action: string, body: any = {}) {
@@ -736,7 +740,9 @@ export function ReceiptDetail({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const load = () => fetchJson(`${API.receipts}/${id}`).then(setR);
-  useEffect(() => { void load(); }, [id]);
+  useEffect(() => {
+    void fetchJson(`${API.receipts}/${id}`).then(setR);
+  }, [id]);
   const x = r?.data;
 
   async function act(action: string, body: any = {}) {
