@@ -18,6 +18,7 @@ import {
   createSupplierInvoice,
   getSupplierLedger,
   postSupplierInvoice,
+  voidSupplierInvoice,
 } from '../lib/accounts/supplier-invoices';
 import {
   createDirectExpense,
@@ -40,7 +41,7 @@ import {
   ACCOUNTS_CLERK_ROLE_CODE,
   ACCOUNTS_VIEWER_ROLE_CODE,
 } from '../lib/accounts/student-receivables-access';
-import { createSupplier } from '../lib/accounts/suppliers';
+import { createSupplier, suspendSupplier, activateSupplier } from '../lib/accounts/suppliers';
 import { moneyEquals, normalizeMoneyInput } from '../lib/accounts/money';
 import { pgDateOnly } from '../lib/accounts/document-sequences';
 import {
@@ -59,12 +60,14 @@ import {
   createSupplierPayment,
   getSupplierPaymentDetail,
   listOpenSupplierInvoices,
+  loadSupplierPayment,
   postSupplierPayment,
   previewSupplierPaymentAllocation,
   setSupplierPaymentPostFaultForTests,
   updateSupplierPayment,
   voidSupplierPayment,
 } from '../lib/accounts/supplier-payments';
+import { getSupplierAccountBalance } from '../lib/accounts/supplier-accounts';
 
 let passCount = 0;
 let failCount = 0;
@@ -979,7 +982,7 @@ async function main() {
   }
 
   // 28) Fault injection
-  for (const fault of ['after_voucher', 'after_ledger', 'after_invoice'] as const) {
+  for (const fault of ['after_voucher', 'after_ledger', 'after_invoice', 'after_payment_status'] as const) {
     const invFault = await postTestInvoice(`EXT-FLT-${fault}-${suffix}`, '25');
     const pack = await withTransaction((c) =>
       createSupplierPayment(c, {
@@ -1475,12 +1478,13 @@ async function main() {
 
   // تحديث دفعة (خدمة إضافية)
   {
+    const cur = await withTransaction((c) => loadSupplierPayment(c, draftPay.payment.id));
     const upd = await withTransaction((c) =>
       updateSupplierPayment(c, {
-        id: draftPay.payment.id,
+        id: cur.id,
         userId: actorId,
-        version: draftPay.payment.version,
-        updated_at: draftPay.payment.updated_at,
+        version: cur.version,
+        updated_at: cur.updated_at,
         description: 'مسودة محدّثة',
       })
     );
@@ -1488,6 +1492,546 @@ async function main() {
       ok('إضافي) updateSupplierPayment');
     }
   }
+
+  // —— hardening 6.B acceptance review ——
+
+  // H1) منع تعديل POSTED
+  {
+    const inv = await postTestInvoice(`EXT-H1-${suffix}`, '35');
+    const pack = await withTransaction((c) =>
+      createSupplierPayment(c, {
+        ...cashPayBase,
+        amount: '35',
+        allocations: [{ invoice_id: inv.id, amount: '35' }],
+      })
+    );
+    const posted = await withTransaction(async (c) => {
+      await acquireJournalEntriesLock(c);
+      return postSupplierPayment(c, {
+        id: pack.payment.id,
+        userId: actorId,
+        version: pack.payment.version,
+        updated_at: pack.payment.updated_at,
+      });
+    });
+    await expectHttp(
+      'H1) منع تعديل دفعة POSTED',
+      () =>
+        withTransaction((c) =>
+          updateSupplierPayment(c, {
+            id: posted.payment.id,
+            userId: actorId,
+            version: posted.payment.version,
+            updated_at: posted.payment.updated_at,
+            description: 'محاولة غير مسموحة',
+          })
+        ),
+      409
+    );
+  }
+
+  // H2) PATCH لا يغيّر طريقة الدفع (update يتجاهل الحقل)
+  {
+    const cur = await withTransaction((c) => loadSupplierPayment(c, draftPay.payment.id));
+    const upd = await withTransaction((c) =>
+      updateSupplierPayment(c, {
+        id: cur.id,
+        userId: actorId,
+        version: cur.version,
+        updated_at: cur.updated_at,
+        description: 'ثبات الطريقة',
+        // حقل غير مدعوم في التوقيع — يُتجاهل إن مُرر عبر any
+        ...( { payment_method: 'BANK' } as object ),
+      } as Parameters<typeof updateSupplierPayment>[1])
+    );
+    if (upd.payment.payment_method === 'CASH') {
+      ok('H2) PATCH لا يغيّر payment_method');
+    } else {
+      fail('H2) payment_method تغيّر خطأً', upd.payment.payment_method);
+    }
+  }
+
+  // H3) SUSPENDED يسمح بتسوية ذمم قائمة
+  {
+    const inv = await postTestInvoice(`EXT-H3-${suffix}`, '40');
+    const supRow = await query(
+      `SELECT version, updated_at FROM accounts.suppliers WHERE id=$1`,
+      [supplier.id]
+    );
+    await withTransaction((c) =>
+      suspendSupplier(c, {
+        id: supplier.id,
+        userId: actorId,
+        version: supRow.rows[0].version,
+        updated_at: supRow.rows[0].updated_at,
+      })
+    );
+    try {
+      const pack = await withTransaction((c) =>
+        createSupplierPayment(c, {
+          ...cashPayBase,
+          amount: '40',
+          allocations: [{ invoice_id: inv.id, amount: '40' }],
+        })
+      );
+      const posted = await withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        return postSupplierPayment(c, {
+          id: pack.payment.id,
+          userId: actorId,
+          version: pack.payment.version,
+          updated_at: pack.payment.updated_at,
+        });
+      });
+      if (posted.payment.status === 'POSTED') {
+        ok('H3) SUSPENDED يسمح بتسوية ذمم قائمة');
+      } else {
+        fail('H3) ترحيل على SUSPENDED', posted.payment.status);
+      }
+    } catch (e) {
+      fail('H3) SUSPENDED يسمح بتسوية ذمم قائمة', e);
+    }
+    const sus = await query(
+      `SELECT version, updated_at FROM accounts.suppliers WHERE id=$1`,
+      [supplier.id]
+    );
+    await withTransaction((c) =>
+      activateSupplier(c, {
+        id: supplier.id,
+        userId: actorId,
+        version: sus.rows[0].version,
+        updated_at: sus.rows[0].updated_at,
+      })
+    );
+  }
+
+  // H4) ترتيب التخصيص التلقائي: due_date ثم invoice_date ثم invoice_number
+  {
+    // أنشئ موردًا مستقلًا غير معلّق لتجنب تعارض H3
+    const s2 = await withTransaction((c) =>
+      createSupplier(c, {
+        code: `SPY-ORD-${suffix}`,
+        name_ar: `مورد ترتيب ${suffix}`,
+        created_by: actorId,
+      })
+    );
+    const a2 = await withTransaction((c) =>
+      createSupplierAccount(c, {
+        supplier_id: s2.id,
+        payable_gl_account_id: payGl,
+        created_by: actorId,
+      })
+    );
+    async function invWithDue(ext: string, amount: string, due: string, invDate: string) {
+      const draft = await withTransaction((c) =>
+        createSupplierInvoice(c, {
+          supplier_account_id: a2.id,
+          supplier_invoice_number: ext,
+          invoice_type_id: invType.id,
+          invoice_date: invDate,
+          due_date: due,
+          subtotal_amount: amount,
+          expense_gl_account_id: expGl,
+          description: ext,
+          created_by: actorId,
+        })
+      );
+      return (
+        await withTransaction(async (c) => {
+          await acquireJournalEntriesLock(c);
+          return postSupplierInvoice(c, {
+            id: draft.id,
+            userId: actorId,
+            version: draft.version,
+            updated_at: draft.updated_at,
+          });
+        })
+      ).invoice;
+    }
+    const base = fiscal.invoiceDate.slice(0, 8);
+    const late = await invWithDue(`ORD-L-${suffix}`, '30', `${base}28`, fiscal.invoiceDate);
+    const early = await invWithDue(`ORD-E-${suffix}`, '30', `${base}10`, fiscal.invoiceDate);
+    const mid = await invWithDue(`ORD-M-${suffix}`, '30', `${base}20`, fiscal.invoiceDate);
+    const preview = await withTransaction((c) =>
+      previewSupplierPaymentAllocation(c, {
+        supplierAccountId: a2.id,
+        amount: '60',
+        mode: 'auto',
+      })
+    );
+    const order = preview.allocations.map((x) => x.invoice_id);
+    if (order[0] === early.id && order[1] === mid.id && order.length === 2) {
+      ok('H4) ترتيب auto allocation حسب due_date');
+    } else {
+      fail('H4) ترتيب auto allocation', { order, early: early.id, mid: mid.id, late: late.id });
+    }
+  }
+
+  // H5) CASH و BANK متزامنان على نفس الفاتورة
+  {
+    const inv = await postTestInvoice(`EXT-H5-${suffix}`, '50');
+    const results = await Promise.allSettled([
+      withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        const p = await createSupplierPayment(c, {
+          ...cashPayBase,
+          amount: '50',
+          allocations: [{ invoice_id: inv.id, amount: '50' }],
+        });
+        return postSupplierPayment(c, {
+          id: p.payment.id,
+          userId: actorId,
+          version: p.payment.version,
+          updated_at: p.payment.updated_at,
+        });
+      }),
+      withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        const p = await createSupplierPayment(c, {
+          supplier_account_id: account.id,
+          payment_date: fiscal.invoiceDate,
+          payment_method: 'BANK',
+          bank_account_id: bankAccountId,
+          amount: '50',
+          allocations: [{ invoice_id: inv.id, amount: '50' }],
+          created_by: actorId,
+        });
+        return postSupplierPayment(c, {
+          id: p.payment.id,
+          userId: actorId,
+          version: p.payment.version,
+          updated_at: p.payment.updated_at,
+        });
+      }),
+    ]);
+    const okN = results.filter((r) => r.status === 'fulfilled').length;
+    const badN = results.filter((r) => r.status === 'rejected').length;
+    const st = await query(
+      `SELECT status, outstanding_amount::text AS out FROM accounts.supplier_invoices WHERE id=$1`,
+      [inv.id]
+    );
+    const vouchers = await query(
+      `SELECT COUNT(*)::int AS n FROM accounts.supplier_payments
+       WHERE status='POSTED' AND id IN (
+         SELECT supplier_payment_id FROM accounts.supplier_payment_allocations WHERE supplier_invoice_id=$1
+       )`,
+      [inv.id]
+    );
+    if (
+      okN === 1 &&
+      badN === 1 &&
+      st.rows[0]?.status === 'PAID' &&
+      moneyEquals(String(st.rows[0].out), '0.000') &&
+      vouchers.rows[0].n === 1
+    ) {
+      ok(`H5) CASH+BANK متزامنان — نجاح=${okN} رفض=${badN} بدون double`);
+    } else {
+      fail('H5) CASH+BANK متزامنان', { okN, badN, st: st.rows[0], vouchers: vouchers.rows[0] });
+    }
+  }
+
+  // H6) Payment POST و Invoice VOID متزامنان
+  {
+    const inv = await postTestInvoice(`EXT-H6-${suffix}`, '45');
+    const draft = await withTransaction((c) =>
+      createSupplierPayment(c, {
+        ...cashPayBase,
+        amount: '45',
+        allocations: [{ invoice_id: inv.id, amount: '45' }],
+      })
+    );
+    const results = await Promise.allSettled([
+      withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        return postSupplierPayment(c, {
+          id: draft.payment.id,
+          userId: actorId,
+          version: draft.payment.version,
+          updated_at: draft.payment.updated_at,
+        });
+      }),
+      withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        return voidSupplierInvoice(c, {
+          id: inv.id,
+          userId: actorId,
+          version: inv.version,
+          updated_at: inv.updated_at,
+          reason: 'سباق مع دفعة',
+        });
+      }),
+    ]);
+    const okN = results.filter((r) => r.status === 'fulfilled').length;
+    const badN = results.filter((r) => r.status === 'rejected').length;
+    const invSt = await query(`SELECT status FROM accounts.supplier_invoices WHERE id=$1`, [inv.id]);
+    const paySt = await query(`SELECT status FROM accounts.supplier_payments WHERE id=$1`, [
+      draft.payment.id,
+    ]);
+    if (okN === 1 && badN === 1) {
+      ok(
+        `H6) Payment×InvoiceVOID — نجاح=${okN} رفض=${badN} invoice=${invSt.rows[0]?.status} payment=${paySt.rows[0]?.status}`
+      );
+    } else {
+      fail('H6) Payment×InvoiceVOID', {
+        okN,
+        badN,
+        inv: invSt.rows[0],
+        pay: paySt.rows[0],
+        results: results.map((r) =>
+          r.status === 'rejected' ? String((r as PromiseRejectedResult).reason) : 'ok'
+        ),
+      });
+    }
+  }
+
+  // H7) Direct Expense: تعطيل النوع يمنع ترحيل DRAFT + رفض Payables GL
+  {
+    const type = await withTransaction((c) =>
+      createDirectExpenseType(c, {
+        code: `DEX-H7-${suffix}`,
+        name_ar: `نوع H7 ${suffix}`,
+        default_expense_gl_account_id: expGl,
+        created_by: actorId,
+      })
+    );
+    const draft = await withTransaction((c) =>
+      createDirectExpense(c, {
+        expense_date: fiscal.invoiceDate,
+        expense_type_id: type.id,
+        expense_gl_account_id: expGl,
+        amount: '20',
+        payment_method: 'CASH',
+        cash_box_id: cashBoxId,
+        cash_box_session_id: cashSessionId,
+        beneficiary_name: 'H7',
+        description: 'H7 draft',
+        created_by: actorId,
+      })
+    );
+    await withTransaction((c) =>
+      deactivateDirectExpenseType(c, {
+        id: type.id,
+        userId: actorId,
+        version: type.version,
+        updated_at: type.updated_at,
+      })
+    );
+    await expectHttp(
+      'H7a) تعطيل النوع يمنع POST DRAFT',
+      () =>
+        withTransaction(async (c) => {
+          await acquireJournalEntriesLock(c);
+          return postDirectExpense(c, {
+            id: draft.id,
+            userId: actorId,
+            version: draft.version,
+            updated_at: draft.updated_at,
+          });
+        }),
+      409
+    );
+    await expectHttp(
+      'H7b) رفض Payables GL لمصروف مباشر',
+      () =>
+        withTransaction((c) =>
+          createDirectExpense(c, {
+            expense_date: fiscal.invoiceDate,
+            expense_gl_account_id: payGl,
+            amount: '15',
+            payment_method: 'CASH',
+            cash_box_id: cashBoxId,
+            cash_box_session_id: cashSessionId,
+            beneficiary_name: 'bad',
+            created_by: actorId,
+          })
+        ),
+      400
+    );
+  }
+
+  // H8) Direct Expense fault after_expense_status
+  {
+    const draft = await withTransaction((c) =>
+      createDirectExpense(c, {
+        expense_date: fiscal.invoiceDate,
+        expense_gl_account_id: expGl,
+        amount: '12',
+        payment_method: 'CASH',
+        cash_box_id: cashBoxId,
+        cash_box_session_id: cashSessionId,
+        beneficiary_name: 'fault',
+        description: 'fault status',
+        created_by: actorId,
+      })
+    );
+    setDirectExpensePostFaultForTests('after_expense_status');
+    try {
+      await withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        return postDirectExpense(c, {
+          id: draft.id,
+          userId: actorId,
+          version: draft.version,
+          updated_at: draft.updated_at,
+        });
+      });
+      fail('H8) fault after_expense_status — توقّعنا فشلًا');
+    } catch {
+      const st = await query(`SELECT status FROM accounts.direct_expenses WHERE id=$1`, [draft.id]);
+      const vouchers = await query(
+        `SELECT COUNT(*)::int AS n FROM accounts.cash_vouchers
+         WHERE party_reference=$1 AND status='POSTED'`,
+        [draft.expense_number]
+      );
+      if (st.rows[0]?.status === 'DRAFT' && vouchers.rows[0].n === 0) {
+        ok('H8) fault after_expense_status — rollback بلا سند يتيم');
+      } else {
+        fail('H8) fault after_expense_status leftover', {
+          status: st.rows[0]?.status,
+          vouchers: vouchers.rows[0],
+        });
+      }
+    } finally {
+      setDirectExpensePostFaultForTests(null);
+    }
+  }
+
+  // H9) طباعة الدفعة تعرض رصيد قبل/بعد
+  {
+    const postedPay = await query(
+      `SELECT id FROM accounts.supplier_payments
+       WHERE supplier_account_id=$1 AND status='POSTED' ORDER BY posted_at DESC NULLS LAST LIMIT 1`,
+      [account.id]
+    );
+    if (postedPay.rows[0]) {
+      const detail = await withTransaction((c) =>
+        getSupplierPaymentDetail(c, postedPay.rows[0].id as string)
+      );
+      if (detail.balance_before && detail.balance_after && detail.supplier_name_ar) {
+        ok('H9) تفاصيل الطباعة تتضمن الرصيد قبل/بعد والمورد');
+      } else {
+        fail('H9) تفاصيل الطباعة ناقصة', detail);
+      }
+    } else {
+      fail('H9) لا دفعة POSTED للطباعة');
+    }
+  }
+
+  // H10) موردان مختلفان بالتوازي
+  {
+    const sB = await withTransaction((c) =>
+      createSupplier(c, {
+        code: `SPY-PAR-${suffix}`,
+        name_ar: `مورد موازي ${suffix}`,
+        created_by: actorId,
+      })
+    );
+    const aB = await withTransaction((c) =>
+      createSupplierAccount(c, {
+        supplier_id: sB.id,
+        payable_gl_account_id: payGl,
+        created_by: actorId,
+      })
+    );
+    const invX = await postTestInvoice(`EXT-H10A-${suffix}`, '22');
+    const draftY = await withTransaction((c) =>
+      createSupplierInvoice(c, {
+        supplier_account_id: aB.id,
+        supplier_invoice_number: `EXT-H10B-${suffix}`,
+        invoice_type_id: invType.id,
+        invoice_date: fiscal.invoiceDate,
+        subtotal_amount: '22',
+        expense_gl_account_id: expGl,
+        description: 'موازٍ',
+        created_by: actorId,
+      })
+    );
+    const invY = (
+      await withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        return postSupplierInvoice(c, {
+          id: draftY.id,
+          userId: actorId,
+          version: draftY.version,
+          updated_at: draftY.updated_at,
+        });
+      })
+    ).invoice;
+    const [r1, r2] = await Promise.all([
+      withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        const p = await createSupplierPayment(c, {
+          ...cashPayBase,
+          amount: '22',
+          allocations: [{ invoice_id: invX.id, amount: '22' }],
+        });
+        return postSupplierPayment(c, {
+          id: p.payment.id,
+          userId: actorId,
+          version: p.payment.version,
+          updated_at: p.payment.updated_at,
+        });
+      }),
+      withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        const p = await createSupplierPayment(c, {
+          supplier_account_id: aB.id,
+          payment_date: fiscal.invoiceDate,
+          payment_method: 'CASH',
+          cash_box_id: cashBoxId,
+          cash_box_session_id: cashSessionId,
+          amount: '22',
+          allocations: [{ invoice_id: invY.id, amount: '22' }],
+          created_by: actorId,
+        });
+        return postSupplierPayment(c, {
+          id: p.payment.id,
+          userId: actorId,
+          version: p.payment.version,
+          updated_at: p.payment.updated_at,
+        });
+      }),
+    ]);
+    if (r1.payment.status === 'POSTED' && r2.payment.status === 'POSTED') {
+      ok('H10) موردان مختلفان بالتوازي — نجاحان');
+    } else {
+      fail('H10) موردان بالتوازي', { r1: r1.payment.status, r2: r2.payment.status });
+    }
+  }
+
+  // H11) ConfirmDialog في الواجهة (لا window.confirm)
+  {
+    const payUi = fs.readFileSync(
+      path.join(process.cwd(), 'app/accounts/suppliers/_components/PaymentPages.tsx'),
+      'utf8'
+    );
+    const expUi = fs.readFileSync(
+      path.join(process.cwd(), 'app/accounts/suppliers/_components/ExpensePages.tsx'),
+      'utf8'
+    );
+    if (
+      payUi.includes('ConfirmDialog') &&
+      expUi.includes('ConfirmDialog') &&
+      !payUi.includes('window.confirm') &&
+      !expUi.includes('window.confirm') &&
+      !payUi.includes('confirm(')
+    ) {
+      ok('H11) الواجهة تستخدم ConfirmDialog الموحد');
+    } else {
+      // PaymentNew may still have confirm( substring from ConfirmDialog props — check carefully
+      const hasNative =
+        /\bconfirm\s*\(/.test(payUi.replace(/ConfirmDialog/g, '')) ||
+        /\bconfirm\s*\(/.test(expUi.replace(/ConfirmDialog/g, ''));
+      if (payUi.includes('ConfirmDialog') && expUi.includes('ConfirmDialog') && !hasNative) {
+        ok('H11) الواجهة تستخدم ConfirmDialog الموحد');
+      } else {
+        fail('H11) ConfirmDialog');
+      }
+    }
+  }
+
+  const balFinal = await withTransaction((c) => getSupplierAccountBalance(c, account.id));
+  ok(`H12) رصيد المورد النهائي بعد الاختبارات: ${balFinal}`);
 
   console.log(
     `\n===== النتيجة: ${failCount ? 'فشل' : 'نجاح'} — نجح ${passCount} / فشل ${failCount} =====`

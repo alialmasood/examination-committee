@@ -2,6 +2,13 @@
 
 **Baseline:** `502556d` — fix(accounts): harden supplier payables integrity 6A
 
+## سياسة SUSPENDED (6.B)
+
+- **CLOSED** (مورد أو حساب): ممنوع إنشاء/ترحيل دفعات.
+- **SUSPENDED**: مسموح بتسوية الذمم القائمة (دفعات على فواتير مرحّلة سابقًا).
+- الفواتير الجديدة تبقى ممنوعة حسب سياسة 6.A.
+- لا Advance ولا Credit Balance للمورد.
+
 ## الفرق بين المسارين
 
 | | Supplier Payment | Direct Operating Expense |
@@ -34,7 +41,8 @@
 5. `supplier_payments → POSTED` + ربط `cash_voucher_id` / `bank_voucher_id`.
 6. Audit.
 
-Fault injection: `after_voucher` | `after_ledger` | `after_invoice` → rollback كامل.
+Fault injection: `after_voucher` | `after_ledger` | `after_invoice` | `after_payment_status` → rollback كامل.
+VOID POSTED: peek → أقفال الموارد → FOR UPDATE (نفس ترتيب POST لتجنب deadlock).
 
 ## القواعد المحاسبية
 
