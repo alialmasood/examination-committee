@@ -38,6 +38,13 @@ export type AccountingLockDomain =
   | 'SUPPLIER_LEDGER'
   | 'SUPPLIER_PAYMENT'
   | 'DIRECT_EXPENSE'
+  | 'PURCHASE_REQUISITION'
+  | 'PURCHASE_REQUISITION_LINE'
+  | 'PURCHASE_ORDER'
+  | 'PURCHASE_ORDER_LINE'
+  | 'PURCHASE_RECEIPT'
+  | 'PURCHASE_RECEIPT_LINE'
+  | 'SUPPLIER_INVOICE_MATCH'
   | 'GL_ACCOUNT';
 
 export type AccountingLockResource = {
@@ -181,6 +188,27 @@ export function supplierPaymentLock(id: string): AccountingLockResource {
 }
 export function directExpenseLock(id: string): AccountingLockResource {
   return { domain: 'DIRECT_EXPENSE', resourceId: id };
+}
+export function purchaseRequisitionLock(id: string): AccountingLockResource {
+  return { domain: 'PURCHASE_REQUISITION', resourceId: id };
+}
+export function purchaseRequisitionLineLock(id: string): AccountingLockResource {
+  return { domain: 'PURCHASE_REQUISITION_LINE', resourceId: id };
+}
+export function purchaseOrderLock(id: string): AccountingLockResource {
+  return { domain: 'PURCHASE_ORDER', resourceId: id };
+}
+export function purchaseOrderLineLock(id: string): AccountingLockResource {
+  return { domain: 'PURCHASE_ORDER_LINE', resourceId: id };
+}
+export function purchaseReceiptLock(id: string): AccountingLockResource {
+  return { domain: 'PURCHASE_RECEIPT', resourceId: id };
+}
+export function purchaseReceiptLineLock(id: string): AccountingLockResource {
+  return { domain: 'PURCHASE_RECEIPT_LINE', resourceId: id };
+}
+export function supplierInvoiceMatchLock(id: string): AccountingLockResource {
+  return { domain: 'SUPPLIER_INVOICE_MATCH', resourceId: id };
 }
 /** قفل GL للحسابات المستخدمة في ذمم الموردين (6.A) — موازٍ لـ CHART_ACCOUNT */
 export function glAccountLock(glAccountId: string): AccountingLockResource {
