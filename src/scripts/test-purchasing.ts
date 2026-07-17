@@ -17,6 +17,7 @@ import {
 import {
   approvePurchaseOrder,
   cancelPurchaseOrder,
+  closePurchaseOrder,
   createPurchaseOrder,
   createPurchaseOrderFromRequisition,
   listPurchaseOrderLines,
@@ -30,11 +31,13 @@ import {
   listPurchaseRequisitionLines,
   rejectPurchaseRequisition,
   submitPurchaseRequisition,
+  updatePurchaseRequisition,
 } from '../lib/accounts/purchase-requisitions';
 import {
   createPurchaseReceipt,
   postPurchaseReceipt,
   setPurchaseReceiptPostFaultForTests,
+  setPurchaseReceiptVoidFaultForTests,
   voidPurchaseReceipt,
 } from '../lib/accounts/purchase-receipts';
 import {
@@ -248,6 +251,7 @@ async function main() {
   const suffix = Date.now().toString(36).toUpperCase().slice(-6);
   const payGl = await ensureTypedAccount(`TST-PUR-AP-${suffix}`, 'ذمم 7.A', 'LIABILITY', userId);
   const expGl = await ensureTypedAccount(`TST-PUR-EX-${suffix}`, 'مصروف 7.A', 'EXPENSE', userId);
+  const expGl2 = await ensureTypedAccount(`TST-PUR-EX2-${suffix}`, 'مصروف 7.A #2', 'EXPENSE', userId);
   ok('00b) حسابات GL جاهزة');
 
   const supplier = await withTransaction((c) =>
@@ -1350,6 +1354,880 @@ async function main() {
     else fail('41) PO cancel', cancelledPo.status);
   }
 
+  // 42) لا قيود يومية بعد إنشاء/تقديم/اعتماد طلب شراء (PRQ)
+  let jeBefore = await query(`SELECT COUNT(*)::int n FROM accounts.journal_entries`);
+  const flowReq = await withTransaction(async (c) => {
+    const r = await createPurchaseRequisition(c, {
+      requisition_date: fiscal.entryDate,
+      requested_by: userId,
+      justification: `تدفق كامل ${suffix}`,
+      lines: [reqLine(expGl, '10', '15')],
+      created_by: userId,
+    });
+    const s = await submitPurchaseRequisition(c, {
+      id: r.id,
+      userId,
+      version: r.version,
+      updated_at: r.updated_at,
+    });
+    return approvePurchaseRequisition(c, {
+      id: s.id,
+      userId,
+      version: s.version,
+      updated_at: s.updated_at,
+    });
+  });
+  let jeAfter = await query(`SELECT COUNT(*)::int n FROM accounts.journal_entries`);
+  if (Number(jeAfter.rows[0]?.n) === Number(jeBefore.rows[0]?.n)) {
+    ok('42) لا قيود يومية بعد إنشاء/تقديم/اعتماد الطلب');
+  } else fail('42) JE count PRQ', { before: jeBefore.rows[0], after: jeAfter.rows[0] });
+
+  const flowRl = (await withTransaction((c) => listPurchaseRequisitionLines(c, flowReq.id)))[0]!;
+
+  // 43) لا قيود يومية بعد اعتماد أمر الشراء (من الطلب)
+  jeBefore = jeAfter;
+  const poFlow6 = await withTransaction((c) =>
+    createPurchaseOrderFromRequisition(c, {
+      requisitionId: flowReq.id,
+      supplier_account_id: account.id,
+      order_date: fiscal.entryDate,
+      lines: [{ requisition_line_id: flowRl.id, ordered_quantity: '6' }],
+      userId,
+    })
+  );
+  const poFlow6App = await approvePoFlow(poFlow6.id, userId, poFlow6.version, poFlow6.updated_at);
+  jeAfter = await query(`SELECT COUNT(*)::int n FROM accounts.journal_entries`);
+  if (Number(jeAfter.rows[0]?.n) === Number(jeBefore.rows[0]?.n)) {
+    ok('43) لا قيود يومية بعد اعتماد أمر الشراء');
+  } else fail('43) JE count PO approve', { before: jeBefore.rows[0], after: jeAfter.rows[0] });
+
+  // 44) كمية10 → PO6: متبقي=4 وحالة الطلب PARTIALLY_ORDERED
+  {
+    const rl = await query(
+      `SELECT ordered_quantity::text o FROM accounts.purchase_requisition_lines WHERE id=$1`,
+      [flowRl.id]
+    );
+    const reqSt = await query(`SELECT status FROM accounts.purchase_requisitions WHERE id=$1`, [flowReq.id]);
+    if (moneyEquals(String(rl.rows[0]?.o), '6.000') && reqSt.rows[0]?.status === 'PARTIALLY_ORDERED') {
+      ok('44) كمية10 → PO6: متبقي=4 وحالة PARTIALLY_ORDERED');
+    } else fail('44) PO6 remaining', { rl: rl.rows[0], reqSt: reqSt.rows[0] });
+  }
+
+  // 45) PO4 إضافي: متبقي=0 وحالة الطلب ORDERED
+  const poFlow4 = await withTransaction((c) =>
+    createPurchaseOrderFromRequisition(c, {
+      requisitionId: flowReq.id,
+      supplier_account_id: account.id,
+      order_date: fiscal.entryDate,
+      lines: [{ requisition_line_id: flowRl.id, ordered_quantity: '4' }],
+      userId,
+    })
+  );
+  const poFlow4App = await approvePoFlow(poFlow4.id, userId, poFlow4.version, poFlow4.updated_at);
+  {
+    const rl = await query(
+      `SELECT ordered_quantity::text o FROM accounts.purchase_requisition_lines WHERE id=$1`,
+      [flowRl.id]
+    );
+    const reqSt = await query(`SELECT status FROM accounts.purchase_requisitions WHERE id=$1`, [flowReq.id]);
+    if (moneyEquals(String(rl.rows[0]?.o), '10.000') && reqSt.rows[0]?.status === 'ORDERED') {
+      ok('45) PO4: متبقي=0 وحالة الطلب ORDERED');
+    } else fail('45) PO4 remaining', { rl: rl.rows[0], reqSt: reqSt.rows[0] });
+  }
+
+  // 46) رفض PO1 إضافي بعد اكتمال الطلب (ORDERED لا يقبل مزيدًا من الأوامر)
+  await expectHttp(
+    '46) رفض PO1 إضافي (الطلب مكتمل الطلبية بالفعل)',
+    () =>
+      withTransaction((c) =>
+        createPurchaseOrderFromRequisition(c, {
+          requisitionId: flowReq.id,
+          supplier_account_id: account.id,
+          order_date: fiscal.entryDate,
+          lines: [{ requisition_line_id: flowRl.id, ordered_quantity: '1' }],
+          userId,
+        })
+      ),
+    409
+  );
+
+  // 47) إلغاء PO4 → متبقي=4 وحالة الطلب PARTIALLY_ORDERED مجددًا
+  await withTransaction((c) =>
+    cancelPurchaseOrder(c, {
+      id: poFlow4App.id,
+      userId,
+      version: poFlow4App.version,
+      updated_at: poFlow4App.updated_at,
+      reason: 'إلغاء لإعادة الفتح',
+    })
+  );
+  {
+    const rl = await query(
+      `SELECT ordered_quantity::text o FROM accounts.purchase_requisition_lines WHERE id=$1`,
+      [flowRl.id]
+    );
+    const reqSt = await query(`SELECT status FROM accounts.purchase_requisitions WHERE id=$1`, [flowReq.id]);
+    if (moneyEquals(String(rl.rows[0]?.o), '6.000') && reqSt.rows[0]?.status === 'PARTIALLY_ORDERED') {
+      ok('47) إلغاء PO4 → متبقي=4 وحالة PARTIALLY_ORDERED');
+    } else fail('47) cancel PO4 reverse', { rl: rl.rows[0], reqSt: reqSt.rows[0] });
+  }
+
+  // 48) لا قيود يومية بعد ترحيل الاستلام (Receipt POST على PO6)
+  jeBefore = await query(`SELECT COUNT(*)::int n FROM accounts.journal_entries`);
+  await withTransaction(async (c) => {
+    const pl = (await listPurchaseOrderLines(c, poFlow6App.id))[0]!;
+    const rc = await createPurchaseReceipt(c, {
+      purchase_order_id: poFlow6App.id,
+      receipt_date: fiscal.entryDate,
+      received_by: userId,
+      lines: [{ purchase_order_line_id: pl.id, received_quantity: '6', accepted_quantity: '6' }],
+      created_by: userId,
+    });
+    return postPurchaseReceipt(c, {
+      id: rc.id,
+      userId,
+      version: rc.version,
+      updated_at: rc.updated_at,
+    });
+  });
+  jeAfter = await query(`SELECT COUNT(*)::int n FROM accounts.journal_entries`);
+  if (Number(jeAfter.rows[0]?.n) === Number(jeBefore.rows[0]?.n)) {
+    ok('48) لا قيود يومية بعد ترحيل الاستلام');
+  } else fail('48) JE count receipt post', { before: jeBefore.rows[0], after: jeAfter.rows[0] });
+
+  // 49) SUSPENDED يمنع إنشاء أمر شراء جديد (createPurchaseOrder وليس فقط الاعتماد)
+  {
+    const supRow = await query(`SELECT version, updated_at FROM accounts.suppliers WHERE id=$1`, [supplier.id]);
+    await withTransaction((c) =>
+      suspendSupplier(c, {
+        id: supplier.id,
+        userId,
+        version: supRow.rows[0]!.version,
+        updated_at: supRow.rows[0]!.updated_at,
+      })
+    );
+    await expectHttp(
+      '49) SUSPENDED يمنع إنشاء أمر شراء جديد',
+      () =>
+        withTransaction((c) =>
+          createPurchaseOrder(c, {
+            supplier_account_id: account.id,
+            order_date: fiscal.entryDate,
+            lines: [
+              {
+                purchase_kind: 'SERVICE',
+                description: 'suspended create',
+                ordered_quantity: '1',
+                unit_price: '5',
+                expense_gl_account_id: expGl,
+              },
+            ],
+            created_by: userId,
+          })
+        ),
+      409,
+      'معلّق'
+    );
+    const supRow2 = await query(`SELECT version, updated_at FROM accounts.suppliers WHERE id=$1`, [supplier.id]);
+    await withTransaction((c) =>
+      activateSupplier(c, {
+        id: supplier.id,
+        userId,
+        version: supRow2.rows[0]!.version,
+        updated_at: supRow2.rows[0]!.updated_at,
+      })
+    );
+  }
+
+  // 50) محضر DRAFT لا يغيّر received_quantity على سطر الأمر
+  {
+    const po = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'draft receipt',
+            ordered_quantity: '3',
+            unit_price: '10',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    const pl = (await withTransaction((c) => listPurchaseOrderLines(c, po.id)))[0]!;
+    await withTransaction((c) =>
+      createPurchaseReceipt(c, {
+        purchase_order_id: po.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [{ purchase_order_line_id: pl.id, received_quantity: '2', accepted_quantity: '2' }],
+        created_by: userId,
+      })
+    );
+    const check = await query(
+      `SELECT received_quantity::text r FROM accounts.purchase_order_lines WHERE id=$1`,
+      [pl.id]
+    );
+    if (moneyEquals(String(check.rows[0]?.r), '0.000')) {
+      ok('50) محضر DRAFT لا يغيّر received_quantity');
+    } else fail('50) DRAFT receipt qty', check.rows[0]);
+  }
+
+  // 51) SERVICE استلام جزئي عشري 0.5 من 1.0 ثم POST
+  {
+    const po = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'خدمة عشرية',
+            unit_of_measure: 'JOB',
+            ordered_quantity: '1.000',
+            unit_price: '200',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    const pl = (await withTransaction((c) => listPurchaseOrderLines(c, po.id)))[0]!;
+    const posted = await withTransaction(async (c) => {
+      const rc = await createPurchaseReceipt(c, {
+        purchase_order_id: po.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [{ purchase_order_line_id: pl.id, received_quantity: '0.5', accepted_quantity: '0.5' }],
+        created_by: userId,
+      });
+      return postPurchaseReceipt(c, {
+        id: rc.id,
+        userId,
+        version: rc.version,
+        updated_at: rc.updated_at,
+      });
+    });
+    const check = await query(
+      `SELECT received_quantity::text r, status FROM accounts.purchase_order_lines WHERE id=$1`,
+      [pl.id]
+    );
+    if (
+      posted.receipt.status === 'POSTED' &&
+      moneyEquals(String(check.rows[0]?.r), '0.500') &&
+      check.rows[0]?.status === 'PARTIALLY_RECEIVED'
+    ) {
+      ok('51) SERVICE استلام جزئي عشري 0.5/1.0 POST');
+    } else fail('51) service partial', { posted: posted.receipt.status, check: check.rows[0] });
+  }
+
+  // 52) fault after_first_po_line — rollback كامل (المحضر يبقى DRAFT وكمية الأمر بلا تغيير)
+  {
+    const po = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'fault first line',
+            ordered_quantity: '2',
+            unit_price: '10',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    const pl = (await withTransaction((c) => listPurchaseOrderLines(c, po.id)))[0]!;
+    const rc = await withTransaction((c) =>
+      createPurchaseReceipt(c, {
+        purchase_order_id: po.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [{ purchase_order_line_id: pl.id, received_quantity: '1', accepted_quantity: '1' }],
+        created_by: userId,
+      })
+    );
+    setPurchaseReceiptPostFaultForTests('after_first_po_line');
+    try {
+      await withTransaction((c) =>
+        postPurchaseReceipt(c, {
+          id: rc.id,
+          userId,
+          version: rc.version,
+          updated_at: rc.updated_at,
+        })
+      );
+      fail('52) fault after_first_po_line — توقّعنا فشلًا');
+    } catch {
+      const st = await query(`SELECT status FROM accounts.purchase_receipts WHERE id=$1`, [rc.id]);
+      const plAfter = await query(
+        `SELECT received_quantity::text r FROM accounts.purchase_order_lines WHERE id=$1`,
+        [pl.id]
+      );
+      if (st.rows[0]?.status === 'DRAFT' && moneyEquals(String(plAfter.rows[0]?.r), '0.000')) {
+        ok('52) fault after_first_po_line — rollback');
+      } else fail('52) fault leftover', { st: st.rows[0], pl: plAfter.rows[0] });
+    } finally {
+      setPurchaseReceiptPostFaultForTests(null);
+    }
+  }
+
+  // 53-55) فاتورة DRAFT لا تحجز، فاتورتان DRAFT معًا، POST الأولى ينجح والثانية تُرفض
+  {
+    const poInvFlow = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'invoice draft test',
+            ordered_quantity: '4',
+            unit_price: '25',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      const app = await approvePoInTx(c, p, userId);
+      const pl = (await listPurchaseOrderLines(c, app.id))[0]!;
+      const rc = await createPurchaseReceipt(c, {
+        purchase_order_id: app.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [{ purchase_order_line_id: pl.id, received_quantity: '4', accepted_quantity: '4' }],
+        created_by: userId,
+      });
+      await postPurchaseReceipt(c, {
+        id: rc.id,
+        userId,
+        version: rc.version,
+        updated_at: rc.updated_at,
+      });
+      return { poId: app.id, lineId: pl.id };
+    });
+
+    const draftA = await withTransaction((c) =>
+      createSupplierInvoiceFromPurchaseOrder(c, {
+        purchase_order_id: poInvFlow.poId,
+        supplier_invoice_number: `VINV-${suffix}-DA`,
+        invoice_date: fiscal.entryDate,
+        lines: [{ purchase_order_line_id: poInvFlow.lineId, quantity: '3', unit_price: '25' }],
+        created_by: userId,
+      })
+    );
+    {
+      const q = await query(
+        `SELECT invoiced_quantity::text q FROM accounts.purchase_order_lines WHERE id=$1`,
+        [poInvFlow.lineId]
+      );
+      if (moneyEquals(String(q.rows[0]?.q), '0.000')) {
+        ok('53) فاتورة DRAFT لا تغيّر invoiced_quantity');
+      } else fail('53) draft invoice qty', q.rows[0]);
+    }
+
+    const draftB = await withTransaction((c) =>
+      createSupplierInvoiceFromPurchaseOrder(c, {
+        purchase_order_id: poInvFlow.poId,
+        supplier_invoice_number: `VINV-${suffix}-DB`,
+        invoice_date: fiscal.entryDate,
+        lines: [{ purchase_order_line_id: poInvFlow.lineId, quantity: '3', unit_price: '25' }],
+        created_by: userId,
+      })
+    );
+    if (draftA.invoice.status === 'DRAFT' && draftB.invoice.status === 'DRAFT') {
+      ok('54) فاتورتان DRAFT معًا على نفس الكمية بدون خطأ');
+    } else fail('54) two drafts', { a: draftA.invoice.status, b: draftB.invoice.status });
+
+    const postedA = await withTransaction(async (c) => {
+      await acquireJournalEntriesLock(c);
+      const r = await postSupplierInvoice(c, {
+        id: draftA.invoice.id,
+        userId,
+        version: draftA.invoice.version,
+        updated_at: draftA.invoice.updated_at,
+      });
+      return r.invoice;
+    });
+    let postBFailed = false;
+    try {
+      await withTransaction(async (c) => {
+        await acquireJournalEntriesLock(c);
+        return postSupplierInvoice(c, {
+          id: draftB.invoice.id,
+          userId,
+          version: draftB.invoice.version,
+          updated_at: draftB.invoice.updated_at,
+        });
+      });
+    } catch (e) {
+      postBFailed = e instanceof AccountsHttpError && e.status === 409;
+    }
+    if (postedA.status === 'POSTED' && postBFailed) {
+      ok('55) POST الأولى ينجح والثانية تُرفض (تجاوز المتاح)');
+    } else fail('55) one post wins', { postedA: postedA.status, postBFailed });
+  }
+
+  // 56) فاتورة بسطرين بحسابي مصروف مختلفين
+  {
+    const poMulti = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'سطر1',
+            ordered_quantity: '2',
+            unit_price: '50',
+            expense_gl_account_id: expGl,
+          },
+          {
+            purchase_kind: 'SERVICE',
+            description: 'سطر2',
+            ordered_quantity: '3',
+            unit_price: '30',
+            expense_gl_account_id: expGl2,
+          },
+        ],
+        created_by: userId,
+      });
+      const app = await approvePoInTx(c, p, userId);
+      const lines = await listPurchaseOrderLines(c, app.id);
+      for (const l of lines) {
+        const rc = await createPurchaseReceipt(c, {
+          purchase_order_id: app.id,
+          receipt_date: fiscal.entryDate,
+          received_by: userId,
+          lines: [{ purchase_order_line_id: l.id, received_quantity: l.ordered_quantity, accepted_quantity: l.ordered_quantity }],
+          created_by: userId,
+        });
+        await postPurchaseReceipt(c, {
+          id: rc.id,
+          userId,
+          version: rc.version,
+          updated_at: rc.updated_at,
+        });
+      }
+      return { poId: app.id, lines };
+    });
+    const inv = await withTransaction((c) =>
+      createSupplierInvoiceFromPurchaseOrder(c, {
+        purchase_order_id: poMulti.poId,
+        supplier_invoice_number: `VINV-${suffix}-MULTI`,
+        invoice_date: fiscal.entryDate,
+        lines: poMulti.lines.map((l) => ({
+          purchase_order_line_id: l.id,
+          quantity: l.ordered_quantity,
+          unit_price: l.unit_price,
+        })),
+        created_by: userId,
+      })
+    );
+    const glSet = new Set(inv.lines.map((l) => l.expense_gl_account_id));
+    if (inv.lines.length === 2 && glSet.size === 2) {
+      ok('56) فاتورة بسطرين بحسابي مصروف مختلفين');
+    } else fail('56) multi-line invoice GLs', inv.lines.map((l) => l.expense_gl_account_id));
+  }
+
+  // 57-58) closePurchaseOrder يرفض مع كمية مفتوحة ثم ينجح بعد استلام كامل
+  {
+    const po = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'close test',
+            ordered_quantity: '5',
+            unit_price: '10',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    await expectHttp(
+      '57) closePurchaseOrder يرفض مع كمية استلام مفتوحة',
+      () =>
+        withTransaction((c) =>
+          closePurchaseOrder(c, { id: po.id, userId, version: po.version, updated_at: po.updated_at })
+        ),
+      409,
+      'كميات مفتوحة'
+    );
+    const pl = (await withTransaction((c) => listPurchaseOrderLines(c, po.id)))[0]!;
+    await withTransaction(async (c) => {
+      const rc = await createPurchaseReceipt(c, {
+        purchase_order_id: po.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [{ purchase_order_line_id: pl.id, received_quantity: '5', accepted_quantity: '5' }],
+        created_by: userId,
+      });
+      return postPurchaseReceipt(c, {
+        id: rc.id,
+        userId,
+        version: rc.version,
+        updated_at: rc.updated_at,
+      });
+    });
+    const poRow = await query(`SELECT version, updated_at FROM accounts.purchase_orders WHERE id=$1`, [po.id]);
+    const closed = await withTransaction((c) =>
+      closePurchaseOrder(c, {
+        id: po.id,
+        userId,
+        version: poRow.rows[0]!.version,
+        updated_at: poRow.rows[0]!.updated_at,
+      })
+    );
+    if (closed.status === 'CLOSED') ok('58) closePurchaseOrder ينجح بعد استلام كامل');
+    else fail('58) close after full receive', closed.status);
+  }
+
+  // 59) verifyPurchasing({ strict: true })
+  {
+    const v = await withTransaction((c) => verifyPurchasing(c, { strict: true }));
+    if (v.ok) ok('59) verifyPurchasing({ strict: true })');
+    else fail('59) verifyPurchasing strict', v.mismatches.slice(0, 5));
+  }
+
+  // 60) رفض اعتماد طلب REJECTED
+  {
+    const req = await withTransaction(async (c) => {
+      const r = await createPurchaseRequisition(c, {
+        requisition_date: fiscal.entryDate,
+        requested_by: userId,
+        justification: 'REJECTED then approve',
+        lines: [reqLine(expGl, '1', '5')],
+        created_by: userId,
+      });
+      return submitPurchaseRequisition(c, {
+        id: r.id,
+        userId,
+        version: r.version,
+        updated_at: r.updated_at,
+      });
+    });
+    const rejected = await withTransaction((c) =>
+      rejectPurchaseRequisition(c, {
+        id: req.id,
+        userId,
+        version: req.version,
+        updated_at: req.updated_at,
+        reason: 'اختبار',
+      })
+    );
+    await expectHttp(
+      '60) رفض اعتماد طلب REJECTED',
+      () =>
+        withTransaction((c) =>
+          approvePurchaseRequisition(c, {
+            id: rejected.id,
+            userId,
+            version: rejected.version,
+            updated_at: rejected.updated_at,
+          })
+        ),
+      409
+    );
+  }
+
+  // 61) رفض تقديم أمر شراء بلا سطور
+  {
+    const po = await withTransaction((c) =>
+      createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'no lines test',
+            ordered_quantity: '1',
+            unit_price: '1',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      })
+    );
+    await query(`DELETE FROM accounts.purchase_order_lines WHERE purchase_order_id=$1`, [po.id]);
+    await expectHttp(
+      '61) رفض تقديم أمر شراء بلا سطور',
+      () =>
+        withTransaction((c) =>
+          submitPurchaseOrder(c, { id: po.id, userId, version: po.version, updated_at: po.updated_at })
+        ),
+      409,
+      'بلا سطور'
+    );
+  }
+
+  // 62) رفض سعر أقل خارج التسامح (نقص السعر يخضع لنفس التسامح — لا معاملة تفضيلية)
+  {
+    const po = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'price down',
+            ordered_quantity: '2',
+            unit_price: '80',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    const pl = (await withTransaction((c) => listPurchaseOrderLines(c, po.id)))[0]!;
+    await withTransaction(async (c) => {
+      const rc = await createPurchaseReceipt(c, {
+        purchase_order_id: po.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [{ purchase_order_line_id: pl.id, received_quantity: '2', accepted_quantity: '2' }],
+        created_by: userId,
+      });
+      return postPurchaseReceipt(c, {
+        id: rc.id,
+        userId,
+        version: rc.version,
+        updated_at: rc.updated_at,
+      });
+    });
+    await expectHttp(
+      '62) رفض سعر أقل خارج التسامح',
+      () =>
+        withTransaction((c) =>
+          createSupplierInvoiceFromPurchaseOrder(c, {
+            purchase_order_id: po.id,
+            supplier_invoice_number: `VINV-${suffix}-LOW`,
+            invoice_date: fiscal.entryDate,
+            lines: [{ purchase_order_line_id: pl.id, quantity: '1', unit_price: '60' }],
+            created_by: userId,
+          })
+        ),
+      409,
+      'التسامح'
+    );
+  }
+
+  // 63) رفض رفض(reject) طلب DRAFT — الرفض يتطلب حالة SUBMITTED
+  {
+    const req = await withTransaction((c) =>
+      createPurchaseRequisition(c, {
+        requisition_date: fiscal.entryDate,
+        requested_by: userId,
+        justification: 'reject draft',
+        lines: [reqLine(expGl, '1', '5')],
+        created_by: userId,
+      })
+    );
+    await expectHttp(
+      '63) رفض رفض(reject) طلب DRAFT',
+      () =>
+        withTransaction((c) =>
+          rejectPurchaseRequisition(c, {
+            id: req.id,
+            userId,
+            version: req.version,
+            updated_at: req.updated_at,
+            reason: 'x',
+          })
+        ),
+      409
+    );
+  }
+
+  // 64) رفض إلغاء PO له استلام (كمية مستلمة > 0)
+  {
+    const po = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'cancel blocked',
+            ordered_quantity: '3',
+            unit_price: '10',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    const pl = (await withTransaction((c) => listPurchaseOrderLines(c, po.id)))[0]!;
+    await withTransaction(async (c) => {
+      const rc = await createPurchaseReceipt(c, {
+        purchase_order_id: po.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [{ purchase_order_line_id: pl.id, received_quantity: '1', accepted_quantity: '1' }],
+        created_by: userId,
+      });
+      return postPurchaseReceipt(c, {
+        id: rc.id,
+        userId,
+        version: rc.version,
+        updated_at: rc.updated_at,
+      });
+    });
+    const poRow = await query(`SELECT version, updated_at FROM accounts.purchase_orders WHERE id=$1`, [po.id]);
+    await expectHttp(
+      '64) رفض إلغاء PO له استلام',
+      () =>
+        withTransaction((c) =>
+          cancelPurchaseOrder(c, {
+            id: po.id,
+            userId,
+            version: poRow.rows[0]!.version,
+            updated_at: poRow.rows[0]!.updated_at,
+            reason: 'محاولة',
+          })
+        ),
+      409
+    );
+  }
+
+  // 65) headerAmounts: subtotal/discount/tax/total محسوبة بشكل صحيح مع خصم وضريبة
+  {
+    const po = await withTransaction((c) =>
+      createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        description: 'اختبار الإجماليات',
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'سطر بخصم وضريبة',
+            ordered_quantity: '3',
+            unit_price: '100',
+            discount_amount: '20',
+            tax_amount: '10',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      })
+    );
+    if (
+      moneyEquals(po.subtotal_amount, '300.000') &&
+      moneyEquals(po.discount_amount, '20.000') &&
+      moneyEquals(po.tax_amount, '10.000') &&
+      moneyEquals(po.total_amount, '290.000')
+    ) {
+      ok('65) headerAmounts: subtotal/discount/tax/total صحيحة');
+    } else fail('65) headerAmounts', po);
+  }
+
+  // 66) updatePurchaseRequisition يحدّث السطور ويعيد حساب total_estimated_amount
+  {
+    const req = await withTransaction((c) =>
+      createPurchaseRequisition(c, {
+        requisition_date: fiscal.entryDate,
+        requested_by: userId,
+        justification: 'update test',
+        lines: [reqLine(expGl, '2', '10')],
+        created_by: userId,
+      })
+    );
+    const updated = await withTransaction((c) =>
+      updatePurchaseRequisition(c, {
+        id: req.id,
+        userId,
+        version: req.version,
+        updated_at: req.updated_at,
+        justification: 'update test — معدّل',
+        lines: [reqLine(expGl, '5', '20')],
+      })
+    );
+    const lines = await withTransaction((c) => listPurchaseRequisitionLines(c, req.id));
+    if (
+      updated.justification === 'update test — معدّل' &&
+      moneyEquals(updated.total_estimated_amount, '100.000') &&
+      lines.length === 1 &&
+      moneyEquals(lines[0]!.estimated_total, '100.000')
+    ) {
+      ok('66) updatePurchaseRequisition يحدّث السطور ويعيد الحساب');
+    } else fail('66) updatePurchaseRequisition', { updated, lines });
+  }
+
+  // 67) fault after_po_reverse عند VOID محضر مرحّل — rollback كامل
+  {
+    const po = await withTransaction(async (c) => {
+      const p = await createPurchaseOrder(c, {
+        supplier_account_id: account.id,
+        order_date: fiscal.entryDate,
+        lines: [
+          {
+            purchase_kind: 'SERVICE',
+            description: 'void fault',
+            ordered_quantity: '3',
+            unit_price: '10',
+            expense_gl_account_id: expGl,
+          },
+        ],
+        created_by: userId,
+      });
+      return approvePoInTx(c, p, userId);
+    });
+    const pl = (await withTransaction((c) => listPurchaseOrderLines(c, po.id)))[0]!;
+    const posted = await withTransaction(async (c) => {
+      const rc = await createPurchaseReceipt(c, {
+        purchase_order_id: po.id,
+        receipt_date: fiscal.entryDate,
+        received_by: userId,
+        lines: [{ purchase_order_line_id: pl.id, received_quantity: '3', accepted_quantity: '3' }],
+        created_by: userId,
+      });
+      return postPurchaseReceipt(c, {
+        id: rc.id,
+        userId,
+        version: rc.version,
+        updated_at: rc.updated_at,
+      });
+    });
+    setPurchaseReceiptVoidFaultForTests('after_po_reverse');
+    try {
+      await withTransaction((c) =>
+        voidPurchaseReceipt(c, {
+          id: posted.receipt.id,
+          userId,
+          version: posted.receipt.version,
+          updated_at: posted.receipt.updated_at,
+          reason: 'اختبار عطل',
+        })
+      );
+      fail('67) fault after_po_reverse — توقّعنا فشلًا');
+    } catch {
+      const st = await query(`SELECT status FROM accounts.purchase_receipts WHERE id=$1`, [posted.receipt.id]);
+      const plAfter = await query(
+        `SELECT received_quantity::text r FROM accounts.purchase_order_lines WHERE id=$1`,
+        [pl.id]
+      );
+      if (st.rows[0]?.status === 'POSTED' && moneyEquals(String(plAfter.rows[0]?.r), '3.000')) {
+        ok('67) fault after_po_reverse — rollback');
+      } else fail('67) void fault leftover', { st: st.rows[0], pl: plAfter.rows[0] });
+    } finally {
+      setPurchaseReceiptVoidFaultForTests(null);
+    }
+  }
+
   console.log(
     `\n===== النتيجة: ${failCount ? 'فشل' : 'نجاح'} — نجح ${passCount} / فشل ${failCount} =====`
   );
@@ -1372,6 +2250,7 @@ main()
   })
   .finally(async () => {
     setPurchaseReceiptPostFaultForTests(null);
+    setPurchaseReceiptVoidFaultForTests(null);
     setPurchaseInvoiceMatchPostFaultForTests(null);
     await closePool();
   });

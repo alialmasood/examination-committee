@@ -170,6 +170,8 @@ async function parseReceiptLines(c: TxClient, poId: string, lines: unknown, poLi
     const poLine = poLineMap.get(poLineId);
     if (!poLine || poLine.purchase_order_id !== poId)
       throw new AccountsHttpError(`سطر الأمر ${i + 1} لا ينتمي لهذا الأمر`, 409);
+    if (poLine.status === 'CANCELLED' || poLine.status === 'CLOSED')
+      throw new AccountsHttpError(`لا يمكن الاستلام على سطر ملغى أو مغلق (سطر الأمر ${poLine.line_number})`, 409);
     const recv = qtyPositive(raw.received_quantity, `الكمية المستلمة للسطر ${i + 1}`);
     const acc = raw.accepted_quantity === undefined ? recv : qtyNonNeg(raw.accepted_quantity);
     const rej = raw.rejected_quantity === undefined ? '0.000' : qtyNonNeg(raw.rejected_quantity);
@@ -389,9 +391,19 @@ export async function updatePurchaseReceipt(
   return u.rows[0]!;
 }
 
-let __fault: null | 'after_po_update' = null;
+/**
+ * سياسة SERVICE في 7.A: نفس معادلات الكمية العشرية لـ NON_STOCK_ITEM
+ * (استلام جزئي مسموح مثل 0.500 من 1.000). الوحدة نص حر (SERVICE/MONTH/JOB…).
+ * لا نموذج نسبة مئوية.
+ */
+let __fault: null | 'after_first_po_line' | 'after_po_update' | 'after_receipt_posted' = null;
 export const setPurchaseReceiptPostFaultForTests = (v: typeof __fault) => {
   __fault = v;
+};
+
+let __voidFault: null | 'after_po_reverse' = null;
+export const setPurchaseReceiptVoidFaultForTests = (v: typeof __voidFault) => {
+  __voidFault = v;
 };
 
 export async function postPurchaseReceipt(
@@ -414,6 +426,7 @@ export async function postPurchaseReceipt(
   assertPoReceivable(po);
   const lines = await listPurchaseReceiptLines(c, row.id);
   if (!lines.length) throw new AccountsHttpError('لا يمكن ترحيل محضر بلا سطور', 409);
+  let lineIndex = 0;
   for (const rl of lines) {
     const poLine = await loadPurchaseOrderLine(c, rl.purchase_order_line_id, true);
     const remaining = openQty(poLine);
@@ -443,6 +456,8 @@ export async function postPurchaseReceipt(
          rejected_quantity=$4::numeric,status=$5,updated_at=NOW() WHERE id=$1::uuid`,
       [poLine.id, newRecv, newAcc, newRej, st]
     );
+    lineIndex += 1;
+    if (lineIndex === 1 && __fault === 'after_first_po_line') throw new Error('FAULT_AFTER_FIRST_PO_LINE');
   }
   await refreshPurchaseOrderQuantitiesStatus(c, row.purchase_order_id);
   if (__fault === 'after_po_update') throw new Error('FAULT_AFTER_PO_UPDATE');
@@ -452,6 +467,7 @@ export async function postPurchaseReceipt(
        updated_by=$2::uuid,updated_at=NOW(),version=version+1 WHERE id=$1::uuid RETURNING *`,
     [row.id, p.userId]
   );
+  if (__fault === 'after_receipt_posted') throw new Error('FAULT_AFTER_RECEIPT_POSTED');
   return { receipt: u.rows[0]!, created: true };
 }
 
@@ -523,6 +539,7 @@ export async function voidPurchaseReceipt(
     );
   }
   await refreshPurchaseOrderQuantitiesStatus(c, row.purchase_order_id);
+  if (__voidFault === 'after_po_reverse') throw new Error('FAULT_AFTER_PO_REVERSE');
   const u = await txQuery<PurchaseReceiptRow>(
     c,
     `UPDATE accounts.purchase_receipts SET status='VOID',void_reason=$2,voided_by=$3::uuid,voided_at=NOW(),

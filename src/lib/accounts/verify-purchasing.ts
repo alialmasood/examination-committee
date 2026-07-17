@@ -1,5 +1,6 @@
 /**
  * تحقق دورة المشتريات 7.A — اتساق الكميات والحالات والأيتام.
+ * mode=strict يضيف فحوصات مطابقة GL وربط الفواتير.
  */
 import {
   derivePoHeaderStatus,
@@ -13,6 +14,7 @@ import {
   moneyToMillis,
   millisToMoney,
   normalizeMoneyInput,
+  sumMoney,
 } from './money';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
@@ -36,11 +38,19 @@ export type PurchasingVerifyResult = {
   };
 };
 
+export type VerifyPurchasingOptions = {
+  strict?: boolean;
+};
+
 function ms(v: string): bigint {
   return moneyToMillis(normalizeMoneyInput(v));
 }
 
-export async function verifyPurchasing(client: TxClient): Promise<PurchasingVerifyResult> {
+export async function verifyPurchasing(
+  client: TxClient,
+  options: VerifyPurchasingOptions = {}
+): Promise<PurchasingVerifyResult> {
+  const strict = options.strict === true;
   const mismatches: PurchasingVerifyMismatch[] = [];
 
   const reqLines = await txQuery<{
@@ -50,11 +60,14 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
     line_number: number;
     requested_quantity: string;
     ordered_quantity: string;
+    estimated_unit_price: string;
+    estimated_total: string;
     status: string;
   }>(
     client,
     `SELECT rl.id, rl.requisition_id, pr.requisition_number, rl.line_number,
-            rl.requested_quantity::text, rl.ordered_quantity::text, pr.status
+            rl.requested_quantity::text, rl.ordered_quantity::text,
+            rl.estimated_unit_price::text, rl.estimated_total::text, pr.status
      FROM accounts.purchase_requisition_lines rl
      JOIN accounts.purchase_requisitions pr ON pr.id = rl.requisition_id`
   );
@@ -67,6 +80,17 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
         kind: 'REQ_OVER_ORDERED',
         entity_id: rl.id,
         detail: `${rl.requisition_number} L${rl.line_number}: ordered=${ordered} > requested=${requested}`,
+      });
+    }
+
+    const expectedLineTotal = millisToMoney(
+      (ms(rl.requested_quantity) * ms(rl.estimated_unit_price) + BigInt(500)) / BigInt(1000)
+    );
+    if (!moneyEquals(expectedLineTotal, normalizeMoneyInput(rl.estimated_total))) {
+      mismatches.push({
+        kind: 'REQ_LINE_TOTAL',
+        entity_id: rl.id,
+        detail: `${rl.requisition_number} L${rl.line_number}: estimated_total mismatch`,
       });
     }
 
@@ -93,10 +117,24 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
     id: string;
     requisition_number: string;
     status: string;
-  }>(client, `SELECT id, requisition_number, status FROM accounts.purchase_requisitions`);
+    total_estimated_amount: string;
+  }>(
+    client,
+    `SELECT id, requisition_number, status, total_estimated_amount::text FROM accounts.purchase_requisitions`
+  );
 
   for (const req of reqs.rows) {
     const lines = reqLines.rows.filter((l) => l.requisition_id === req.id);
+    if (lines.length) {
+      const sumEst = sumMoney(lines.map((l) => normalizeMoneyInput(l.estimated_total)));
+      if (!moneyEquals(sumEst, normalizeMoneyInput(req.total_estimated_amount))) {
+        mismatches.push({
+          kind: 'REQ_HEADER_TOTAL',
+          entity_id: req.id,
+          detail: `${req.requisition_number}: header total ≠ Σ lines`,
+        });
+      }
+    }
     if (!lines.length) continue;
     if (!['APPROVED', 'PARTIALLY_ORDERED', 'ORDERED'].includes(req.status)) continue;
 
@@ -106,11 +144,7 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
       if (moneyIsPositive(l.ordered_quantity)) anyOrdered = true;
       if (!moneyEquals(l.ordered_quantity, l.requested_quantity)) allFull = false;
     }
-    const expected = !anyOrdered
-      ? 'APPROVED'
-      : allFull
-        ? 'ORDERED'
-        : 'PARTIALLY_ORDERED';
+    const expected = !anyOrdered ? 'APPROVED' : allFull ? 'ORDERED' : 'PARTIALLY_ORDERED';
     if (req.status !== expected) {
       mismatches.push({
         kind: 'REQ_STATUS',
@@ -134,13 +168,14 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
     status: PurchaseOrderLineStatus;
     po_status: PurchaseOrderStatus;
     requisition_line_id: string | null;
+    expense_gl_account_id: string;
   }>(
     client,
     `SELECT pol.id, pol.purchase_order_id, pol.line_number,
             pol.ordered_quantity::text, pol.cancelled_quantity::text,
             pol.received_quantity::text, pol.accepted_quantity::text,
             pol.rejected_quantity::text, pol.invoiced_quantity::text,
-            pol.status, pol.requisition_line_id,
+            pol.status, pol.requisition_line_id, pol.expense_gl_account_id,
             po.purchase_order_number, po.status AS po_status
      FROM accounts.purchase_order_lines pol
      JOIN accounts.purchase_orders po ON po.id = pol.purchase_order_id`
@@ -159,14 +194,14 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
       mismatches.push({
         kind: 'PO_OVER_RECEIVED',
         entity_id: pl.id,
-        detail: `${pl.purchase_order_number} L${pl.line_number}: received=${received} > open=${ordered}-${cancelled}`,
+        detail: `${pl.purchase_order_number} L${pl.line_number}: received=${received} > open`,
       });
     }
     if (ms(invoiced) > ms(accepted)) {
       mismatches.push({
         kind: 'PO_OVER_INVOICED',
         entity_id: pl.id,
-        detail: `${pl.purchase_order_number} L${pl.line_number}: invoiced=${invoiced} > accepted=${accepted}`,
+        detail: `${pl.purchase_order_number} L${pl.line_number}: invoiced > accepted`,
       });
     }
     const recvSum = millisToMoney(ms(accepted) + ms(rejected));
@@ -199,7 +234,7 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
       mismatches.push({
         kind: 'PO_RECEIPT_SUM_MISMATCH',
         entity_id: pl.id,
-        detail: `${pl.purchase_order_number} L${pl.line_number}: PO recv=${received}/${accepted}/${rejected} posted receipts=${rr.r}/${rr.a}/${rr.j}`,
+        detail: `${pl.purchase_order_number} L${pl.line_number}: PO vs posted receipts mismatch`,
       });
     }
 
@@ -218,7 +253,7 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
       mismatches.push({
         kind: 'PO_INVOICE_SUM_MISMATCH',
         entity_id: pl.id,
-        detail: `${pl.purchase_order_number} L${pl.line_number}: po invoiced=${invoiced} posted inv lines=${invFromLines}`,
+        detail: `${pl.purchase_order_number} L${pl.line_number}: invoiced mismatch`,
       });
     }
 
@@ -244,16 +279,19 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
         mismatches.push({
           kind: 'ORPHAN_PO_REQ_LINE',
           entity_id: pl.id,
-          detail: `${pl.purchase_order_number} L${pl.line_number}: missing requisition_line ${pl.requisition_line_id}`,
+          detail: `${pl.purchase_order_number} L${pl.line_number}: missing requisition_line`,
         });
       }
     }
   }
 
-  const poHeaders = await txQuery<{ id: string; purchase_order_number: string; status: PurchaseOrderStatus }>(
-    client,
-    `SELECT id, purchase_order_number, status FROM accounts.purchase_orders`
-  );
+  const poHeaders = await txQuery<{
+    id: string;
+    purchase_order_number: string;
+    status: PurchaseOrderStatus;
+    supplier_id: string;
+    currency_code: string;
+  }>(client, `SELECT id, purchase_order_number, status, supplier_id, currency_code FROM accounts.purchase_orders`);
   for (const po of poHeaders.rows) {
     const lines = poLines.rows
       .filter((l) => l.purchase_order_id === po.id)
@@ -266,6 +304,18 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
         detail: `${po.purchase_order_number}: status=${po.status} expected=${expected}`,
       });
     }
+  }
+
+  const receiptLineEq = await txQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int AS n FROM accounts.purchase_receipt_lines
+     WHERE ROUND(accepted_quantity + rejected_quantity, 3) <> ROUND(received_quantity, 3)`
+  );
+  if ((receiptLineEq.rows[0]?.n ?? 0) > 0) {
+    mismatches.push({
+      kind: 'RECEIPT_ACCEPT_REJECT',
+      detail: `count=${receiptLineEq.rows[0]?.n}`,
+    });
   }
 
   const orphanReceiptLines = await txQuery<{ n: number }>(
@@ -299,11 +349,152 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
     });
   }
 
+  const poInvoices = await txQuery<{
+    id: string;
+    invoice_number: string;
+    status: string;
+    total_amount: string;
+    journal_entry_id: string | null;
+    supplier_account_id: string;
+    supplier_id: string;
+    currency_code: string;
+    purchase_order_id: string | null;
+  }>(
+    client,
+    `SELECT id, invoice_number, status, total_amount::text, journal_entry_id,
+            supplier_account_id, supplier_id, currency_code, purchase_order_id
+     FROM accounts.supplier_invoices
+     WHERE invoice_source = 'PURCHASE_ORDER'`
+  );
+
+  for (const inv of poInvoices.rows) {
+    const lines = await txQuery<{
+      line_total: string;
+      purchase_order_line_id: string | null;
+      expense_gl_account_id: string;
+    }>(
+      client,
+      `SELECT line_total::text, purchase_order_line_id, expense_gl_account_id
+       FROM accounts.supplier_invoice_lines WHERE supplier_invoice_id=$1::uuid`,
+      [inv.id]
+    );
+    if (lines.rows.length) {
+      const sum = sumMoney(lines.rows.map((l) => normalizeMoneyInput(l.line_total)));
+      // Header may include tax/discount differently; compare to stored total when lines exist
+      if (
+        ['POSTED', 'PARTIALLY_PAID', 'PAID', 'DRAFT'].includes(inv.status) &&
+        !moneyEquals(sum, normalizeMoneyInput(inv.total_amount))
+      ) {
+        // Allow if header uses same total as lines (expected for PO invoices)
+        mismatches.push({
+          kind: 'INVOICE_HEADER_LINES_TOTAL',
+          entity_id: inv.id,
+          detail: `${inv.invoice_number}: header=${inv.total_amount} lines=${sum}`,
+        });
+      }
+    }
+
+    if (['POSTED', 'PARTIALLY_PAID', 'PAID'].includes(inv.status)) {
+      if (!inv.journal_entry_id) {
+        mismatches.push({
+          kind: 'INVOICE_MISSING_JOURNAL',
+          entity_id: inv.id,
+          detail: inv.invoice_number,
+        });
+      } else {
+        const je = await txQuery<{ n: number }>(
+          client,
+          `SELECT COUNT(*)::int AS n FROM accounts.journal_entries WHERE id=$1::uuid AND status='POSTED'`,
+          [inv.journal_entry_id]
+        );
+        if ((je.rows[0]?.n ?? 0) === 0) {
+          mismatches.push({
+            kind: 'INVOICE_JOURNAL_NOT_POSTED',
+            entity_id: inv.id,
+            detail: inv.invoice_number,
+          });
+        }
+      }
+      const led = await txQuery<{ n: number }>(
+        client,
+        `SELECT COUNT(*)::int AS n FROM accounts.supplier_ledger_entries
+         WHERE source_id=$1::uuid AND source_type='SUPPLIER_INVOICE' AND entry_type='INVOICE'`,
+        [inv.id]
+      );
+      if ((led.rows[0]?.n ?? 0) < 1) {
+        mismatches.push({
+          kind: 'INVOICE_MISSING_LEDGER',
+          entity_id: inv.id,
+          detail: inv.invoice_number,
+        });
+      }
+    }
+
+    if (inv.purchase_order_id) {
+      const po = poHeaders.rows.find((p) => p.id === inv.purchase_order_id);
+      if (po && po.supplier_id !== inv.supplier_id) {
+        mismatches.push({
+          kind: 'INVOICE_SUPPLIER_MISMATCH',
+          entity_id: inv.id,
+          detail: inv.invoice_number,
+        });
+      }
+      if (po && po.currency_code !== inv.currency_code) {
+        mismatches.push({
+          kind: 'INVOICE_CURRENCY_MISMATCH',
+          entity_id: inv.id,
+          detail: inv.invoice_number,
+        });
+      }
+    }
+
+    if (strict) {
+      for (const l of lines.rows) {
+        if (!l.purchase_order_line_id) {
+          mismatches.push({
+            kind: 'STRICT_MISSING_PO_LINE',
+            entity_id: inv.id,
+            detail: inv.invoice_number,
+          });
+          continue;
+        }
+        const pol = poLines.rows.find((p) => p.id === l.purchase_order_line_id);
+        if (pol && pol.expense_gl_account_id !== l.expense_gl_account_id) {
+          mismatches.push({
+            kind: 'STRICT_GL_MISMATCH',
+            entity_id: inv.id,
+            detail: `${inv.invoice_number}: invoice GL ≠ PO line GL`,
+          });
+        }
+      }
+      if (['POSTED', 'PARTIALLY_PAID', 'PAID'].includes(inv.status) && !inv.journal_entry_id) {
+        mismatches.push({
+          kind: 'STRICT_POSTED_WITHOUT_JOURNAL',
+          entity_id: inv.id,
+          detail: inv.invoice_number,
+        });
+      }
+    }
+  }
+
+  // لا يُسمح بمصادر يومية لوثائق المشتريات التشغيلية قبل الفاتورة
+  const orphanPurchasingJe = await txQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int AS n FROM accounts.journal_entries
+     WHERE source_type IN ('PURCHASE_REQUISITION','PURCHASE_ORDER','PURCHASE_RECEIPT')`
+  );
+  if ((orphanPurchasingJe.rows[0]?.n ?? 0) > 0) {
+    mismatches.push({
+      kind: 'ORPHAN_PURCHASING_JOURNAL',
+      detail: `count=${orphanPurchasingJe.rows[0]?.n}`,
+    });
+  }
+
   const postedReceipts = await txQuery<{ n: number }>(
     client,
     `SELECT COUNT(*)::int AS n FROM accounts.purchase_receipts WHERE status = 'POSTED'`
   );
-  const poInvoices = await txQuery<{ n: number }>(
+  const poInvoicesPosted = await txQuery<{ n: number }>(
     client,
     `SELECT COUNT(*)::int AS n FROM accounts.supplier_invoices
      WHERE invoice_source = 'PURCHASE_ORDER' AND status IN ('POSTED','PARTIALLY_PAID','PAID')`
@@ -316,7 +507,7 @@ export async function verifyPurchasing(client: TxClient): Promise<PurchasingVeri
       requisitions: reqs.rows.length,
       purchase_orders: poHeaders.rows.length,
       receipts_posted: postedReceipts.rows[0]?.n ?? 0,
-      po_invoices_posted: poInvoices.rows[0]?.n ?? 0,
+      po_invoices_posted: poInvoicesPosted.rows[0]?.n ?? 0,
       req_lines: reqLines.rows.length,
       po_lines: poLines.rows.length,
     },

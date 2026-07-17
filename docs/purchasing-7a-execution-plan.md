@@ -1,200 +1,146 @@
-# خطة تنفيذ المشتريات 7.A — خدمات النطاق
+# خطة تنفيذ المشتريات 7.A — الحالة الفعلية
 
 ## النطاق (Scope)
 
-المرحلة **7.A** تغطي دورة مشتريات **غير مخزنية** (خدمات، مواد غير مخزنة، مرشّحات أصول ثابتة) عبر ثلاثة مستندات:
+المرحلة **7.A** تغطي دورة مشتريات **غير مخزنية** عبر:
 
 | المستند | البادئة | الجدول | ترحيل GL |
 |---------|---------|--------|----------|
 | طلب شراء (PRQ) | `PRQ` | `purchase_requisitions` | لا |
 | أمر شراء (POR) | `POR` | `purchase_orders` | لا |
 | محضر استلام (PRC) | `PRC` | `purchase_receipts` | لا |
+| فاتورة مورد من PO | `SINV` | `supplier_invoices` + `supplier_invoice_lines` | نعم عند POST |
 
-**خارج النطاق في 7.A (مؤجّل):**
+**منفّذ بالكامل في 7.A:** الخدمات، APIs، الواجهة `/accounts/purchasing/**`، الطباعة، Seed DEMO، `verify-purchasing`، اختبارات القبول.
 
-- واجهات API وواجهات المستخدم (تُبنى لاحقاً).
-- مطابقة فاتورة المورد مع PO/استلام (7.A — matching في `091`).
-- قيود يومية عند الاستلام أو الفوترة.
-- إدارة مخزون / GRNI / استلام مخزني.
-
-**الملفات المنفّذة:**
-
-- `src/lib/accounts/purchase-requisitions.ts`
-- `src/lib/accounts/purchase-orders.ts`
-- `src/lib/accounts/purchase-receipts.ts`
-- `src/lib/accounts/purchasing-access.ts` (صلاحيات — موجود مسبقاً)
+**مؤجّل (خارج 7.A):** مخزون، FIFO/Average، GRNI، حركة مخزنية، أصول ثابتة كاملة، مناقصات، Multi-currency، دفعات مقدمة، ضريبة شراء متقدمة.
 
 ---
 
-## سير العمل (Workflows)
+## سير العمل والحالات
 
-### 1. طلب الشراء (PRQ)
+### طلب الشراء (PRQ)
 
-```mermaid
-stateDiagram-v2
-  [*] --> DRAFT
-  DRAFT --> SUBMITTED: submit
-  SUBMITTED --> APPROVED: approve
-  SUBMITTED --> REJECTED: reject
-  DRAFT --> CANCELLED: cancel
-  SUBMITTED --> CANCELLED: cancel
-  APPROVED --> CANCELLED: cancel (بلا أوامر)
-  APPROVED --> PARTIALLY_ORDERED: PO جزئي
-  PARTIALLY_ORDERED --> ORDERED: PO كامل
-  APPROVED --> ORDERED: PO كامل
+```
+DRAFT → SUBMITTED → APPROVED | REJECTED
+DRAFT | SUBMITTED → CANCELLED
+APPROVED → PARTIALLY_ORDERED → ORDERED  (مشتق من الكميات)
 ```
 
-- **إنشاء/تعديل:** مسودة فقط؛ السطور تُستبدَل بالكامل عند التعديل.
-- **تقديم:** يتطلب سطراً واحداً على الأقل.
-- **اعتماد/رفض:** من `SUBMITTED` فقط؛ الرفض يتطلب سبباً.
-- **إلغاء:** من `DRAFT` / `SUBMITTED` / `APPROVED` (إذا لم يُنشأ PO بعد).
-- **حالات الكمية:** بعد إنشاء PO تُشتق `PARTIALLY_ORDERED` أو `ORDERED` تلقائياً.
+- العودة `SUBMITTED → DRAFT` **غير مدعومة**.
+- `REJECTED → APPROVED` مباشرة **ممنوع**.
+- التعديل المالي بعد `SUBMITTED` ممنوع (مسودة فقط).
+- لا إلغاء لطلب مرتبط بـ PO غير ملغى/مرفوض.
 
-### 2. أمر الشراء (POR)
+### أمر الشراء (POR)
 
-```mermaid
-stateDiagram-v2
-  [*] --> DRAFT
-  DRAFT --> SUBMITTED: submit
-  SUBMITTED --> APPROVED: approve
-  SUBMITTED --> REJECTED: reject
-  DRAFT --> CANCELLED: cancel
-  SUBMITTED --> CANCELLED: cancel
-  APPROVED --> CANCELLED: cancel (بلا استلام)
-  APPROVED --> PARTIALLY_RECEIVED: استلام جزئي
-  PARTIALLY_RECEIVED --> RECEIVED: استلام كامل
-  RECEIVED --> PARTIALLY_INVOICED: فوترة جزئية (لاحقاً)
-  APPROVED --> CLOSED: إغلاق يدوي
+```
+DRAFT → SUBMITTED → APPROVED | REJECTED
+DRAFT | SUBMITTED | APPROVED(بلا استلام) → CANCELLED
+APPROVED → PARTIALLY_RECEIVED → RECEIVED → PARTIALLY_INVOICED → INVOICED
+→ CLOSED (يدوي عند عدم وجود open_receive)
 ```
 
-- **إنشاء مباشر:** سطور مع `expense_gl_account_id` إلزامي.
-- **من طلب:** يربط `requisition_line_id` ويزيد `ordered_quantity` على الطلب.
-- **اعتماد:** المورد `ACTIVE` فقط؛ حساب المورد ليس `CLOSED`.
-- **إلغاء/رفض:** يعكس كميات الطلب المرتبطة إن وُجدت.
+اشتقاق الرأس (`derivePoHeaderStatus`) بعد الاعتماد — الأولوية:
 
-### 3. محضر الاستلام (PRC)
+1. إن كان الرأس DRAFT/SUBMITTED/REJECTED/CANCELLED/CLOSED → يبقى كما هو.
+2. كل السطور النشطة INVOICED/CLOSED → `INVOICED`
+3. أي سطر INVOICED أو PARTIALLY_INVOICED → `PARTIALLY_INVOICED`
+4. كل السطور RECEIVED أو مفوترة → `RECEIVED`
+5. أي PARTIALLY_RECEIVED أو RECEIVED → `PARTIALLY_RECEIVED`
+6. وإلا → `APPROVED`
 
-```mermaid
-stateDiagram-v2
-  [*] --> DRAFT
-  DRAFT --> POSTED: post
-  DRAFT --> VOID: void مسودة
-  POSTED --> VOID: void (سبب مطلوب)
+### محضر الاستلام (PRC)
+
+```
+DRAFT → POSTED → VOID
 ```
 
-- **ترحيل:** يحدّث كميات PO (مستلم/مقبول/مرفوض) ويشتق حالات السطور والرأس.
-- **إبطال:** يعكس الكميات؛ يُمنع إذا `invoiced_quantity > accepted_quantity` بعد العكس.
+DRAFT لا يؤثر على كميات PO. POST/VOID داخل معاملة واحدة مع أقفال.
 
 ---
 
-## معادلات الكميات (Quantity Equations)
+## معادلات الكمية (من الكود)
 
-### سطر طلب الشراء
+### سطر الطلب
 
-| الحقل | القاعدة |
-|-------|---------|
-| `estimated_total` | `ROUND(requested_quantity × estimated_unit_price, 3)` |
-| `ordered_quantity` | `0 ≤ ordered ≤ requested` |
-| **المتبقي للأمر** | `remaining = requested − ordered` |
+- `estimated_total = ROUND(requested × estimated_unit_price, 3)` عبر money helpers
+- `total_estimated_amount = Σ estimated_total`
+- `ordered_quantity_active = Σ PO lines حيث PO ∉ {REJECTED,CANCELLED}`
+- `remaining_order = requested − ordered`
 
-### سطر أمر الشراء
+### سطر الأمر
 
-| الحقل | القاعدة |
-|-------|---------|
-| `line_total` | `ROUND(qty × price, 3) − discount + tax` |
-| `received_quantity` | `≤ ordered − cancelled` |
-| `accepted + rejected` | `= received` |
-| `invoiced_quantity` | `≤ accepted` |
-| **متبقي للاستلام** | `open = ordered − cancelled − received` |
+- `line_total = ROUND(qty×price,3) − discount + tax` (لا سالب)
+- Header: `subtotal=Σ(qty×price)`, `discount=Σdisc`, `tax=Σtax`, `total=Σline_total` و`total > 0`
+- `open_receive = ordered − cancelled − received`
+- `available_to_invoice = accepted − invoiced` (**ليس** received؛ المرفوض غير قابل للفوترة)
 
-### سطر محضر الاستلام
+### سطر الاستلام
 
-| الحقل | القاعدة |
-|-------|---------|
-| `received_quantity` | `> 0` |
-| `accepted + rejected` | `= received` |
-| عند **POST** | يُضاف إلى PO: `received/accepted/rejected` |
-| عند **VOID** | يُطرح من PO؛ يُرفض إذا `invoiced > accepted` بعد العكس |
-
-### اشتقاق حالة سطر PO
-
-1. `open = ordered − cancelled` → إذا `open ≤ 0` → `CANCELLED`
-2. `received = 0` → `OPEN`
-3. `received < open` → `PARTIALLY_RECEIVED`
-4. `invoiced = 0` → `RECEIVED`
-5. `invoiced < accepted` → `PARTIALLY_INVOICED`
-6. وإلا → `INVOICED`
-
-### اشتقاق حالة رأس PO
-
-من حالات السطور النشطة (غير `CANCELLED`): فوترة ← استلام ← `APPROVED`.
+- `received > 0` و `accepted + rejected = received`
+- SERVICE: نفس الكميات العشرية (مثل 0.500 من 1.000)؛ الوحدة نص حر؛ **لا** نموذج نسبة مئوية.
 
 ---
 
-## المطابقة والفوترة (Matching — لاحق)
+## مطابقة الفاتورة (3-way مبسّط)
 
-الهجرة `091` تمهّد:
+PO ↔ Accepted Receipt ↔ Supplier Invoice
 
-- `supplier_invoices.invoice_source` = `MANUAL` | `PURCHASE_ORDER`
-- `supplier_invoice_lines` مع `purchase_order_line_id` / `purchase_receipt_line_id`
-- `purchasing_config.price_tolerance_percent` لتسامح السعر
-
-**حدود 7.A الحالية:** لا ترحيل GL عند الاستلام؛ الترحيل المحاسبي يبقى عند **ترحيل فاتورة المورد** (6.A) في مرحلة matching لاحقة.
-
----
-
-## الحدود المحاسبية (Accounting Boundary)
-
-| الحدث | GL | دفتر مورد |
-|-------|-----|-----------|
-| PRQ submit/approve | لا | لا |
-| PO approve | لا | لا |
-| PRC post | **لا** (7.A) | لا |
-| فاتورة مورد من PO | Dr Expense / Cr Payables | نعم (6.A+) |
-
-- العملة: **IQD** فقط.
-- حساب المصروف: `assertValidExpenseGlAccount` (EXPENSE ترحيلي).
-- السياق المالي: `assertFiscalContextForEntry` على التواريخ.
-- **لا** `journal_entries` في هذه الخدمات.
+- `invoice_source = PURCHASE_ORDER`
+- المورد والعملة من PO؛ GL/Cost Center من سطر PO
+- **فاتورة DRAFT لا تحجز الكمية**؛ التحقق النهائي عند POST تحت الأقفال
+- تسامح السعر (`purchasing_config.price_tolerance_percent`) **متماثل** (زيادة ونقصان)
+- الافتراضي 0%؛ `override_tolerance` يتطلب capability `purchase_invoice_matching.override_tolerance`
 
 ---
 
-## الصلاحيات (Permissions)
+## الحدود المحاسبية
 
-من `purchasing-access.ts`:
-
-| القدرة | الأدوار |
-|--------|---------|
-| عرض PRQ/PO/PRC | Viewer+ |
-| إعداد/تقديم/إلغاء PRQ | Clerk+ |
-| اعتماد/رفض PRQ | Approver+ |
-| PO مباشر + إعداد/تقديم | Clerk+ |
-| اعتماد/رفض PO | Approver+ |
-| إلغاء PO | Admin |
-| ترحيل/إبطال PRC | Admin |
-
-التحقق عبر `assertPurchasingCapability` في طبقة API (لم تُنفَّذ بعد).
+| الحدث | Journal | Supplier Ledger |
+|-------|---------|-----------------|
+| PRQ / PO / Receipt | لا | لا |
+| Supplier Invoice POST | Dr Expense (متعدد) / Cr Payables | INVOICE credit |
+| Invoice VOID | قيد عكسي | عكس + تخفيض invoiced_quantity |
 
 ---
 
-## المخزون المؤجّل (Deferred Inventory)
+## الأقفال
 
-- `purchase_kind` يتضمن `NON_STOCK_ITEM` و`FIXED_ASSET_CANDIDATE` دون ربط بمخزون.
-- الاستلام **إثبات كمي/قبول** على PO فقط؛ لا حركة مخزنية ولا GRNI.
-- مرحلة لاحقة (7.B+): مخزون، أصول ثابتة، GRNI، قيود استلام.
+`acquireAccountingResourceLocks` يرتّب حسب `domain:resourceId` أبجدياً (ثابت عالمياً) ثم `FOR UPDATE`.
 
----
-
-## التزامن والأقفال
-
-- **Optimistic concurrency:** `version` + `updated_at` عبر `assertCashSessionOptimisticConcurrency`.
-- **Advisory locks:** `acquireAccountingResourceLocks` مع `purchaseRequisitionLock` / `purchaseOrderLock` / `purchaseReceiptLock` وموارد المورد عند الاعتماد.
-- **تسلسل المستندات:** `nextDocumentNumber` + `FOR UPDATE` على `document_sequences`.
+عمليات نموذجية تجمع: Receipt/Order/Lines أو PO/Match/Supplier/GL.
 
 ---
 
-## نقاط اختبار
+## الصلاحيات
 
-- `setPurchaseReceiptPostFaultForTests('after_po_update')` — فشل بعد تحديث PO وقبل `POSTED` على المحضر.
-- عكس كميات الطلب عند إلغاء/رفض PO المرتبط.
-- منع void محضر إذا الفوترة تتجاوز المقبول بعد العكس.
+`purchasing-access.ts` — Viewer عرض؛ Clerk إعداد؛ Approver موافقات؛ Admin ترحيل/إبطال/تجاوز تسامح. بدون username override.
+
+---
+
+## التحقق
+
+```
+npm run accounts:verify-purchasing
+npm run accounts:verify-purchasing -- --strict
+```
+
+Strict يفشل أيضاً عند: سطور فاتورة بلا PO line، اختلاف GL عن سطر الأمر، فاتورة مرحّلة بلا قيد.
+
+---
+
+## الواجهة
+
+- `/accounts/purchasing` (لوحة)
+- `/accounts/purchasing/requisitions|orders|receipts|matching`
+- طباعة: `.../[id]/print`
+- ConfirmDialog موحّد (لا `window.confirm`)
+
+---
+
+## Seed / اختبارات
+
+- `npm run seed:accounts-demo` (idempotent؛ يشمل purchasing DEMO)
+- `npm run test:purchasing`
+- `npm run accounts:verify-purchasing`

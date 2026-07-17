@@ -107,6 +107,13 @@ function moneyNonNeg(v: unknown): string {
   }
 }
 
+/**
+ * سياسة الكمية للفوترة (7.A):
+ * available_to_invoice = accepted_quantity − invoiced_quantity
+ * - يستخدم المقبول فقط (لا received ولا rejected).
+ * - invoiced_quantity يحدَّث فقط عند POST فاتورة (وليس DRAFT).
+ * - فاتورة DRAFT لا تحجز الكمية؛ POST يعيد التحقق تحت الأقفال.
+ */
 function availableToInvoice(line: PurchaseOrderLineRow): string {
   const acc = normalizeMoneyInput(line.accepted_quantity);
   const inv = normalizeMoneyInput(line.invoiced_quantity);
@@ -124,6 +131,14 @@ function assertPoInvoiceable(po: PurchaseOrderRow): void {
   }
 }
 
+/**
+ * تسامح السعر متماثل: الزيادة والنقصان يخضعان لنفس النسبة.
+ * عند tolerance=0 يُقبل التطابق التام فقط.
+ */
+/**
+ * تسامح السعر متماثل (symmetric): يُقاس الفرق المطلق |invoice − po| مقابل po × tolerance%،
+ * بصرف النظر عن اتجاه الفرق (سعر الفاتورة أعلى أو أقل من سعر أمر الشراء) — لا معاملة تفضيلية للانخفاض.
+ */
 export function isPriceWithinTolerance(
   poUnitPrice: string,
   invoiceUnitPrice: string,
@@ -199,7 +214,7 @@ export function serializeSupplierInvoiceLine(r: SupplierInvoiceLineRow) {
   };
 }
 
-let __matchPostFault: null | 'after_po_update' = null;
+let __matchPostFault: null | 'after_first_po_line' | 'after_po_update' = null;
 export function setPurchaseInvoiceMatchPostFaultForTests(v: typeof __matchPostFault): void {
   __matchPostFault = v;
 }
@@ -214,6 +229,15 @@ async function loadPoInvoiceLines(client: TxClient, invoiceId: string): Promise<
   return r.rows;
 }
 
+/**
+ * سياسة الحجز (reservation policy) — مهم:
+ * فواتير DRAFT لا تحجز/تخصم أي كمية من سطر أمر الشراء (invoiced_quantity لا يتغير عند الإنشاء).
+ * فقط POSTED (ثم PARTIALLY_PAID/PAID) تُحتسب ضمن invoiced_quantity — عبر هذه الدالة التي
+ * تُستدعى فقط من مسار ترحيل الفاتورة (postSupplierInvoice)، وليس من createSupplierInvoiceFromPurchaseOrder.
+ * لذلك يمكن إنشاء عدّة فواتير DRAFT على نفس الكمية المتاحة، وعند POST يُعاد فرض التحقق من
+ * الكمية المتاحة (available_to_invoice) تحت الأقفال (acquireAccountingResourceLocks) — فينجح أول POST فقط
+ * إذا كانت الكمية المجمّعة تتجاوز المتاح.
+ */
 export async function applyPurchaseOrderInvoicePostQuantities(
   client: TxClient,
   invoiceId: string
@@ -236,6 +260,7 @@ export async function applyPurchaseOrderInvoicePostQuantities(
     ...lines.map((l) => purchaseOrderLineLock(l.purchase_order_line_id!)),
   ]);
 
+  let lineIndex = 0;
   for (const il of lines) {
     if (!il.purchase_order_line_id) continue;
     const poLine = await loadPurchaseOrderLine(client, il.purchase_order_line_id, true);
@@ -255,6 +280,10 @@ export async function applyPurchaseOrderInvoicePostQuantities(
       `UPDATE accounts.purchase_order_lines SET invoiced_quantity=$2::numeric, updated_at=NOW() WHERE id=$1::uuid`,
       [poLine.id, newInv]
     );
+    lineIndex += 1;
+    if (lineIndex === 1 && __matchPostFault === 'after_first_po_line') {
+      throw new Error('FAULT_AFTER_FIRST_PO_LINE');
+    }
   }
 
   await refreshPurchaseOrderQuantitiesStatus(client, poId);

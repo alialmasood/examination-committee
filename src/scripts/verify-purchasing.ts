@@ -1,14 +1,16 @@
 /**
- * npm run accounts:verify-purchasing
+ * npm run accounts:verify-purchasing [-- --strict]
  */
 import { closePool } from '../lib/db';
 import { verifyPurchasing } from '../lib/accounts/verify-purchasing';
 import { withTransaction } from '../lib/accounts/with-transaction';
 
 async function main(): Promise<void> {
-  const result = await withTransaction((client) => verifyPurchasing(client));
+  const strict = process.argv.includes('--strict');
+  const result = await withTransaction((client) => verifyPurchasing(client, { strict }));
 
   console.log('===== تحقق المشتريات (Purchasing 7.A) =====');
+  console.log(`mode: ${strict ? 'strict' : 'normal'}`);
   console.log(`ok: ${result.ok}`);
   console.log('الملخص:', JSON.stringify(result.summary, null, 2));
   if (result.mismatches.length) {

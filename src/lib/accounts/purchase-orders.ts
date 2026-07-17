@@ -248,15 +248,42 @@ async function seq(c: TxClient, yearId: string) {
   ).formatted;
 }
 
+/**
+ * يفرض أن المورد وحسابه صالحان لعملية على أمر الشراء (إنشاء أو اعتماد).
+ * SUSPENDED/CLOSED/غير ACTIVE على المورد أو الحساب يمنعان العملية — لا يقتصر المنع على الاعتماد فقط.
+ */
+function assertSupplierUsableForPo(
+  supplier: { id: string; status: string },
+  account: { supplier_id: string; status: string },
+  actionAr: 'إنشاء' | 'اعتماد'
+) {
+  if (supplier.status === 'CLOSED') throw new AccountsHttpError(`لا يمكن ${actionAr} أمر لمورد مغلق`, 409);
+  if (supplier.status === 'SUSPENDED') throw new AccountsHttpError(`لا يمكن ${actionAr} أمر لمورد معلّق`, 409);
+  if (supplier.status !== 'ACTIVE') throw new AccountsHttpError('حالة المورد لا تسمح بهذا الإجراء على أمر الشراء', 409);
+  if (account.status === 'CLOSED') throw new AccountsHttpError(`لا يمكن ${actionAr} أمر على حساب مورد مغلق`, 409);
+  if (account.status === 'SUSPENDED') throw new AccountsHttpError(`لا يمكن ${actionAr} أمر على حساب مورد معلّق`, 409);
+  if (account.supplier_id !== supplier.id) throw new AccountsHttpError('حساب المورد لا يطابق المورد', 409);
+}
+
+async function assertSupplierForPoCreate(c: TxClient, supplierId: string, accountId: string) {
+  const supplier = await loadSupplier(c, supplierId);
+  const account = await loadSupplierAccount(c, accountId);
+  assertSupplierUsableForPo(supplier, account, 'إنشاء');
+  return { supplier, account };
+}
+
 async function assertSupplierForPoApprove(c: TxClient, supplierId: string, accountId: string) {
   const supplier = await loadSupplier(c, supplierId, true);
-  if (supplier.status === 'CLOSED') throw new AccountsHttpError('لا يمكن اعتماد أمر لمورد مغلق', 409);
-  if (supplier.status === 'SUSPENDED') throw new AccountsHttpError('لا يمكن اعتماد أمر لمورد معلّق', 409);
-  if (supplier.status !== 'ACTIVE') throw new AccountsHttpError('حالة المورد لا تسمح باعتماد أمر الشراء', 409);
   const account = await loadSupplierAccount(c, accountId, true);
-  if (account.status === 'CLOSED') throw new AccountsHttpError('لا يمكن اعتماد أمر على حساب مورد مغلق', 409);
-  if (account.supplier_id !== supplierId) throw new AccountsHttpError('حساب المورد لا يطابق المورد', 409);
+  assertSupplierUsableForPo(supplier, account, 'اعتماد');
   return { supplier, account };
+}
+
+/** يتحقق أن عملة حساب المورد IQD (المرحلة 7.A تدعم IQD فقط) — دفاعي إضافةً إلى فرض العملة عند الإنشاء */
+function assertAccountIsIqd(account: { currency_code: string }) {
+  if (account.currency_code !== 'IQD') {
+    throw new AccountsHttpError('حساب المورد ليس بعملة IQD — لا يمكن استخدامه في أمر شراء', 400);
+  }
 }
 
 export function derivePoLineStatus(line: {
@@ -364,9 +391,19 @@ async function insertLines(c: TxClient, poId: string, lines: Awaited<ReturnType<
   }
 }
 
+/**
+ * إجماليات رأس أمر الشراء من السطور:
+ * subtotal = Σ roundProduct(qty, price) — قبل الخصم والضريبة.
+ * discount = Σ discount_amount · tax = Σ tax_amount · total = Σ line_total.
+ * يفرض total > 0 (moneyIsPositive) — يُستدعى من الإنشاء والتعديل؛ الاعتماد يعيد الفرض على الصف المخزَّن.
+ */
 function headerAmounts(lines: Awaited<ReturnType<typeof parseDirectLines>>) {
-  const subtotal = sumMoney(lines.map((l) => l.line_total));
-  return { subtotal, discount: '0.000', tax: '0.000', total: subtotal };
+  const subtotal = sumMoney(lines.map((l) => roundProduct(l.ordered_quantity, l.unit_price)));
+  const discount = sumMoney(lines.map((l) => l.discount_amount));
+  const tax = sumMoney(lines.map((l) => l.tax_amount));
+  const total = sumMoney(lines.map((l) => l.line_total));
+  if (!moneyIsPositive(total)) throw new AccountsHttpError('إجمالي أمر الشراء يجب أن يكون أكبر من صفر', 400);
+  return { subtotal, discount, tax, total };
 }
 
 async function replacePoLines(c: TxClient, poId: string, lines: Awaited<ReturnType<typeof parseDirectLines>>) {
@@ -534,8 +571,9 @@ export async function createPurchaseOrder(
 ) {
   const accountId = String(input.supplier_account_id ?? '').trim();
   if (!accountId) throw new AccountsHttpError('حساب المورد مطلوب', 400);
-  const account = await loadSupplierAccount(c, accountId);
-  const supplier = await loadSupplier(c, account.supplier_id);
+  const accountPeek = await loadSupplierAccount(c, accountId);
+  const { supplier, account } = await assertSupplierForPoCreate(c, accountPeek.supplier_id, accountId);
+  assertAccountIsIqd(account);
   const date = input.order_date ? pgDateOnly(String(input.order_date)) : pgDateOnly(new Date());
   const f = await fiscal(c, date);
   await assertFiscalContextForEntry(c, { fiscalYearId: f.year_id, fiscalPeriodId: f.period_id, entryDate: date });
@@ -606,6 +644,10 @@ export async function createPurchaseOrderFromRequisition(
   const reqLocked = await loadPurchaseRequisition(c, input.requisitionId, true);
   if (!['APPROVED', 'PARTIALLY_ORDERED'].includes(reqLocked.status))
     throw new AccountsHttpError('يمكن إنشاء أمر شراء من طلب معتمد فقط', 409);
+  const supplierLocked = await loadSupplier(c, account.supplier_id, true);
+  const accountLocked = await loadSupplierAccount(c, accountId, true);
+  assertSupplierUsableForPo(supplierLocked, accountLocked, 'إنشاء');
+  assertAccountIsIqd(accountLocked);
   const reqLines = await listPurchaseRequisitionLines(c, input.requisitionId);
   const reqMap = new Map<string, PurchaseRequisitionLineRow>(reqLines.map((l) => [l.id, l]));
   const parsed: Awaited<ReturnType<typeof parseDirectLines>> = [];
@@ -708,19 +750,25 @@ export async function updatePurchaseOrder(
   const f = await fiscal(c, date);
   await assertFiscalContextForEntry(c, { fiscalYearId: f.year_id, fiscalPeriodId: f.period_id, entryDate: date });
   let subtotal = normalizeMoneyInput(row.subtotal_amount);
+  let discount = normalizeMoneyInput(row.discount_amount);
+  let tax = normalizeMoneyInput(row.tax_amount);
   let total = normalizeMoneyInput(row.total_amount);
   if (p.lines !== undefined) {
     const parsed = await parseDirectLines(c, p.lines);
     const amt = await replacePoLines(c, row.id, parsed);
     subtotal = amt.subtotal;
+    discount = amt.discount;
+    tax = amt.tax;
     total = amt.total;
   }
+  if (!moneyIsPositive(total)) throw new AccountsHttpError('إجمالي أمر الشراء يجب أن يكون أكبر من صفر', 400);
   const u = await txQuery<PurchaseOrderRow>(
     c,
     `UPDATE accounts.purchase_orders SET
        order_date=$2::date,fiscal_year_id=$3::uuid,fiscal_period_id=$4::uuid,
        expected_delivery_date=$5::date,payment_terms_days=$6,delivery_location=$7,description=$8,
-       subtotal_amount=$9::numeric,total_amount=$10::numeric,updated_by=$11::uuid,updated_at=NOW(),version=version+1
+       subtotal_amount=$9::numeric,discount_amount=$10::numeric,tax_amount=$11::numeric,total_amount=$12::numeric,
+       updated_by=$13::uuid,updated_at=NOW(),version=version+1
      WHERE id=$1::uuid RETURNING *`,
     [
       row.id,
@@ -738,6 +786,8 @@ export async function updatePurchaseOrder(
       p.delivery_location === undefined ? row.delivery_location : txt(p.delivery_location, 500),
       p.description === undefined ? row.description : txt(p.description, 4000) ?? row.description,
       subtotal,
+      discount,
+      tax,
       total,
       p.userId,
     ]
@@ -778,6 +828,10 @@ export async function approvePurchaseOrder(
   opt(row, p.version, p.updated_at);
   if (row.status !== 'SUBMITTED') throw new AccountsHttpError('يمكن اعتماد أوامر الشراء المقدّمة فقط', 409);
   await assertSupplierForPoApprove(c, row.supplier_id, row.supplier_account_id);
+  const lines = await listPurchaseOrderLines(c, p.id);
+  if (!lines.length) throw new AccountsHttpError('لا يمكن اعتماد أمر بلا سطور', 409);
+  if (!moneyIsPositive(normalizeMoneyInput(row.total_amount)))
+    throw new AccountsHttpError('لا يمكن اعتماد أمر بإجمالي غير موجب', 409);
   const u = await txQuery<PurchaseOrderRow>(
     c,
     `UPDATE accounts.purchase_orders SET status='APPROVED',approved_by=$2::uuid,approved_at=NOW(),
@@ -831,6 +885,11 @@ export async function cancelPurchaseOrder(
   return u.rows[0]!;
 }
 
+/**
+ * إغلاق يدوي: مسموح فقط عندما لا تبقى كمية مفتوحة للاستلام على أي سطر نشط.
+ * open_receive = ordered − cancelled − received
+ * إن وُجدت كمية مفتوحة يُرفض الإغلاق — استخدم الاستلام أو إلغاء الأمر بدلًا من ذلك.
+ */
 export async function closePurchaseOrder(
   c: TxClient,
   p: { id: string; userId: string; version: unknown; updated_at: unknown }
@@ -840,6 +899,20 @@ export async function closePurchaseOrder(
   opt(row, p.version, p.updated_at);
   if (!['APPROVED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'PARTIALLY_INVOICED', 'INVOICED'].includes(row.status))
     throw new AccountsHttpError('حالة الأمر لا تسمح بالإغلاق', 409);
+  const lines = await listPurchaseOrderLines(c, p.id);
+  for (const l of lines) {
+    if (l.status === 'CANCELLED' || l.status === 'CLOSED') continue;
+    const openRecv =
+      moneyToMillis(normalizeMoneyInput(l.ordered_quantity)) -
+      moneyToMillis(normalizeMoneyInput(l.cancelled_quantity)) -
+      moneyToMillis(normalizeMoneyInput(l.received_quantity));
+    if (openRecv > BigInt(0)) {
+      throw new AccountsHttpError(
+        'لا يمكن إغلاق أمر له كميات مفتوحة للاستلام — أكمل الاستلام أو ألغِ الأمر',
+        409
+      );
+    }
+  }
   const u = await txQuery<PurchaseOrderRow>(
     c,
     `UPDATE accounts.purchase_orders SET status='CLOSED',closed_by=$2::uuid,closed_at=NOW(),
