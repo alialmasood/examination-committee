@@ -14,6 +14,7 @@ import { loadPayrollAssignment } from './payroll-assignments';
 import { loadPayrollComponent } from './payroll-components';
 import {
   PAYROLL_ENUMS,
+  assertComponentAssignmentUnique,
   assertEffectiveRange,
   assertPayrollConcurrency,
   dateStr,
@@ -147,6 +148,15 @@ export async function createPayrollComponentAssignment(
   const from = requiredDate(input.effective_from, 'تاريخ بداية السريان');
   const to = optionalDate(input.effective_to, 'تاريخ نهاية السريان');
   assertEffectiveRange(from, to);
+
+  // فحص خدمي مسبق للتكرار (409 نظيف) — القيد الفريد في القاعدة يبقى الحاسم ضد السباق.
+  await assertComponentAssignmentUnique(client, {
+    personId,
+    componentId,
+    contractId,
+    assignmentId,
+    effectiveFrom: from,
+  });
 
   const r = await txQuery<PayrollComponentAssignmentRow>(
     client,

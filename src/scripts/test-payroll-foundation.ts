@@ -10,7 +10,8 @@
  */
 import bcrypt from 'bcrypt';
 import { closePool, query } from '../lib/db';
-import { AccountsHttpError } from '../lib/accounts/auth';
+import { AccountsHttpError, mapPgError } from '../lib/accounts/auth';
+import { writeFinancialAudit } from '../lib/accounts/audit';
 import { grantAccountsAdminRole } from '../lib/accounts/accounts-access';
 import {
   ACCOUNTS_APPROVER_ROLE_CODE,
@@ -26,6 +27,7 @@ import {
 import {
   createPayrollPerson,
   loadPayrollPerson,
+  serializePayrollPerson,
   serializePayrollPersonListItem,
   setPayrollPersonStatus,
   updatePayrollPerson,
@@ -210,7 +212,7 @@ async function main() {
     assert(s.status === 'SUSPENDED', 'موقوف');
     const a = await withTransaction((c) => setPayrollPersonStatus(c, { id: s.id, userId, version: s.version, updated_at: s.updated_at, target: 'ACTIVE' }));
     assert(a.status === 'ACTIVE', 'مُفعّل');
-    const t = await withTransaction((c) => setPayrollPersonStatus(c, { id: a.id, userId, version: a.version, updated_at: a.updated_at, target: 'TERMINATED' }));
+    const t = await withTransaction((c) => setPayrollPersonStatus(c, { id: a.id, userId, version: a.version, updated_at: a.updated_at, target: 'TERMINATED', reason: 'إنهاء خدمة اختبار' }));
     assert(t.status === 'TERMINATED', 'منتهٍ');
     // منتهٍ نهائي: لا انتقال منه
     await throwsHttp(() => withTransaction((c) => setPayrollPersonStatus(c, { id: t.id, userId, version: t.version, updated_at: t.updated_at, target: 'ACTIVE' })), 409);
@@ -269,7 +271,7 @@ async function main() {
     const active = await activateContract(c);
     const susp = await withTransaction((cl) => transitionPayrollContract(cl, { id: active.id, userId, version: active.version, updated_at: active.updated_at, action: 'suspend' }));
     assert(susp.status === 'SUSPENDED', 'موقوف');
-    const term = await withTransaction((cl) => transitionPayrollContract(cl, { id: susp.id, userId, version: susp.version, updated_at: susp.updated_at, action: 'terminate' }));
+    const term = await withTransaction((cl) => transitionPayrollContract(cl, { id: susp.id, userId, version: susp.version, updated_at: susp.updated_at, action: 'terminate', reason: 'إنهاء عقد اختبار' }));
     assert(term.status === 'TERMINATED', 'منتهٍ');
   });
 
@@ -532,6 +534,145 @@ async function main() {
     assert(r.strict === true, 'العلم strict مفعّل');
     // في strict قد تُرقّى التحذيرات/غير المفسّر إلى فشل حسب بيانات البيئة — نتحقق من الاتساق فقط
     assert(r.mismatches.length === 0, 'لا فروق سلامة حتى في الصارم');
+  });
+
+  // ═══ تقوية القبول النهائية (H1/H2/H3) ═════════════════════════════
+  // ── H1: قيد version >= 1 على مستوى القاعدة (SQL مباشر) ──
+  await it('48) SQL مباشر: version=0 مرفوض بقيد القاعدة', async () => {
+    const p = await mkPerson();
+    let blocked = false;
+    try { await query(`UPDATE accounts.payroll_people SET version=0 WHERE id=$1::uuid`, [p.id]); }
+    catch { blocked = true; }
+    assert(blocked, 'يجب أن يرفض CHECK قيمة version=0');
+  });
+
+  await it('49) SQL مباشر: version سالب مرفوض بقيد القاعدة', async () => {
+    const p = await mkPerson();
+    let blocked = false;
+    try { await query(`UPDATE accounts.payroll_contracts SET version=-1 WHERE id=$1::uuid`, [(await mkContract(p.id)).id]); }
+    catch { blocked = true; }
+    assert(blocked, 'يجب أن يرفض CHECK قيمة version سالبة');
+  });
+
+  await it('50) SQL مباشر: INSERT بقيمة version=0 مرفوض', async () => {
+    let blocked = false;
+    try {
+      await query(
+        `INSERT INTO accounts.payroll_calendars (code, name_ar, calendar_type, effective_from, version, created_by)
+         VALUES ($1,'تقويم اختبار','MONTHLY',$2,0,$3)`,
+        [uniq('PYCAL', suffix), START, userId]
+      );
+    } catch { blocked = true; }
+    assert(blocked, 'يجب أن يرفض CHECK إدراج version=0');
+  });
+
+  // ── H2: سبب إلزامي للأفعال الحساسة ──
+  await it('51) إنهاء الشخص بلا سبب → 400', async () => {
+    const p = await mkPerson();
+    await throwsHttp(() => withTransaction((c) => setPayrollPersonStatus(c, { id: p.id, userId, version: p.version, updated_at: p.updated_at, target: 'TERMINATED' })), 400);
+  });
+
+  await it('52) إنهاء الشخص بسبب من مسافات فقط → 400', async () => {
+    const p = await mkPerson();
+    await throwsHttp(() => withTransaction((c) => setPayrollPersonStatus(c, { id: p.id, userId, version: p.version, updated_at: p.updated_at, target: 'TERMINATED', reason: '   ' })), 400);
+  });
+
+  await it('53) إنهاء العقد بلا سبب → 400', async () => {
+    const p = await mkPerson();
+    const c = await mkContract(p.id);
+    const active = await activateContract(c);
+    await throwsHttp(() => withTransaction((cl) => transitionPayrollContract(cl, { id: active.id, userId, version: active.version, updated_at: active.updated_at, action: 'terminate' })), 400);
+  });
+
+  await it('54) إلغاء العقد بلا سبب → 400', async () => {
+    const p = await mkPerson();
+    const c = await mkContract(p.id); // DRAFT يقبل cancel
+    await throwsHttp(() => withTransaction((cl) => transitionPayrollContract(cl, { id: c.id, userId, version: c.version, updated_at: c.updated_at, action: 'cancel' })), 400);
+  });
+
+  await it('55) إلغاء العقد بمسافات فقط → 400', async () => {
+    const p = await mkPerson();
+    const c = await mkContract(p.id);
+    await throwsHttp(() => withTransaction((cl) => transitionPayrollContract(cl, { id: c.id, userId, version: c.version, updated_at: c.updated_at, action: 'cancel', reason: '\t \n' })), 400);
+  });
+
+  await it('56) إنهاء الشخص بسبب صالح → ينجح ويُسجَّل السبب في التدقيق بلا تسريب', async () => {
+    const p = await mkPerson();
+    const reason = '  إنهاء   تجريبي   للخدمة  ';
+    const normalized = 'إنهاء تجريبي للخدمة';
+    const auditId = await withTransaction(async (c) => {
+      const updated = await setPayrollPersonStatus(c, { id: p.id, userId, version: p.version, updated_at: p.updated_at, target: 'TERMINATED', reason });
+      assert(updated.status === 'TERMINATED', 'أصبح منتهياً');
+      // نحاكي نمط الـ route تماماً (السبب في metadata والوصف — لا request body خام)
+      await writeFinancialAudit(c, {
+        userId, action: 'payroll_person.terminated', entityType: 'payroll_person', entityId: p.id,
+        newValues: { ...serializePayrollPerson(updated), transition_reason: normalized },
+        description: `إنهاء خدمة شخص رواتب ${updated.person_code} — السبب: ${normalized}`,
+      });
+      return p.id;
+    });
+    const log = await query(
+      `SELECT new_values, description FROM accounts.financial_audit_log
+       WHERE entity_id=$1::uuid AND action='payroll_person.terminated' ORDER BY created_at DESC LIMIT 1`,
+      [auditId]
+    );
+    const nv = log.rows[0].new_values as Record<string, unknown>;
+    assert(nv.transition_reason === normalized, 'السبب المطبّع محفوظ في التدقيق');
+    assert(String(log.rows[0].description).includes(normalized), 'السبب داخل الوصف');
+    // لا تسريب: لا مفاتيح خام غير متوقعة (السبب المطبّع فقط + حقول الكيان المسلسلة)
+    assert(!('password' in nv) && !('raw_body' in nv) && !('secret' in nv), 'لا تسريب حقول خام');
+  });
+
+  // ── H3: منع تكرار إسناد المكوّن (409 نظيف) + سباق ──
+  await it('57) تكرار إسناد person-level (contract/assignment = NULL) → 409', async () => {
+    const p = await mkPerson();
+    const cmp = await mkComponent();
+    await withTransaction((cl) => createPayrollComponentAssignment(cl, { payroll_person_id: p.id, payroll_component_id: cmp.id, amount: '10', effective_from: START, created_by: userId }));
+    await throwsHttp(() => withTransaction((cl) => createPayrollComponentAssignment(cl, { payroll_person_id: p.id, payroll_component_id: cmp.id, amount: '20', effective_from: START, created_by: userId })), 409);
+  });
+
+  await it('58) تكرار إسناد contract-level → 409', async () => {
+    const p = await mkPerson();
+    const c = await mkContract(p.id);
+    const cmp = await mkComponent();
+    await withTransaction((cl) => createPayrollComponentAssignment(cl, { payroll_person_id: p.id, payroll_component_id: cmp.id, payroll_contract_id: c.id, amount: '10', effective_from: START, created_by: userId }));
+    await throwsHttp(() => withTransaction((cl) => createPayrollComponentAssignment(cl, { payroll_person_id: p.id, payroll_component_id: cmp.id, payroll_contract_id: c.id, amount: '20', effective_from: START, created_by: userId })), 409);
+  });
+
+  await it('59) تكرار إسناد assignment-level → 409', async () => {
+    const p = await mkPerson();
+    const a = await withTransaction((cl) => createPayrollAssignment(cl, { payroll_person_id: p.id, assignment_type: 'GENERAL_ASSIGNMENT', title_ar: 'ت', effective_from: START, created_by: userId }));
+    const cmp = await mkComponent();
+    await withTransaction((cl) => createPayrollComponentAssignment(cl, { payroll_person_id: p.id, payroll_component_id: cmp.id, payroll_assignment_id: a.id, amount: '10', effective_from: START, created_by: userId }));
+    await throwsHttp(() => withTransaction((cl) => createPayrollComponentAssignment(cl, { payroll_person_id: p.id, payroll_component_id: cmp.id, payroll_assignment_id: a.id, amount: '20', effective_from: START, created_by: userId })), 409);
+  });
+
+  await it('60) نفس المكوّن بتاريخ بداية مختلف → مسموح', async () => {
+    const p = await mkPerson();
+    const cmp = await mkComponent();
+    await withTransaction((cl) => createPayrollComponentAssignment(cl, { payroll_person_id: p.id, payroll_component_id: cmp.id, amount: '10', effective_from: START, created_by: userId }));
+    const second = await withTransaction((cl) => createPayrollComponentAssignment(cl, { payroll_person_id: p.id, payroll_component_id: cmp.id, amount: '10', effective_from: '2026-06-01', created_by: userId }));
+    assert(second.id, 'إسناد بتاريخ مختلف مقبول');
+  });
+
+  await it('61) سباق تكرار متزامن → واحد ينجح والآخر 409 نظيف بلا خطأ PG خام', async () => {
+    const p = await mkPerson();
+    const cmp = await mkComponent();
+    const mk = () => withTransaction((cl) => createPayrollComponentAssignment(cl, { payroll_person_id: p.id, payroll_component_id: cmp.id, amount: '10', effective_from: START, created_by: userId }));
+    const results = await Promise.allSettled([mk(), mk()]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled').length;
+    assert(fulfilled === 1, `المتوقع نجاح واحد فقط، حصل ${fulfilled}`);
+    const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    // سواء فاز الفحص المسبق (AccountsHttpError 409) أو قيد القاعدة (23505) — يجب أن يعطي الـ API 409 نظيفاً
+    let status = 0; let message = '';
+    if (rejected.reason instanceof AccountsHttpError) {
+      status = rejected.reason.status; message = rejected.reason.message;
+    } else {
+      const res = mapPgError(rejected.reason);
+      status = res.status; message = JSON.stringify(await res.json());
+    }
+    assert(status === 409, `المتوقع 409، حصل ${status}`);
+    assert(!/uq_pca|constraint|payroll_component_assignments/i.test(message), 'لا يكشف اسم القيد/الجدول');
   });
 
   console.log(`\n===== النتيجة: ${passCount} ناجح / ${failCount} فاشل =====`);

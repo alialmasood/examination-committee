@@ -128,7 +128,7 @@ Labels في UI فقط.
 ```bash
 npx tsc --noEmit                                    # لا أخطاء
 npx eslint <ملفات payroll>                          # 0 errors / 0 warnings
-npm run test:payroll-foundation                     # 47/47
+npm run test:payroll-foundation                     # 61/61 (بعد التقوية)
 npm run accounts:verify-payroll-foundation          # ok
 npm run accounts:verify-payroll-foundation:strict   # ok
 npm run seed:accounts-payroll-demo                  # مرتين — idempotent
@@ -158,3 +158,39 @@ git diff --check                                    # نظيف
 - `CUSTOM_FORMULA` محجوز فقط ويُرفض فعلياً.
 - لا FK إلى HR؛ `hr_person_id` مرجع منطقي فقط.
 - لا Payroll Runs/Batch/Formula tables في هذه الحزمة.
+
+## 16. Final Acceptance Hardening (بعد مراجعة القبول — لا يغيّر المعمارية)
+
+إصلاحات دفاعية محدودة (L1–L3) بعد اعتماد نتيجة المراجعة PASS، دون بدء 9.A.2.
+
+### H1 — Version DB Constraints
+- أُضيف `CHECK (version >= 1)` مسمّى لكل جداول الرواتب السبعة داخل نفس Migration `094`
+  (`ck_payroll_calendars_version`, `ck_payroll_people_version`, `ck_payroll_contracts_version`,
+  `ck_payroll_assignments_version`, `ck_payroll_components_version`, `ck_pca_version`,
+  `ck_payroll_account_mappings_version`) — inline للجداول الجديدة + كتلة `DO` idempotent
+  تُضيف القيد للجداول القائمة مسبقاً. `DEFAULT version = 1` كما هو. لم تُنشأ Migration 095.
+- `Verify` يفحص `version < 1` كخط دفاع إضافي (بالإضافة لقيد القاعدة).
+- اختبارات: SQL مباشر بـ `version = 0` أو سالب (UPDATE/INSERT) يُرفض بقيد القاعدة.
+
+### H2 — Mandatory Transition Reasons
+- سبب إلزامي مطبّع (`requiredReason`: trim + توحيد المسافات + رفض الفارغ/المسافات + حد 500)
+  في: إنهاء الشخص، وإنهاء العقد، وإلغاء العقد.
+- يُفرض في طبقتي API والخدمة معاً (لا يمكن تجاوزه عبر الواجهة). يعيد 400 عربية عند الغياب.
+- يُسجَّل في التدقيق فقط: `description` + `new_values.transition_reason` — بلا عمود جديد وبلا
+  request body خام. `ConfirmDialog` تطلب السبب وتعطّل التأكيد قبل إدخاله.
+- اختبارات: إنهاء/إلغاء بلا سبب أو بمسافات فقط → 400؛ سبب صالح → نجاح + ظهوره في التدقيق بلا تسريب.
+
+### H3 — Duplicate Component Assignment Handling
+- فحص خدمي مسبق (`assertComponentAssignmentUnique`) بنفس دلالة الفهرس
+  `uq_pca_person_component_source_period` (COALESCE للمصادر NULL) → 409 عربية نظيفة بلا كشف اسم القيد.
+- القيد الفريد في القاعدة يبقى الحاسم ضد السباق؛ الفحص المسبق ليس حماية تزامن.
+- اختبارات: تكرار person/contract/assignment-level → 409؛ `effective_from` مختلف → مسموح؛
+  سباق متزامن → واحد ينجح والآخر 409 نظيف (عبر الفحص المسبق أو `mapPgError`).
+
+### الاختبارات المضافة
+- من 47 إلى **61 اختباراً** (أُضيف 48–61: قيود version، إلزام السبب، تكرار الإسناد والسباق).
+- حُدِّث الاختباران 4 و11 لتمرير سبب عند الإنهاء (تطبيقاً للسياسة الجديدة، لا لإخفاء خطأ).
+
+### L4 — لم يُنفَّذ (عمداً)
+لم يُغيَّر التصنيف العام لأخطاء `23503` (FK) في `mapPgError` المشترك، بناءً على توجيه المرحلة
+بعدم لمس helper مشترك خارج نطاق التقوية. يبقى `23503 → 409` كما كان.

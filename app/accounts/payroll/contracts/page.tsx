@@ -63,6 +63,7 @@ export default function ContractsPage() {
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState('');
   const [confirm, setConfirm] = useState<{ c: any; path: string; title: string } | null>(null);
+  const [reason, setReason] = useState('');
 
   const personName = (pid: string) => people.find((p) => p.id === pid)?.full_name_ar ?? pid;
 
@@ -146,17 +147,23 @@ export default function ContractsPage() {
     } finally { setBusy(false); }
   }
 
+  const needsReason = confirm?.path === 'terminate' || confirm?.path === 'cancel';
+
   async function runAction() {
     if (!confirm) return;
+    if (needsReason && !reason.trim()) return;
     setBusy(true);
     try {
+      const payload: Record<string, unknown> = { version: confirm.c.version, updated_at: confirm.c.updated_at };
+      if (needsReason) payload.reason = reason.trim();
       const r = await fetchJson(`${API.contracts}/${confirm.c.id}/${confirm.path}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ version: confirm.c.version, updated_at: confirm.c.updated_at }),
+        body: JSON.stringify(payload),
       });
       if (!r.success) setError(errMsg(r));
       setConfirm(null);
+      setReason('');
       await load();
     } finally { setBusy(false); }
   }
@@ -302,7 +309,10 @@ export default function ContractsPage() {
         title={confirm?.title ?? ''}
         message={`هل أنت متأكد من تنفيذ هذا الإجراء على العقد «${confirm?.c?.contract_number ?? ''}»؟`}
         busy={busy}
-        onCancel={() => setConfirm(null)}
+        reasonRequired={needsReason}
+        reason={reason}
+        onReasonChange={setReason}
+        onCancel={() => { setConfirm(null); setReason(''); }}
         onConfirm={() => void runAction()}
       />
     </main>

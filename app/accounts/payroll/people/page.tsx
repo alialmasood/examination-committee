@@ -48,6 +48,7 @@ export default function PeoplePage() {
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState('');
   const [confirm, setConfirm] = useState<{ p: any; target: string; path: string; title: string } | null>(null);
+  const [reason, setReason] = useState('');
 
   const load = async () => {
     const sp = new URLSearchParams({ page_size: '200' });
@@ -144,19 +145,25 @@ export default function PeoplePage() {
     }
   }
 
+  const needsReason = confirm?.path === 'terminate';
+
   async function runAction() {
     if (!confirm) return;
+    if (needsReason && !reason.trim()) return;
     setBusy(true);
     try {
+      const payload: Record<string, unknown> = { version: confirm.p.version, updated_at: confirm.p.updated_at };
+      if (needsReason) payload.reason = reason.trim();
       const r = await fetchJson(`${API.people}/${confirm.p.id}/${confirm.path}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ version: confirm.p.version, updated_at: confirm.p.updated_at }),
+        body: JSON.stringify(payload),
       });
       if (!r.success) {
         setError(errMsg(r));
       }
       setConfirm(null);
+      setReason('');
       await load();
     } finally {
       setBusy(false);
@@ -320,7 +327,10 @@ export default function PeoplePage() {
         title={confirm?.title ?? ''}
         message={`هل أنت متأكد من تنفيذ هذا الإجراء على «${confirm?.p?.full_name_ar ?? ''}»؟`}
         busy={busy}
-        onCancel={() => setConfirm(null)}
+        reasonRequired={needsReason}
+        reason={reason}
+        onReasonChange={setReason}
+        onCancel={() => { setConfirm(null); setReason(''); }}
         onConfirm={() => void runAction()}
       />
     </main>

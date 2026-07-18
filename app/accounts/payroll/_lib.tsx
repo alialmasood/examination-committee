@@ -195,7 +195,7 @@ export function StatCard({
   );
 }
 
-/** حوار تأكيد بسيط للأفعال الحساسة. */
+/** حوار تأكيد بسيط للأفعال الحساسة. يدعم سبباً إلزامياً (H2). */
 export function ConfirmDialog({
   open,
   title,
@@ -203,6 +203,9 @@ export function ConfirmDialog({
   busy,
   onCancel,
   onConfirm,
+  reasonRequired,
+  reason,
+  onReasonChange,
 }: {
   open: boolean;
   title: string;
@@ -210,16 +213,39 @@ export function ConfirmDialog({
   busy?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  reasonRequired?: boolean;
+  reason?: string;
+  onReasonChange?: (v: string) => void;
 }) {
   if (!open) return null;
+  const reasonEmpty = reasonRequired ? !(reason ?? '').trim() : false;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" dir="rtl">
       <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-5">
         <h3 className="text-lg font-semibold mb-2">{title}</h3>
         <p className="text-sm text-gray-600 mb-4">{message}</p>
+        {reasonRequired && (
+          <div className="mb-4">
+            <label className="block text-sm text-gray-700 mb-1">السبب (إلزامي)</label>
+            <textarea
+              className="w-full border rounded px-3 py-2 text-sm"
+              rows={3}
+              maxLength={500}
+              value={reason ?? ''}
+              disabled={busy}
+              placeholder="اذكر سبب هذا الإجراء…"
+              onChange={(e) => onReasonChange?.(e.target.value)}
+            />
+            {reasonEmpty && <p className="text-xs text-red-600 mt-1">يجب إدخال سبب واضح قبل التأكيد.</p>}
+          </div>
+        )}
         <div className="flex justify-end gap-2">
           <button className="border rounded px-3 py-2 text-sm" disabled={busy} onClick={onCancel}>إلغاء</button>
-          <button className="bg-red-800 text-white rounded px-3 py-2 text-sm" disabled={busy} onClick={onConfirm}>
+          <button
+            className="bg-red-800 text-white rounded px-3 py-2 text-sm disabled:opacity-50"
+            disabled={busy || reasonEmpty}
+            onClick={onConfirm}
+          >
             {busy ? 'جارٍ التنفيذ…' : 'تأكيد'}
           </button>
         </div>

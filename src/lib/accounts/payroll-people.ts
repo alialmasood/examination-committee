@@ -17,6 +17,7 @@ import {
   optionalOneOf,
   payrollCode,
   requiredDate,
+  requiredReason,
   requiredText,
   textOrNull,
 } from './payroll-validation';
@@ -284,8 +285,11 @@ export async function setPayrollPersonStatus(
     version: unknown;
     updated_at: unknown;
     target: 'ACTIVE' | 'SUSPENDED' | 'TERMINATED' | 'INACTIVE';
+    reason?: unknown;
   }
 ): Promise<PayrollPersonRow> {
+  // إنهاء الخدمة فعل حساس — السبب إلزامي (H2). يُسجَّل في Audit فقط.
+  if (p.target === 'TERMINATED') requiredReason(p.reason, 'سبب إنهاء الخدمة');
   await acquirePayrollLocks(client, [payrollPersonLock(p.id)]);
   const row = await loadPayrollPerson(client, p.id, true);
   assertPayrollConcurrency(row, p.version, p.updated_at);

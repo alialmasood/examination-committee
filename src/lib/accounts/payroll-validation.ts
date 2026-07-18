@@ -148,6 +148,49 @@ export function assertPayrollConcurrency(
   });
 }
 
+/**
+ * سبب إلزامي مطبّع للأفعال الحساسة (إنهاء/إلغاء) — H2.
+ * يقلّم المسافات، يوحّد المسافات الداخلية، يرفض النص الفارغ أو المسافات فقط،
+ * ويحدّ الطول. لا يُخزَّن في عمود جديد — يُسجَّل في Audit فقط.
+ */
+export function requiredReason(v: unknown, label = 'سبب الإجراء', max = 500): string {
+  const s = String(v ?? '').trim().replace(/\s+/g, ' ').slice(0, max);
+  if (!s) throw new AccountsHttpError(`${label} مطلوب`, 400);
+  return s;
+}
+
+/**
+ * يمنع تكرار إسناد المكوّن بنفس دلالة الفهرس الفريد
+ * uq_pca_person_component_source_period (COALESCE للمصادر NULL).
+ * فحص خدمي مسبق يعيد 409 نظيفاً؛ القيد في القاعدة يبقى الحاسم ضد السباق.
+ */
+export async function assertComponentAssignmentUnique(
+  client: TxClient,
+  p: {
+    personId: string;
+    componentId: string;
+    contractId: string | null;
+    assignmentId: string | null;
+    effectiveFrom: string;
+  }
+): Promise<void> {
+  const ZERO = '00000000-0000-0000-0000-000000000000';
+  const r = await txQuery<{ id: string }>(
+    client,
+    `SELECT id FROM accounts.payroll_component_assignments
+     WHERE payroll_person_id = $1::uuid
+       AND payroll_component_id = $2::uuid
+       AND effective_from = $3::date
+       AND COALESCE(payroll_contract_id, $4::uuid) = COALESCE($5::uuid, $4::uuid)
+       AND COALESCE(payroll_assignment_id, $4::uuid) = COALESCE($6::uuid, $4::uuid)
+     LIMIT 1`,
+    [p.personId, p.componentId, p.effectiveFrom, ZERO, p.contractId, p.assignmentId]
+  );
+  if (r.rows[0]) {
+    throw new AccountsHttpError('يوجد إسناد مكوّن مكرر لنفس الشخص والمكوّن والمصدر وتاريخ البداية', 409);
+  }
+}
+
 /** يمنع استخدام CUSTOM_FORMULA فعلياً في 9.A (D14 — محجوز فقط) */
 export function rejectCustomFormula(method: string | null | undefined): void {
   if (method === 'CUSTOM_FORMULA') {

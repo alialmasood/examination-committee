@@ -20,6 +20,7 @@ import {
   optionalNonNegativeMoney,
   payrollCode,
   requiredDate,
+  requiredReason,
   textOrNull,
 } from './payroll-validation';
 import type { TxClient } from './with-transaction';
@@ -250,8 +251,13 @@ export async function transitionPayrollContract(
     version: unknown;
     updated_at: unknown;
     action: ContractAction;
+    reason?: unknown;
   }
 ): Promise<PayrollContractRow> {
+  // الإنهاء والإلغاء أفعال حساسة — السبب إلزامي (H2). يُسجَّل في Audit فقط.
+  if (p.action === 'terminate' || p.action === 'cancel') {
+    requiredReason(p.reason, p.action === 'terminate' ? 'سبب إنهاء العقد' : 'سبب إلغاء العقد');
+  }
   const existing = await loadPayrollContract(client, p.id);
   await acquirePayrollLocks(client, [payrollPersonLock(existing.payroll_person_id), payrollContractLock(p.id)]);
   const row = await loadPayrollContract(client, p.id, true);

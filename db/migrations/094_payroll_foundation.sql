@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS accounts.payroll_calendars (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_payroll_calendars_code UNIQUE (code),
   CONSTRAINT ck_payroll_calendars_dates
-    CHECK (effective_to IS NULL OR effective_to >= effective_from)
+    CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  CONSTRAINT ck_payroll_calendars_version CHECK (version >= 1)
 );
 
 CREATE INDEX IF NOT EXISTS idx_payroll_calendars_active
@@ -89,7 +90,8 @@ CREATE TABLE IF NOT EXISTS accounts.payroll_people (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_payroll_people_code UNIQUE (person_code),
   CONSTRAINT ck_payroll_people_dates
-    CHECK (effective_to IS NULL OR effective_to >= effective_from)
+    CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  CONSTRAINT ck_payroll_people_version CHECK (version >= 1)
 );
 
 CREATE INDEX IF NOT EXISTS idx_payroll_people_type
@@ -134,7 +136,8 @@ CREATE TABLE IF NOT EXISTS accounts.payroll_contracts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_payroll_contracts_number UNIQUE (contract_number),
   CONSTRAINT ck_payroll_contracts_dates
-    CHECK (effective_to IS NULL OR effective_to >= effective_from)
+    CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  CONSTRAINT ck_payroll_contracts_version CHECK (version >= 1)
 );
 
 -- فرض عقد ACTIVE أساسي واحد فقط لكل شخص (على مستوى القاعدة)
@@ -180,7 +183,8 @@ CREATE TABLE IF NOT EXISTS accounts.payroll_assignments (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_payroll_assignments_code UNIQUE (assignment_code),
   CONSTRAINT ck_payroll_assignments_dates
-    CHECK (effective_to IS NULL OR effective_to >= effective_from)
+    CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  CONSTRAINT ck_payroll_assignments_version CHECK (version >= 1)
 );
 
 CREATE INDEX IF NOT EXISTS idx_payroll_assignments_person
@@ -237,7 +241,8 @@ CREATE TABLE IF NOT EXISTS accounts.payroll_components (
   CONSTRAINT ck_payroll_components_dates
     CHECK (effective_to IS NULL OR effective_to >= effective_from),
   CONSTRAINT ck_payroll_components_minmax
-    CHECK (minimum_amount IS NULL OR maximum_amount IS NULL OR maximum_amount >= minimum_amount)
+    CHECK (minimum_amount IS NULL OR maximum_amount IS NULL OR maximum_amount >= minimum_amount),
+  CONSTRAINT ck_payroll_components_version CHECK (version >= 1)
 );
 
 CREATE INDEX IF NOT EXISTS idx_payroll_components_type
@@ -283,7 +288,8 @@ CREATE TABLE IF NOT EXISTS accounts.payroll_component_assignments (
     CHECK (effective_to IS NULL OR effective_to >= effective_from),
   -- مصدر واحد فقط: عقد أو تكليف (وليس كليهما)
   CONSTRAINT ck_pca_single_source
-    CHECK (NOT (payroll_contract_id IS NOT NULL AND payroll_assignment_id IS NOT NULL))
+    CHECK (NOT (payroll_contract_id IS NOT NULL AND payroll_assignment_id IS NOT NULL)),
+  CONSTRAINT ck_pca_version CHECK (version >= 1)
 );
 
 -- منع تكرار غير مفسَّر لنفس (الشخص/المكوّن/المصدر/بداية السريان) — D2
@@ -344,7 +350,8 @@ CREATE TABLE IF NOT EXISTS accounts.payroll_account_mappings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_payroll_account_mappings_code UNIQUE (mapping_code),
   CONSTRAINT ck_payroll_account_mappings_dates
-    CHECK (effective_to IS NULL OR effective_to >= effective_from)
+    CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  CONSTRAINT ck_payroll_account_mappings_version CHECK (version >= 1)
 );
 
 CREATE INDEX IF NOT EXISTS idx_payroll_mappings_scope
@@ -357,5 +364,38 @@ CREATE INDEX IF NOT EXISTS idx_payroll_mappings_calendar
   ON accounts.payroll_account_mappings (payroll_calendar_id);
 CREATE INDEX IF NOT EXISTS idx_payroll_mappings_active
   ON accounts.payroll_account_mappings (is_active);
+
+-- ─────────────────────────────────────────────────────────────
+-- خط دفاع version >= 1: يضمن تطبيق القيد على الجداول القائمة مسبقاً
+-- (idempotent — يُضاف فقط إن لم يكن موجوداً؛ الجداول الجديدة تحمله inline).
+-- ─────────────────────────────────────────────────────────────
+DO $$
+DECLARE
+  t TEXT;
+  c TEXT;
+  tables TEXT[] := ARRAY[
+    'payroll_calendars','payroll_people','payroll_contracts','payroll_assignments',
+    'payroll_components','payroll_component_assignments','payroll_account_mappings'
+  ];
+  consts TEXT[] := ARRAY[
+    'ck_payroll_calendars_version','ck_payroll_people_version','ck_payroll_contracts_version',
+    'ck_payroll_assignments_version','ck_payroll_components_version','ck_pca_version',
+    'ck_payroll_account_mappings_version'
+  ];
+  i INT;
+BEGIN
+  FOR i IN 1 .. array_length(tables, 1) LOOP
+    t := tables[i];
+    c := consts[i];
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = c AND conrelid = ('accounts.' || t)::regclass
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE accounts.%I ADD CONSTRAINT %I CHECK (version >= 1)', t, c
+      );
+    END IF;
+  END LOOP;
+END $$;
 
 COMMIT;

@@ -15,9 +15,14 @@
  *  - Mapping/Contract/Component مرتبط بحساب غير Posting أو غير فعّال أو نوع غير مناسب.
  *  - تكرار: person_code / contract_number / assignment_code / component_code / calendar code / mapping_code.
  *  - سجلات orphan (مراجع مفقودة).
- *  - version < 1.
+ *  - version < 1 (H1 — مدعوم أيضاً بقيد CHECK على مستوى القاعدة).
  *  - بيانات مصرفية غير مقنّعة (تحتوي أرقاماً طويلة بلا تقنيع).
  *  - Document Sequence types المطلوبة غير موجودة (تحذير — تُنشأ عند أول ترقيم).
+ *
+ * ملاحظة H2 (سبب الإنهاء/الإلغاء): السياسة مفروضة إلزامياً في طبقتي API والخدمة
+ * (requiredReason) ولا يمكن تجاوزها عبر الواجهة أو الـ API. لا يضيف Verify فحصاً
+ * فاشلاً على سجلات التدقيق القديمة/الاختبارية لأنه لا يمكن تمييز ما قبل تطبيق
+ * السياسة بموثوقية دون عمود تاريخ سياسة — تجنّباً لفشل كاذب (حسب توجيه المرحلة).
  */
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
