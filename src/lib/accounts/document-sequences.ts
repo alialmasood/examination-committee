@@ -32,6 +32,9 @@ export const DOCUMENT_SEQUENCE_DEFAULTS = [
   { document_type: 'ASSET_MOVEMENT', prefix: 'AMV' },
   { document_type: 'DEPRECIATION_RUN', prefix: 'DPR' },
   { document_type: 'ASSET_DISPOSAL', prefix: 'ADS' },
+  { document_type: 'PAYROLL_PERSON', prefix: 'PYP' },
+  { document_type: 'PAYROLL_CONTRACT', prefix: 'PYC' },
+  { document_type: 'PAYROLL_ASSIGNMENT', prefix: 'PYA' },
 ] as const;
 
 export type DocumentType = (typeof DOCUMENT_SEQUENCE_DEFAULTS)[number]['document_type'];

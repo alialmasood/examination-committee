@@ -53,6 +53,13 @@ export type AccountingLockDomain =
   | 'DEPRECIATION_RUN_LINE'
   | 'ASSET_DISPOSAL'
   | 'ASSET_CAPITALIZATION_SOURCE'
+  | 'PAYROLL_PERSON'
+  | 'PAYROLL_CONTRACT'
+  | 'PAYROLL_ASSIGNMENT'
+  | 'PAYROLL_COMPONENT'
+  | 'PAYROLL_COMPONENT_ASSIGNMENT'
+  | 'PAYROLL_MAPPING'
+  | 'PAYROLL_CALENDAR'
   | 'GL_ACCOUNT';
 
 export type AccountingLockResource = {
@@ -247,4 +254,32 @@ export function assetDisposalLock(id: string): AccountingLockResource {
 }
 export function assetCapitalizationSourceLock(id: string): AccountingLockResource {
   return { domain: 'ASSET_CAPITALIZATION_SOURCE', resourceId: id };
+}
+
+/**
+ * أقفال الرواتب (9.A.1).
+ * ترتيب منطقي ثابت: Person → Contract → Assignment → Component → Mapping.
+ * (التنفيذ الفعلي يمرّ عبر acquireAccountingResourceLocks الذي يفرز المفاتيح
+ *  فرزاً حتمياً على مستوى المورد المحاسبي كله، فيمنع Deadlocks عالمياً.)
+ */
+export function payrollPersonLock(id: string): AccountingLockResource {
+  return { domain: 'PAYROLL_PERSON', resourceId: id };
+}
+export function payrollContractLock(id: string): AccountingLockResource {
+  return { domain: 'PAYROLL_CONTRACT', resourceId: id };
+}
+export function payrollAssignmentLock(id: string): AccountingLockResource {
+  return { domain: 'PAYROLL_ASSIGNMENT', resourceId: id };
+}
+export function payrollComponentLock(id: string): AccountingLockResource {
+  return { domain: 'PAYROLL_COMPONENT', resourceId: id };
+}
+export function payrollComponentAssignmentLock(id: string): AccountingLockResource {
+  return { domain: 'PAYROLL_COMPONENT_ASSIGNMENT', resourceId: id };
+}
+export function payrollMappingLock(id: string): AccountingLockResource {
+  return { domain: 'PAYROLL_MAPPING', resourceId: id };
+}
+export function payrollCalendarLock(id: string): AccountingLockResource {
+  return { domain: 'PAYROLL_CALENDAR', resourceId: id };
 }

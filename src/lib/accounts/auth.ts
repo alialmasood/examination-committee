@@ -206,6 +206,30 @@ export function mapPgError(error: unknown): NextResponse {
     if (err.constraint?.includes('uq_journal_entries_source')) {
       return jsonError('يوجد قيد مرحّل مسبقاً لهذا المصدر', 409);
     }
+    if (err.constraint?.includes('uq_payroll_calendars_code')) {
+      return jsonError('رمز التقويم مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_payroll_people_code')) {
+      return jsonError('رمز الشخص مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_payroll_contracts_one_active')) {
+      return jsonError('يوجد عقد أساسي فعّال آخر لهذا الشخص', 409);
+    }
+    if (err.constraint?.includes('uq_payroll_contracts_number')) {
+      return jsonError('رقم العقد مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_payroll_assignments_code')) {
+      return jsonError('رمز التكليف مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_payroll_components_code')) {
+      return jsonError('رمز المكوّن مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_pca_person_component_source_period')) {
+      return jsonError('يوجد إسناد مكوّن مكرر لنفس النطاق والفترة', 409);
+    }
+    if (err.constraint?.includes('uq_payroll_account_mappings_code')) {
+      return jsonError('رمز الخريطة مستخدم مسبقاً', 409);
+    }
     return jsonError('تعارض في البيانات: القيمة مكررة', 409);
   }
 
