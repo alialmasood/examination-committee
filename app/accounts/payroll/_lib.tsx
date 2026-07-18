@@ -1,0 +1,229 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/** أدوات مشتركة لواجهة الرواتب — 9.A.1 */
+
+export const API = {
+  options: '/api/accounts/payroll/options',
+  people: '/api/accounts/payroll/people',
+  contracts: '/api/accounts/payroll/contracts',
+  assignments: '/api/accounts/payroll/assignments',
+  components: '/api/accounts/payroll/components',
+  componentAssignments: '/api/accounts/payroll/component-assignments',
+  calendars: '/api/accounts/payroll/calendars',
+  accountMappings: '/api/accounts/payroll/account-mappings',
+} as const;
+
+export async function fetchJson(url: string, init?: RequestInit) {
+  try {
+    const r = await fetch(url, { credentials: 'include', ...init });
+    const body = await r.json().catch(() => ({}));
+    return { ...body, __status: r.status, __ok: r.ok };
+  } catch {
+    return { success: false, message: 'تعذّر الاتصال بالخادم', __status: 0, __ok: false };
+  }
+}
+
+export function errMsg(r: any): string {
+  if (r?.__status === 401) return 'انتهت الجلسة أو تحتاج إلى تسجيل الدخول';
+  if (r?.__status === 403) return r?.message || 'ليس لديك صلاحية لتنفيذ هذا الإجراء';
+  if (r?.__status === 409) return r?.message || 'تعارض في الإصدار — أعد تحميل الصفحة وحاول مجدداً';
+  return r?.message || r?.error || 'تعذّر تنفيذ العملية';
+}
+
+/** صلاحيات الرواتب (يجب أن تطابق PAYROLL_CAPABILITIES في الخادم). */
+export const CAP = {
+  VIEW: 'payroll_view',
+  MANAGE_PEOPLE: 'payroll_manage_people',
+  MANAGE_CONTRACTS: 'payroll_manage_contracts',
+  MANAGE_ASSIGNMENTS: 'payroll_manage_assignments',
+  MANAGE_COMPONENTS: 'payroll_manage_components',
+  MANAGE_MAPPINGS: 'payroll_manage_mappings',
+  ADMIN: 'payroll_admin',
+} as const;
+
+export function can(caps: string[] | undefined | null, cap: string): boolean {
+  return Array.isArray(caps) && caps.includes(cap);
+}
+
+export function money(v: unknown): string {
+  if (v == null || v === '') return '0.000';
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  return n.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+}
+
+export function iqd(v: unknown): string {
+  return `${money(v)} د.ع`;
+}
+
+export const PERSON_TYPE: Record<string, string> = {
+  TEACHING_STAFF: 'كادر تدريسي',
+  EXTERNAL_LECTURER: 'محاضر خارجي',
+  EMPLOYEE: 'موظف',
+  DAILY_WORKER: 'عامل يومي',
+  SERVICE_WORKER: 'عامل خدمة',
+};
+
+export const PERSON_STATUS: Record<string, string> = {
+  ACTIVE: 'نشط',
+  SUSPENDED: 'موقوف',
+  TERMINATED: 'منتهٍ',
+  INACTIVE: 'غير نشط',
+};
+
+export const COMPENSATION_BASIS: Record<string, string> = {
+  MONTHLY_FIXED: 'شهري ثابت',
+  HOURLY: 'بالساعة',
+  PER_LECTURE: 'بالمحاضرة',
+  DAILY: 'يومي',
+  FIXED_SERVICE: 'خدمة مقطوعة',
+};
+
+export const CONTRACT_STATUS: Record<string, string> = {
+  DRAFT: 'مسودة',
+  ACTIVE: 'نشط',
+  SUSPENDED: 'موقوف',
+  TERMINATED: 'منتهٍ',
+  EXPIRED: 'منقضٍ',
+  CANCELLED: 'ملغى',
+};
+
+export const ASSIGNMENT_TYPE: Record<string, string> = {
+  TEMPORARY_DUTY: 'تكليف مؤقت',
+  ADDITIONAL_RESPONSIBILITY: 'مسؤولية إضافية',
+  ALLOWANCE_SOURCE: 'مصدر مخصصات',
+  LECTURER_ASSIGNMENT: 'تكليف محاضرة',
+  COMMITTEE_ASSIGNMENT: 'تكليف لجنة',
+  GENERAL_ASSIGNMENT: 'تكليف عام',
+};
+
+export const ASSIGNMENT_STATUS: Record<string, string> = {
+  DRAFT: 'مسودة',
+  ACTIVE: 'نشط',
+  SUSPENDED: 'موقوف',
+  ENDED: 'منتهٍ',
+};
+
+export const COMPONENT_TYPE: Record<string, string> = {
+  EARNING: 'استحقاق',
+  DEDUCTION: 'استقطاع',
+  EMPLOYER_CONTRIBUTION: 'مساهمة جهة العمل',
+};
+
+export const CALCULATION_METHOD: Record<string, string> = {
+  FIXED_AMOUNT: 'مبلغ ثابت',
+  PERCENTAGE_OF_BASIC: 'نسبة من الأساسي',
+  QUANTITY_X_RATE: 'كمية × معدّل',
+  DAYS_X_DAILY_RATE: 'أيام × أجر يومي',
+  HOURS_X_HOURLY_RATE: 'ساعات × أجر ساعة',
+  LECTURES_X_RATE: 'محاضرات × معدّل',
+  MANUAL_AMOUNT: 'مبلغ يدوي',
+  CUSTOM_FORMULA: 'صيغة مخصصة (محجوز)',
+};
+
+export const MAPPING_SCOPE: Record<string, string> = {
+  DEFAULT: 'افتراضي',
+  PERSON_TYPE: 'حسب نوع الشخص',
+  COMPONENT: 'حسب المكوّن',
+  CALENDAR: 'حسب التقويم',
+  ROUNDING: 'فروقات التقريب',
+};
+
+export const CALENDAR_TYPE: Record<string, string> = {
+  MONTHLY: 'شهري',
+  LECTURER: 'محاضرين',
+  DAILY: 'يومي',
+  SUMMER: 'صيفي',
+  ACADEMIC: 'أكاديمي',
+};
+
+export const PAYMENT_METHOD: Record<string, string> = {
+  CASH: 'نقدي',
+  BANK: 'حوالة مصرفية',
+  CHEQUE: 'صك',
+  RESERVED: 'محجوز',
+};
+
+export function label(map: Record<string, string>, s: string | null | undefined): string {
+  if (!s) return '—';
+  return map[s] ?? s;
+}
+
+const STATUS_TONE: Record<string, string> = {
+  DRAFT: 'bg-gray-100 text-gray-700',
+  ACTIVE: 'bg-green-100 text-green-800',
+  SUSPENDED: 'bg-amber-100 text-amber-800',
+  TERMINATED: 'bg-red-100 text-red-800',
+  ENDED: 'bg-gray-200 text-gray-700',
+  EXPIRED: 'bg-gray-200 text-gray-700',
+  CANCELLED: 'bg-red-100 text-red-800',
+  INACTIVE: 'bg-gray-100 text-gray-500',
+};
+
+export function StatusBadge({ status, map }: { status: string; map: Record<string, string> }) {
+  const tone = STATUS_TONE[status] ?? 'bg-gray-100 text-gray-700';
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${tone}`}>
+      {label(map, status)}
+    </span>
+  );
+}
+
+export function StatCard({
+  label: lbl,
+  value,
+  href,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  href?: string;
+  tone?: string;
+}) {
+  const inner = (
+    <>
+      <p className="text-sm text-gray-500">{lbl}</p>
+      <p className={`text-2xl font-bold mt-1 ${tone ?? 'text-gray-900'}`}>{value}</p>
+    </>
+  );
+  const cls = 'bg-white rounded-xl shadow p-4 block';
+  return href ? (
+    <a href={href} className={`${cls} hover:ring-2 hover:ring-red-200`}>
+      {inner}
+    </a>
+  ) : (
+    <div className={cls}>{inner}</div>
+  );
+}
+
+/** حوار تأكيد بسيط للأفعال الحساسة. */
+export function ConfirmDialog({
+  open,
+  title,
+  message,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  busy?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" dir="rtl">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-5">
+        <h3 className="text-lg font-semibold mb-2">{title}</h3>
+        <p className="text-sm text-gray-600 mb-4">{message}</p>
+        <div className="flex justify-end gap-2">
+          <button className="border rounded px-3 py-2 text-sm" disabled={busy} onClick={onCancel}>إلغاء</button>
+          <button className="bg-red-800 text-white rounded px-3 py-2 text-sm" disabled={busy} onClick={onConfirm}>
+            {busy ? 'جارٍ التنفيذ…' : 'تأكيد'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
