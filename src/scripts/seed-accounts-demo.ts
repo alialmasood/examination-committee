@@ -58,6 +58,7 @@ import { seedStudentCreditNotesRefundsDemo } from './seed-accounts-student-credi
 import { seedSupplierPayablesDemo } from './seed-accounts-supplier-payables-demo';
 import { seedSupplierPaymentsExpensesDemo } from './seed-accounts-supplier-payments-expenses-demo';
 import { seedPurchasingDemo } from './seed-accounts-purchasing-demo';
+import { seedFixedAssetsDemo } from './seed-accounts-fixed-assets-demo';
 import {
   allocateJournalEntryNumber,
   assertFiscalContextForEntry,
@@ -1523,6 +1524,11 @@ async function main() {
     await seedPurchasingDemo({ userId, entryDate, ensureAccount });
   } catch (e) {
     console.log('⚠ 7.A seed:', e instanceof Error ? e.message : e);
+  }
+  try {
+    await seedFixedAssetsDemo({ userId, entryDate, ensureAccount });
+  } catch (e) {
+    console.log('⚠ 8.A seed:', e instanceof Error ? e.message : e);
   }
 
   console.log('\n——— ملخص العرض ———');
