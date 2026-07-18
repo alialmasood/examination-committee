@@ -64,6 +64,13 @@
   على مصدر الرسملة و`FOR UPDATE` على سطر الفاتورة وصفوف المصادر، وقيد `UNIQUE(supplier_invoice_line_id, fixed_asset_id)`.
 - تقسيم التكلفة بدون float: `perUnit = floor(line_total / totalUnits)` والباقي يُضاف لآخر وحدة، فيساوي مجموع
   تكاليف الأصول قيمة السطر تماماً.
+- **منع إلغاء الفاتورة بعد الرسملة (`voidSupplierInvoice`):** إذا رُسملت أصول من الفاتورة يُمنع إلغاؤها ما لم
+  تكن كل الأصول المرتبطة `CANCELLED` ولا يوجد عليها أي نشاط (حركة/عهدة/إهلاك/استبعاد) — أصل `DRAFT` يجب
+  إلغاؤه أولاً، وأي أصل `ACTIVE/SUSPENDED/FULLY_DEPRECIATED/DISPOSED` يمنع الإلغاء نهائياً (409). الفحص داخل
+  المعاملة بعد أخذ الأقفال (`supplierInvoiceLock` + `assetCapitalizationSourceLock` + `fixedAssetLock`).
+- **اتساق ترتيب الأقفال (TOCTOU):** `createAssetsFromPurchasing` يقفل صف الفاتورة (`FOR UPDATE`) ثم الأقفال
+  الاستشارية — بنفس ترتيب `voidSupplierInvoice` — ويعيد قراءة حالة الفاتورة بعد القفل ويرفض الرسملة على فاتورة
+  ليست `POSTED`، فلا يبقى أصل نشط مرتبطاً بفاتورة مُلغاة، ويتفادى الجمود بين المسارين.
 
 ## 6) سياسة حد الرسملة والتجاوز (Capitalization threshold + override)
 
@@ -146,6 +153,8 @@
 - **التحقق العادي:** `npm run accounts:verify-fixed-assets` (يفشل عند أي mismatch).
 - **التحقق الصارم:** `npm run accounts:verify-fixed-assets:strict` (يفشل أيضاً على التحذيرات وغير المفسَّر).
   المنطق في `src/lib/accounts/verify-fixed-assets.ts` والمشغّل في `src/scripts/verify-fixed-assets.ts`.
+  من ضمن الفحوص: اتساق فواتير المورد المُلغاة (VOID) — لا يجوز بقاء فاتورة VOID مرتبطة بأصل غير `CANCELLED`
+  (يشمل أصول `PURCHASE` ومصادر الرسملة)، ويُعدّ mismatch يُفشِل التحقق.
 - **البذر (DEMO):** `src/scripts/seed-accounts-fixed-assets-demo.ts` — `seedFixedAssetsDemo(...)` idempotent
   (محروس بالرمز والعلامة)، يُوصَل من `seed:accounts-demo`، ويمكن تشغيله مباشرة عبر `tsx`.
 - **الاختبارات:** `npm run test:fixed-assets` — `src/scripts/test-fixed-assets.ts` (≥ 70 تأكيداً).
