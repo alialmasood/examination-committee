@@ -113,7 +113,31 @@ export type AuditAction =
   | 'student_charge.created'
   | 'student_charge.updated'
   | 'student_charge.posted'
-  | 'student_charge.voided';
+  | 'student_charge.voided'
+  | 'asset_category.created'
+  | 'asset_category.updated'
+  | 'asset_category.toggle_status'
+  | 'asset_location.created'
+  | 'asset_location.updated'
+  | 'asset_location.toggle_status'
+  | 'fixed_asset.created'
+  | 'fixed_asset.updated'
+  | 'fixed_asset.activated'
+  | 'fixed_asset.suspended'
+  | 'fixed_asset.reactivated'
+  | 'fixed_asset.cancelled'
+  | 'fixed_asset.capitalized_from_purchasing'
+  | 'fixed_asset.threshold_overridden'
+  | 'asset_movement.created'
+  | 'asset_movement.posted'
+  | 'asset_movement.voided'
+  | 'depreciation_run.created'
+  | 'depreciation_run.calculated'
+  | 'depreciation_run.posted'
+  | 'depreciation_run.voided'
+  | 'asset_disposal.created'
+  | 'asset_disposal.posted'
+  | 'asset_disposal.voided';
 
 export async function writeFinancialAudit(
   client: TxClient,

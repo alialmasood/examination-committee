@@ -45,9 +45,11 @@ import {
   loadSupplierAccount,
 } from './supplier-accounts';
 import {
+  assertValidAssetGlAccount,
   assertValidExpenseGlAccount,
   loadSupplierInvoiceType,
 } from './supplier-invoice-types';
+import { loadAssetCategory } from './asset-categories';
 import {
   assertSupplierActiveForInvoices,
   loadSupplier,
@@ -116,6 +118,8 @@ export type SupplierInvoiceLineRow = {
   line_total: string;
   expense_gl_account_id: string;
   cost_center_id: string | null;
+  is_fixed_asset: boolean;
+  asset_category_id: string | null;
   created_at: Date | string;
 };
 
@@ -906,6 +910,17 @@ export async function postSupplierInvoice(
   const isPoInvoice = invoice.invoice_source === 'PURCHASE_ORDER';
   const hasLines = invoiceLines.length > 0;
 
+  // توجيه سطور الأصول الثابتة (8.A): السطر المعلَّم is_fixed_asset ولديه تصنيف أصل
+  // يُرحَّل Dr حساب الأصل (asset_categories.asset_gl_account_id) بدل Dr المصروف.
+  // السطور العادية — وسطور FIXED_ASSET_CANDIDATE بلا تصنيف — تبقى Dr Expense كما في 7.A (بلا تغيير).
+  const lineAssetGl = new Map<string, string>();
+  for (const l of invoiceLines) {
+    if (l.is_fixed_asset && l.asset_category_id) {
+      const category = await loadAssetCategory(client, l.asset_category_id);
+      lineAssetGl.set(l.id, category.asset_gl_account_id);
+    }
+  }
+
   if (isPoInvoice && !hasLines) {
     throw new AccountsHttpError('فاتورة أمر الشراء يجب أن تحتوي على سطور', 409);
   }
@@ -931,11 +946,11 @@ export async function postSupplierInvoice(
       if (l.purchase_order_line_id) {
         lockResources.push(purchaseOrderLineLock(l.purchase_order_line_id));
       }
-      lockResources.push(glAccountLock(l.expense_gl_account_id));
+      lockResources.push(glAccountLock(lineAssetGl.get(l.id) ?? l.expense_gl_account_id));
     }
   } else if (hasLines) {
     for (const l of invoiceLines) {
-      lockResources.push(glAccountLock(l.expense_gl_account_id));
+      lockResources.push(glAccountLock(lineAssetGl.get(l.id) ?? l.expense_gl_account_id));
     }
   }
 
@@ -1000,21 +1015,32 @@ export async function postSupplierInvoice(
 
   if (hasLines) {
     for (const line of invoiceLines) {
-      const expenseGl = await assertValidExpenseGlAccount(
-        client,
-        line.expense_gl_account_id
-      );
-      await assertPostingAccount(
-        client,
-        line.expense_gl_account_id,
-        'حساب المصروف',
-        { invalidStatusCode: 400 }
-      );
+      const assetGlId = lineAssetGl.get(line.id);
+      let postingAccountId: string;
+      let requiresCc: boolean;
+      if (assetGlId) {
+        // سطر أصل ثابت → Dr حساب الأصل (بدل حساب المصروف)؛ الباقي (Cr ذمم دائنة، الإجمالي، الكمية) دون تغيير.
+        const assetGl = await assertValidAssetGlAccount(client, assetGlId);
+        postingAccountId = assetGl.id;
+        requiresCc = assetGl.requires_cost_center;
+      } else {
+        // سلوك 7.A الأصلي لسطور المصروف — دون أي تغيير.
+        const expenseGl = await assertValidExpenseGlAccount(
+          client,
+          line.expense_gl_account_id
+        );
+        await assertPostingAccount(
+          client,
+          line.expense_gl_account_id,
+          'حساب المصروف',
+          { invalidStatusCode: 400 }
+        );
+        postingAccountId = line.expense_gl_account_id;
+        requiresCc = expenseGl.requires_cost_center;
+      }
       const lineCc = line.cost_center_id ?? costCenterId;
       if (
-        (typeRequiresCc ||
-          expenseGl.requires_cost_center ||
-          payableGl.requires_cost_center) &&
+        (typeRequiresCc || requiresCc || payableGl.requires_cost_center) &&
         !lineCc
       ) {
         throw new AccountsHttpError('أحد الحسابات يتطلب مركز كلفة', 409);
@@ -1022,7 +1048,7 @@ export async function postSupplierInvoice(
       if (lineCc) await assertCostCenterActive(client, lineCc);
       const lineAmount = normalizeMoneyInput(line.line_total);
       linesInput.push({
-        account_id: line.expense_gl_account_id,
+        account_id: postingAccountId,
         cost_center_id: lineCc,
         debit_amount: lineAmount,
         credit_amount: '0',
@@ -1223,7 +1249,13 @@ export async function voidSupplierInvoice(
       if (l.purchase_order_line_id) {
         voidLocks.push(purchaseOrderLineLock(l.purchase_order_line_id));
       }
-      voidLocks.push(glAccountLock(l.expense_gl_account_id));
+      // سطر أصل ثابت رُحِّل Dr حساب الأصل → نقفل حساب الأصل (متماثل مع الترحيل) بدل حساب المصروف.
+      if (l.is_fixed_asset && l.asset_category_id) {
+        const category = await loadAssetCategory(client, l.asset_category_id);
+        voidLocks.push(glAccountLock(category.asset_gl_account_id));
+      } else {
+        voidLocks.push(glAccountLock(l.expense_gl_account_id));
+      }
     }
   }
 

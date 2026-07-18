@@ -407,6 +407,8 @@ export async function createSupplierInvoiceFromPurchaseOrder(
     line_total: string;
     expense_gl_account_id: string;
     cost_center_id: string | null;
+    is_fixed_asset: boolean;
+    asset_category_id: string | null;
   }> = [];
 
   for (let i = 0; i < input.lines.length; i++) {
@@ -458,6 +460,18 @@ export async function createSupplierInvoiceFromPurchaseOrder(
       }
     }
 
+    // نقل خصائص الأصل الثابت من سطر أمر الشراء (8.A):
+    // asset_category_id مضاف على purchase_order_lines عبر ترحيل 092 (غير مُصرَّح في النوع بعد).
+    // نعتبر السطر أصلاً ثابتاً عند وجود تصنيف أصل صريح أو عند تصنيف الشراء FIXED_ASSET_CANDIDATE.
+    // توجيه Dr Asset عند الترحيل يعتمد على وجود asset_category_id فعلياً؛ لذا FIXED_ASSET_CANDIDATE
+    // بلا تصنيف يُرحَّل مصروفاً كما في 7.A (حفاظاً على التوافق الخلفي).
+    const poLineAssetCategoryId =
+      (poLine as PurchaseOrderLineRow & { asset_category_id: string | null })
+        .asset_category_id ?? null;
+    const isFixedAssetLine =
+      poLineAssetCategoryId != null ||
+      poLine.purchase_kind === 'FIXED_ASSET_CANDIDATE';
+
     parsedLines.push({
       purchase_order_line_id: poLineId,
       purchase_receipt_line_id: receiptLineId,
@@ -470,6 +484,8 @@ export async function createSupplierInvoiceFromPurchaseOrder(
       line_total: lt,
       expense_gl_account_id: gl.id,
       cost_center_id: poLine.cost_center_id,
+      is_fixed_asset: isFixedAssetLine,
+      asset_category_id: poLineAssetCategoryId,
     });
   }
 
@@ -561,10 +577,10 @@ export async function createSupplierInvoiceFromPurchaseOrder(
       `INSERT INTO accounts.supplier_invoice_lines (
          supplier_invoice_id, purchase_order_line_id, purchase_receipt_line_id,
          line_number, description, quantity, unit_price, discount_amount, tax_amount,
-         line_total, expense_gl_account_id, cost_center_id
+         line_total, expense_gl_account_id, cost_center_id, is_fixed_asset, asset_category_id
        ) VALUES (
          $1::uuid,$2::uuid,$3::uuid,$4,$5,$6::numeric,$7::numeric,$8::numeric,$9::numeric,
-         $10::numeric,$11::uuid,$12::uuid
+         $10::numeric,$11::uuid,$12::uuid,$13,$14::uuid
        ) RETURNING *`,
       [
         invoice.id,
@@ -579,6 +595,8 @@ export async function createSupplierInvoiceFromPurchaseOrder(
         l.line_total,
         l.expense_gl_account_id,
         l.cost_center_id,
+        l.is_fixed_asset,
+        l.asset_category_id,
       ]
     );
     insertedLines.push(r.rows[0]!);

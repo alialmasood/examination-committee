@@ -28,6 +28,10 @@ export const DOCUMENT_SEQUENCE_DEFAULTS = [
   { document_type: 'PURCHASE_REQUISITION', prefix: 'PRQ' },
   { document_type: 'PURCHASE_ORDER', prefix: 'POR' },
   { document_type: 'PURCHASE_RECEIPT', prefix: 'PRC' },
+  { document_type: 'FIXED_ASSET', prefix: 'AST' },
+  { document_type: 'ASSET_MOVEMENT', prefix: 'AMV' },
+  { document_type: 'DEPRECIATION_RUN', prefix: 'DPR' },
+  { document_type: 'ASSET_DISPOSAL', prefix: 'ADS' },
 ] as const;
 
 export type DocumentType = (typeof DOCUMENT_SEQUENCE_DEFAULTS)[number]['document_type'];

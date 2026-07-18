@@ -168,6 +168,100 @@ export async function assertValidExpenseGlAccount(
   };
 }
 
+/**
+ * حساب أصل صالح لترحيل سطر أصل ثابت (8.A): من نوع ASSET، تفصيلي، قابل للترحيل، فعّال —
+ * وليس حساب صندوق/بنك/ذمم مدينة/ذمم دائنة (حسابات ضبط لا تصلح كحساب أصل ثابت).
+ * يُستخدم لتوجيه سطور الأصول الثابتة إلى Dr Asset بدل Dr Expense مع الحفاظ على سلوك 6.A/7.A.
+ */
+export async function assertValidAssetGlAccount(
+  client: TxClient,
+  accountId: string
+): Promise<{
+  id: string;
+  code: string;
+  account_type_code: string;
+  requires_cost_center: boolean;
+}> {
+  const glId = String(accountId ?? '').trim();
+  if (!glId) throw new AccountsHttpError('حساب الأصل مطلوب', 400);
+
+  const acc = await assertPostingAccountWithType(
+    client,
+    glId,
+    'حساب الأصل',
+    { invalidStatusCode: 400 }
+  );
+  if (acc.account_type_code !== 'ASSET') {
+    throw new AccountsHttpError(
+      'يجب أن يكون حساب الأصل من نوع الأصول (ASSET) لسطر الأصل الثابت',
+      400
+    );
+  }
+
+  const cash = await txQuery(
+    client,
+    `SELECT code FROM accounts.cash_boxes
+     WHERE account_id = $1::uuid OR closed_account_id = $1::uuid
+     LIMIT 1`,
+    [glId]
+  );
+  if (cash.rows[0]) {
+    throw new AccountsHttpError(
+      `لا يمكن استخدام حساب صندوق نقدي كحساب أصل ثابت (${cash.rows[0].code})`,
+      400
+    );
+  }
+
+  const bank = await txQuery(
+    client,
+    `SELECT code FROM accounts.bank_accounts
+     WHERE gl_account_id = $1::uuid
+     LIMIT 1`,
+    [glId]
+  );
+  if (bank.rows[0]) {
+    throw new AccountsHttpError(
+      `لا يمكن استخدام حساب بنكي كحساب أصل ثابت (${bank.rows[0].code})`,
+      400
+    );
+  }
+
+  const recv = await txQuery(
+    client,
+    `SELECT account_number FROM accounts.student_accounts
+     WHERE receivable_gl_account_id = $1::uuid
+     LIMIT 1`,
+    [glId]
+  );
+  if (recv.rows[0]) {
+    throw new AccountsHttpError(
+      'لا يمكن استخدام حساب ذمم مدينة كحساب أصل ثابت',
+      400
+    );
+  }
+
+  const pay = await txQuery(
+    client,
+    `SELECT account_number FROM accounts.supplier_accounts
+     WHERE payable_gl_account_id = $1::uuid
+     LIMIT 1`,
+    [glId]
+  );
+  if (pay.rows[0]) {
+    throw new AccountsHttpError(
+      'لا يمكن استخدام حساب ذمم دائنة كحساب أصل ثابت',
+      400
+    );
+  }
+
+  return {
+    id: acc.id,
+    code: acc.code,
+    account_type_code: acc.account_type_code,
+    requires_cost_center: acc.requires_cost_center,
+  };
+}
+
 export async function loadSupplierInvoiceType(
   client: TxClient,
   id: string,

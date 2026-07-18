@@ -45,6 +45,14 @@ export type AccountingLockDomain =
   | 'PURCHASE_RECEIPT'
   | 'PURCHASE_RECEIPT_LINE'
   | 'SUPPLIER_INVOICE_MATCH'
+  | 'FIXED_ASSET'
+  | 'ASSET_CATEGORY'
+  | 'ASSET_LOCATION'
+  | 'ASSET_MOVEMENT'
+  | 'DEPRECIATION_RUN'
+  | 'DEPRECIATION_RUN_LINE'
+  | 'ASSET_DISPOSAL'
+  | 'ASSET_CAPITALIZATION_SOURCE'
   | 'GL_ACCOUNT';
 
 export type AccountingLockResource = {
@@ -213,4 +221,30 @@ export function supplierInvoiceMatchLock(id: string): AccountingLockResource {
 /** قفل GL للحسابات المستخدمة في ذمم الموردين (6.A) — موازٍ لـ CHART_ACCOUNT */
 export function glAccountLock(glAccountId: string): AccountingLockResource {
   return { domain: 'GL_ACCOUNT', resourceId: glAccountId };
+}
+
+/** أقفال الأصول الثابتة (8.A) */
+export function fixedAssetLock(id: string): AccountingLockResource {
+  return { domain: 'FIXED_ASSET', resourceId: id };
+}
+export function assetCategoryLock(id: string): AccountingLockResource {
+  return { domain: 'ASSET_CATEGORY', resourceId: id };
+}
+export function assetLocationLock(id: string): AccountingLockResource {
+  return { domain: 'ASSET_LOCATION', resourceId: id };
+}
+export function assetMovementLock(id: string): AccountingLockResource {
+  return { domain: 'ASSET_MOVEMENT', resourceId: id };
+}
+export function depreciationRunLock(id: string): AccountingLockResource {
+  return { domain: 'DEPRECIATION_RUN', resourceId: id };
+}
+export function depreciationRunLineLock(id: string): AccountingLockResource {
+  return { domain: 'DEPRECIATION_RUN_LINE', resourceId: id };
+}
+export function assetDisposalLock(id: string): AccountingLockResource {
+  return { domain: 'ASSET_DISPOSAL', resourceId: id };
+}
+export function assetCapitalizationSourceLock(id: string): AccountingLockResource {
+  return { domain: 'ASSET_CAPITALIZATION_SOURCE', resourceId: id };
 }
