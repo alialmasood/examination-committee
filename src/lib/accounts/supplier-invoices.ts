@@ -4,6 +4,8 @@
  */
 import {
   acquireAccountingResourceLocks,
+  assetCapitalizationSourceLock,
+  fixedAssetLock,
   glAccountLock,
   journalSourceLock,
   purchaseOrderLineLock,
@@ -1259,7 +1261,79 @@ export async function voidSupplierInvoice(
     }
   }
 
+  // (8.A) رأس مالية: نقفل مصادر الرسملة والأصول الثابتة المرتبطة قبل الفحص
+  // لضمان الذرّية ومنع سباق VOID/Capitalization. الترتيب يُطبَّع داخل acquireAccountingResourceLocks.
+  const capSourcePeek = await txQuery<{
+    id: string;
+    fixed_asset_id: string;
+  }>(
+    client,
+    `SELECT id, fixed_asset_id
+       FROM accounts.asset_capitalization_sources
+      WHERE supplier_invoice_id = $1::uuid`,
+    [invoice.id]
+  );
+  for (const cs of capSourcePeek.rows) {
+    voidLocks.push(assetCapitalizationSourceLock(cs.id));
+    voidLocks.push(fixedAssetLock(cs.fixed_asset_id));
+  }
+
   await acquireAccountingResourceLocks(client, voidLocks);
+
+  // (8.A) منع إلغاء فاتورة مورد رُسملت منها أصول ثابتة فعّالة.
+  // السياسة: يُسمح بالإلغاء فقط إذا لم تبقَ أي أصول مرتبطة غير مُلغاة (CANCELLED)
+  // ولا توجد أي حركات/إهلاك/عهدة/استبعاد مرتبطة بأي أصل من هذه الفاتورة.
+  if (capSourcePeek.rows.length > 0) {
+    const assetGuard = await txQuery<{
+      id: string;
+      asset_number: string | null;
+      status: string;
+      has_depreciation: boolean;
+      has_movement: boolean;
+      has_custody: boolean;
+      has_disposal: boolean;
+    }>(
+      client,
+      `SELECT fa.id,
+              fa.asset_number,
+              fa.status,
+              EXISTS (
+                SELECT 1 FROM accounts.depreciation_run_lines drl
+                 WHERE drl.fixed_asset_id = fa.id
+              ) AS has_depreciation,
+              EXISTS (
+                SELECT 1 FROM accounts.asset_movements am
+                 WHERE am.fixed_asset_id = fa.id
+              ) AS has_movement,
+              EXISTS (
+                SELECT 1 FROM accounts.asset_custody_history ach
+                 WHERE ach.fixed_asset_id = fa.id
+              ) AS has_custody,
+              EXISTS (
+                SELECT 1 FROM accounts.asset_disposals ad
+                 WHERE ad.fixed_asset_id = fa.id
+              ) AS has_disposal
+         FROM accounts.asset_capitalization_sources acs
+         JOIN accounts.fixed_assets fa ON fa.id = acs.fixed_asset_id
+        WHERE acs.supplier_invoice_id = $1::uuid`,
+      [invoice.id]
+    );
+
+    const blocking = assetGuard.rows.some(
+      (r) =>
+        r.status !== 'CANCELLED' ||
+        r.has_depreciation ||
+        r.has_movement ||
+        r.has_custody ||
+        r.has_disposal
+    );
+    if (blocking) {
+      throw new AccountsHttpError(
+        'لا يمكن إلغاء فاتورة المورد لأنها مرتبطة بأصول ثابتة. يجب إلغاء الأصول المسودة المرتبطة أولًا، ولا يمكن إلغاء الفاتورة بعد تفعيل الأصل أو وجود حركة أو إهلاك أو استبعاد عليه.',
+        409
+      );
+    }
+  }
 
   const account = await loadSupplierAccount(
     client,

@@ -263,7 +263,17 @@ export async function createAssetsFromPurchasing(
   const line = peek.rows[0];
   if (!line) throw new AccountsHttpError('سطر فاتورة المورد غير موجود', 404);
 
-  // 3) أقفال استشارية: مصدر الرسملة (سطر الفاتورة) + الفاتورة + أمر/سطر الشراء.
+  // 3) قفل صف الفاتورة (FOR UPDATE) أولاً — قبل الأقفال الاستشارية — لمطابقة ترتيب الأقفال في
+  //    voidSupplierInvoice (صف الفاتورة ثم الأقفال الاستشارية) وتجنّب انعكاس الترتيب/الـ deadlock.
+  //    نعيد قراءة الحالة الحالية للفاتورة (منع سباق TOCTOU مع VOID متزامن).
+  const invLock = await txQuery<{ status: string }>(
+    client,
+    `SELECT status FROM accounts.supplier_invoices WHERE id = $1::uuid FOR UPDATE`,
+    [line.supplier_invoice_id]
+  );
+  const freshInvoiceStatus = invLock.rows[0]?.status ?? line.invoice_status;
+
+  // 4) أقفال استشارية: مصدر الرسملة (سطر الفاتورة) + الفاتورة + أمر/سطر الشراء.
   await acquireAccountingResourceLocks(client, [
     assetCapitalizationSourceLock(lineId),
     supplierInvoiceLock(line.supplier_invoice_id),
@@ -273,7 +283,7 @@ export async function createAssetsFromPurchasing(
       : []),
   ]);
 
-  // 4) FOR UPDATE على سطر الفاتورة وعلى صفوف مصادر الرسملة القائمة (منع السباق).
+  // 5) FOR UPDATE على سطر الفاتورة وعلى صفوف مصادر الرسملة القائمة (منع تجاوز الكمية).
   await txQuery(
     client,
     `SELECT id FROM accounts.supplier_invoice_lines WHERE id = $1::uuid FOR UPDATE`,
@@ -288,8 +298,8 @@ export async function createAssetsFromPurchasing(
     [lineId]
   );
 
-  // 5) التحقق: الفاتورة مرحّلة، والسطر سطر أصل ثابت مع تصنيف.
-  if (line.invoice_status !== 'POSTED') {
+  // 6) التحقق: الفاتورة مرحّلة (بالحالة الحالية بعد القفل)، والسطر سطر أصل ثابت مع تصنيف.
+  if (freshInvoiceStatus !== 'POSTED') {
     throw new AccountsHttpError(
       'لا يمكن رسملة أصل إلا من فاتورة مورد مرحّلة (POSTED)',
       409
@@ -302,7 +312,7 @@ export async function createAssetsFromPurchasing(
     );
   }
 
-  // 6) حساب المتبقي بالوحدات الصحيحة.
+  // 7) حساب المتبقي بالوحدات الصحيحة.
   const totalUnits = positiveIntUnits(line.quantity, 'الكمية المفوترة');
   if (totalUnits <= 0) {
     throw new AccountsHttpError('الكمية المفوترة للسطر غير صالحة للرسملة', 400);
@@ -334,7 +344,7 @@ export async function createAssetsFromPurchasing(
     );
   }
 
-  // 7) تقسيم التكلفة بالميلي: perUnit = floor(line_total / totalUnits)، والباقي للوحدة الأخيرة للسطر كله.
+  // 8) تقسيم التكلفة بالميلي: perUnit = floor(line_total / totalUnits)، والباقي للوحدة الأخيرة للسطر كله.
   const lineTotalMillis = moneyToMillis(normalizeMoneyInput(line.line_total));
   const perUnitMillis = lineTotalMillis / BigInt(totalUnits);
   const remainderMillis = lineTotalMillis - perUnitMillis * BigInt(totalUnits);
@@ -412,7 +422,7 @@ export async function createAssetsFromPurchasing(
     createdAssets.push(asset);
   }
 
-  // 8) تحديث capitalized_quantity على سطر أمر الشراء (مع حارس عدم تجاوز الكمية المفوترة).
+  // 9) تحديث capitalized_quantity على سطر أمر الشراء (مع حارس عدم تجاوز الكمية المفوترة).
   if (line.purchase_order_line_id) {
     const poLine = await txQuery<{
       invoiced_quantity: string;
@@ -451,7 +461,7 @@ export async function createAssetsFromPurchasing(
     }
   }
 
-  // 9) تدقيق واحد لمجموعة الأصول المُنشأة.
+  // 10) تدقيق واحد لمجموعة الأصول المُنشأة.
   await writeFinancialAudit(client, {
     userId: input.userId,
     action: 'fixed_asset.capitalized_from_purchasing',

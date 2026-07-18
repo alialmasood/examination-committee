@@ -31,6 +31,7 @@ import {
   cancelFixedAsset,
   createFixedAsset,
   loadFixedAsset,
+  suspendFixedAsset,
   updateFixedAssetDraft,
 } from '../lib/accounts/fixed-assets';
 import {
@@ -75,7 +76,10 @@ import {
   postPurchaseReceipt,
 } from '../lib/accounts/purchase-receipts';
 import { createSupplierInvoiceFromPurchaseOrder } from '../lib/accounts/purchase-invoice-matching';
-import { postSupplierInvoice } from '../lib/accounts/supplier-invoices';
+import {
+  postSupplierInvoice,
+  voidSupplierInvoice,
+} from '../lib/accounts/supplier-invoices';
 import {
   createAssetsFromPurchasing,
   listCapitalizationCandidates,
@@ -1522,6 +1526,367 @@ async function main() {
         ),
       [400, 409]
     );
+  });
+
+  // ═══ منع إلغاء فاتورة المورد بعد رسملة الأصول (8.A) ═══
+  async function linkedAssets(
+    lineId: string
+  ): Promise<Array<{ id: string; version: number; updated_at: string; status: string }>> {
+    const r = await query(
+      `SELECT fa.id, fa.version, fa.updated_at, fa.status
+         FROM accounts.fixed_assets fa
+         JOIN accounts.asset_capitalization_sources acs ON acs.fixed_asset_id = fa.id
+        WHERE acs.supplier_invoice_line_id = $1`,
+      [lineId]
+    );
+    return r.rows as Array<{ id: string; version: number; updated_at: string; status: string }>;
+  }
+  async function invoiceIdOfLine(lineId: string): Promise<string> {
+    const r = await query(
+      `SELECT supplier_invoice_id AS id FROM accounts.supplier_invoice_lines WHERE id = $1`,
+      [lineId]
+    );
+    return r.rows[0].id as string;
+  }
+  async function voidInvoice(invoiceId: string) {
+    return withTransaction(async (c) => {
+      const cur = await c.query(
+        `SELECT version, updated_at FROM accounts.supplier_invoices WHERE id = $1`,
+        [invoiceId]
+      );
+      await acquireJournalEntriesLock(c);
+      return voidSupplierInvoice(c, {
+        id: invoiceId,
+        userId,
+        version: cur.rows[0].version,
+        updated_at: cur.rows[0].updated_at,
+        reason: 'إلغاء اختبار 8.A',
+      });
+    });
+  }
+  async function setAssetStatus(assetId: string, status: string) {
+    await query(`UPDATE accounts.fixed_assets SET status = $2 WHERE id = $1`, [assetId, status]);
+  }
+
+  await it('72) VOID لفاتورة أصل ثابت بلا رسملة: مسموح', async () => {
+    const cat = await mkCategory(ctx, { useful_life_months: 24 });
+    const lineId = await buildInvoiceLine(cat.id, '1', '900');
+    const invId = await invoiceIdOfLine(lineId);
+    const res = await voidInvoice(invId);
+    assert(res.status === 'VOID', `الحالة ${res.status}`);
+  });
+
+  await it('73) VOID لفاتورة مرتبطة بأصل DRAFT: مرفوض', async () => {
+    const cat = await mkCategory(ctx, { useful_life_months: 24 });
+    const lineId = await buildInvoiceLine(cat.id, '1', '900');
+    await withTransaction((c) =>
+      createAssetsFromPurchasing(c, {
+        supplier_invoice_line_id: lineId,
+        quantity: '1',
+        category_id: cat.id,
+        name_ar: 'أصل مسودّة من فاتورة',
+        useful_life_months: 24,
+        created_by: userId,
+        userId,
+      })
+    );
+    const invId = await invoiceIdOfLine(lineId);
+    await throwsHttp(() => voidInvoice(invId), 409, 'مرتبطة بأصول ثابتة');
+  });
+
+  await it('74) VOID بعد إلغاء الأصل DRAFT المرتبط: مسموح', async () => {
+    const cat = await mkCategory(ctx, { useful_life_months: 24 });
+    const lineId = await buildInvoiceLine(cat.id, '1', '900');
+    await withTransaction((c) =>
+      createAssetsFromPurchasing(c, {
+        supplier_invoice_line_id: lineId,
+        quantity: '1',
+        category_id: cat.id,
+        name_ar: 'أصل مسودّة للإلغاء',
+        useful_life_months: 24,
+        created_by: userId,
+        userId,
+      })
+    );
+    const invId = await invoiceIdOfLine(lineId);
+    // إلغاء الأصول المسودة أولاً
+    for (const a of await linkedAssets(lineId)) {
+      await withTransaction((c) =>
+        cancelFixedAsset(c, {
+          id: a.id,
+          userId,
+          version: a.version,
+          updated_at: a.updated_at,
+          reason: 'إلغاء قبل إبطال الفاتورة',
+        })
+      );
+    }
+    const res = await voidInvoice(invId);
+    assert(res.status === 'VOID', `الحالة ${res.status}`);
+  });
+
+  await it('75) VOID لفاتورة مرتبطة بأصل ACTIVE: مرفوض', async () => {
+    const cat = await mkCategory(ctx, { useful_life_months: 24 });
+    const lineId = await buildInvoiceLine(cat.id, '1', '900');
+    await withTransaction((c) =>
+      createAssetsFromPurchasing(c, {
+        supplier_invoice_line_id: lineId,
+        quantity: '1',
+        category_id: cat.id,
+        name_ar: 'أصل للتفعيل',
+        useful_life_months: 24,
+        created_by: userId,
+        userId,
+      })
+    );
+    const [asset] = await linkedAssets(lineId);
+    await withTransaction((c) =>
+      activateFixedAsset(c, {
+        id: asset.id,
+        userId,
+        version: asset.version,
+        updated_at: asset.updated_at,
+      })
+    );
+    const invId = await invoiceIdOfLine(lineId);
+    await throwsHttp(() => voidInvoice(invId), 409, 'مرتبطة بأصول ثابتة');
+  });
+
+  await it('76) VOID لفاتورة مرتبطة بأصل SUSPENDED: مرفوض', async () => {
+    const cat = await mkCategory(ctx, { useful_life_months: 24 });
+    const lineId = await buildInvoiceLine(cat.id, '1', '900');
+    await withTransaction((c) =>
+      createAssetsFromPurchasing(c, {
+        supplier_invoice_line_id: lineId,
+        quantity: '1',
+        category_id: cat.id,
+        name_ar: 'أصل للإيقاف',
+        useful_life_months: 24,
+        created_by: userId,
+        userId,
+      })
+    );
+    const [asset] = await linkedAssets(lineId);
+    const active = await withTransaction((c) =>
+      activateFixedAsset(c, {
+        id: asset.id,
+        userId,
+        version: asset.version,
+        updated_at: asset.updated_at,
+      })
+    );
+    await withTransaction((c) =>
+      suspendFixedAsset(c, {
+        id: active.id,
+        userId,
+        version: active.version,
+        updated_at: active.updated_at,
+        reason: 'إيقاف مؤقت',
+      })
+    );
+    const invId = await invoiceIdOfLine(lineId);
+    await throwsHttp(() => voidInvoice(invId), 409, 'مرتبطة بأصول ثابتة');
+  });
+
+  await it('77) VOID لفاتورة مرتبطة بأصل FULLY_DEPRECIATED: مرفوض', async () => {
+    const cat = await mkCategory(ctx, { useful_life_months: 24 });
+    const lineId = await buildInvoiceLine(cat.id, '1', '900');
+    await withTransaction((c) =>
+      createAssetsFromPurchasing(c, {
+        supplier_invoice_line_id: lineId,
+        quantity: '1',
+        category_id: cat.id,
+        name_ar: 'أصل مستهلك بالكامل',
+        useful_life_months: 24,
+        created_by: userId,
+        userId,
+      })
+    );
+    const [asset] = await linkedAssets(lineId);
+    const active = await withTransaction((c) =>
+      activateFixedAsset(c, {
+        id: asset.id,
+        userId,
+        version: asset.version,
+        updated_at: asset.updated_at,
+      })
+    );
+    // نضبط الحالة يدوياً لاختبار الحارس ثم نعيدها لحالة متسقة (ACTIVE)
+    await setAssetStatus(active.id, 'FULLY_DEPRECIATED');
+    const invId = await invoiceIdOfLine(lineId);
+    await throwsHttp(() => voidInvoice(invId), 409, 'مرتبطة بأصول ثابتة');
+    await setAssetStatus(active.id, 'ACTIVE');
+  });
+
+  await it('78) VOID لفاتورة مرتبطة بأصل DISPOSED: مرفوض', async () => {
+    const cat = await mkCategory(ctx, { useful_life_months: 24 });
+    const lineId = await buildInvoiceLine(cat.id, '1', '900');
+    await withTransaction((c) =>
+      createAssetsFromPurchasing(c, {
+        supplier_invoice_line_id: lineId,
+        quantity: '1',
+        category_id: cat.id,
+        name_ar: 'أصل مستبعَد',
+        useful_life_months: 24,
+        created_by: userId,
+        userId,
+      })
+    );
+    const [asset] = await linkedAssets(lineId);
+    const active = await withTransaction((c) =>
+      activateFixedAsset(c, {
+        id: asset.id,
+        userId,
+        version: asset.version,
+        updated_at: asset.updated_at,
+      })
+    );
+    await setAssetStatus(active.id, 'DISPOSED');
+    const invId = await invoiceIdOfLine(lineId);
+    await throwsHttp(() => voidInvoice(invId), 409, 'مرتبطة بأصول ثابتة');
+    await setAssetStatus(active.id, 'ACTIVE');
+  });
+
+  // الفرع الدفاعي: أصل CANCELLED لكن يحمل نشاطاً (حركة/عهدة/إهلاك/استبعاد) → منع رغم الحالة
+  async function draftCancelledLinked(): Promise<{ lineId: string; invId: string; assetId: string }> {
+    const cat = await mkCategory(ctx, { useful_life_months: 24 });
+    const lineId = await buildInvoiceLine(cat.id, '1', '900');
+    await withTransaction((c) =>
+      createAssetsFromPurchasing(c, {
+        supplier_invoice_line_id: lineId,
+        quantity: '1',
+        category_id: cat.id,
+        name_ar: 'أصل دفاعي',
+        useful_life_months: 24,
+        created_by: userId,
+        userId,
+      })
+    );
+    const [asset] = await linkedAssets(lineId);
+    await withTransaction((c) =>
+      cancelFixedAsset(c, {
+        id: asset.id,
+        userId,
+        version: asset.version,
+        updated_at: asset.updated_at,
+        reason: 'إلغاء للفرع الدفاعي',
+      })
+    );
+    return { lineId, invId: await invoiceIdOfLine(lineId), assetId: asset.id };
+  }
+
+  await it('79) VOID مع depreciation_run_line رغم إلغاء الأصل: مرفوض', async () => {
+    const { invId, assetId, lineId } = await draftCancelledLinked();
+    const run = await query(
+      `INSERT INTO accounts.depreciation_runs
+         (run_number, fiscal_year_id, fiscal_period_id, period_start, period_end, status, created_by)
+       VALUES ($1,$2::uuid,$3::uuid,$4,$5,'DRAFT',$6::uuid) RETURNING id`,
+      [uniq('DPR-GUARD', suffix), ctx.yearId, ctx.periodId, periodStart, periodStart, userId]
+    );
+    const runId = run.rows[0].id as string;
+    const catRow = await query(
+      `SELECT category_id, depreciation_expense_gl_account_id, accumulated_depreciation_gl_account_id
+         FROM accounts.fixed_assets WHERE id=$1`,
+      [assetId]
+    );
+    await query(
+      `INSERT INTO accounts.depreciation_run_lines
+         (run_id, fixed_asset_id, category_id, depreciation_expense_gl_account_id, accumulated_depreciation_gl_account_id)
+       VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid)`,
+      [
+        runId,
+        assetId,
+        catRow.rows[0].category_id,
+        catRow.rows[0].depreciation_expense_gl_account_id,
+        catRow.rows[0].accumulated_depreciation_gl_account_id,
+      ]
+    );
+    try {
+      await throwsHttp(() => voidInvoice(invId), 409, 'مرتبطة بأصول ثابتة');
+    } finally {
+      await query(`DELETE FROM accounts.depreciation_run_lines WHERE run_id=$1`, [runId]);
+      await query(`DELETE FROM accounts.depreciation_runs WHERE id=$1`, [runId]);
+    }
+    assert(lineId, 'سطر موجود');
+  });
+
+  await it('80) VOID مع asset_movement رغم إلغاء الأصل: مرفوض', async () => {
+    const { invId, assetId } = await draftCancelledLinked();
+    const mv = await query(
+      `INSERT INTO accounts.asset_movements
+         (movement_number, fixed_asset_id, movement_type, status, movement_date, created_by)
+       VALUES ($1,$2::uuid,'LOCATION','DRAFT',$3,$4::uuid) RETURNING id`,
+      [uniq('AMV-GUARD', suffix), assetId, periodStart, userId]
+    );
+    try {
+      await throwsHttp(() => voidInvoice(invId), 409, 'مرتبطة بأصول ثابتة');
+    } finally {
+      await query(`DELETE FROM accounts.asset_movements WHERE id=$1`, [mv.rows[0].id]);
+    }
+  });
+
+  await it('81) VOID مع asset_custody_history رغم إلغاء الأصل: مرفوض', async () => {
+    const { invId, assetId } = await draftCancelledLinked();
+    const ch = await query(
+      `INSERT INTO accounts.asset_custody_history
+         (fixed_asset_id, from_date, change_type, created_by)
+       VALUES ($1::uuid,$2,'CUSTODY',$3::uuid) RETURNING id`,
+      [assetId, periodStart, userId]
+    );
+    try {
+      await throwsHttp(() => voidInvoice(invId), 409, 'مرتبطة بأصول ثابتة');
+    } finally {
+      await query(`DELETE FROM accounts.asset_custody_history WHERE id=$1`, [ch.rows[0].id]);
+    }
+  });
+
+  await it('82) VOID مع asset_disposal رغم إلغاء الأصل: مرفوض', async () => {
+    const { invId, assetId } = await draftCancelledLinked();
+    const ds = await query(
+      `INSERT INTO accounts.asset_disposals
+         (disposal_number, fixed_asset_id, disposal_type, status, disposal_date, fiscal_year_id, fiscal_period_id, created_by)
+       VALUES ($1,$2::uuid,'SCRAP','DRAFT',$3,$4::uuid,$5::uuid,$6::uuid) RETURNING id`,
+      [uniq('ADS-GUARD', suffix), assetId, periodStart, ctx.yearId, ctx.periodId, userId]
+    );
+    try {
+      await throwsHttp(() => voidInvoice(invId), 409, 'مرتبطة بأصول ثابتة');
+    } finally {
+      await query(`DELETE FROM accounts.asset_disposals WHERE id=$1`, [ds.rows[0].id]);
+    }
+  });
+
+  await it('83) تزامن VOID/Capitalization — الحفاظ على الثابتة (invariant)', async () => {
+    const cat = await mkCategory(ctx, { useful_life_months: 24 });
+    const lineId = await buildInvoiceLine(cat.id, '1', '900');
+    const invId = await invoiceIdOfLine(lineId);
+    const results = await Promise.allSettled([
+      voidInvoice(invId),
+      withTransaction((c) =>
+        createAssetsFromPurchasing(c, {
+          supplier_invoice_line_id: lineId,
+          quantity: '1',
+          category_id: cat.id,
+          name_ar: 'أصل تزامن',
+          useful_life_months: 24,
+          created_by: userId,
+          userId,
+        })
+      ),
+    ]);
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    assert(succeeded >= 1, 'يجب أن تنجح عملية واحدة على الأقل');
+    // الثابتة: إذا أصبحت الفاتورة VOID فلا يجوز بقاء أي أصل مرتبط غير مُلغى
+    const inv = await query(`SELECT status FROM accounts.supplier_invoices WHERE id=$1`, [invId]);
+    if (inv.rows[0].status === 'VOID') {
+      const active = await query(
+        `SELECT COUNT(*)::int n
+           FROM accounts.asset_capitalization_sources acs
+           JOIN accounts.fixed_assets fa ON fa.id = acs.fixed_asset_id
+          WHERE acs.supplier_invoice_line_id = $1 AND fa.status <> 'CANCELLED'`,
+        [lineId]
+      );
+      assert(Number(active.rows[0].n) === 0, `فاتورة VOID مع ${active.rows[0].n} أصل غير مُلغى`);
+    }
   });
 
   // ═══ الصلاحيات (أقل امتياز) ═══

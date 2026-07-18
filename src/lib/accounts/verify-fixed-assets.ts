@@ -17,6 +17,8 @@
  *  - الاستبعاد ↔ القيد: المرحّل له قيد متوازن؛ البيع بمتحصلات يملك حساب متحصلات ضمن القيد؛
  *    الربح/الخسارة = المتحصلات − القيمة الدفترية؛ ليس ربحاً وخسارة معاً.
  *  - اتساق الإلغاء: الدورات/الاستبعادات المُبطَلة لها قيد عكسي.
+ *  - اتساق فواتير المورد المُلغاة (VOID): لا يجوز بقاء فاتورة VOID مرتبطة بأصل غير CANCELLED
+ *    (تشمل أصول الشراء PURCHASE ومصادر الرسملة) — mismatch يفشل.
  *  - تاريخ الحركات: الموقع/العهدة/القسم الحالي لأصل نشط = هدف آخر حركة مرحّلة (تحذير عند التعارض).
  *  - نشاط GL غير مفسَّر على حسابات مجمع الإهلاك (تحذير).
  */
@@ -575,6 +577,37 @@ export async function verifyFixedAssets(
   );
   if (Number(orphanCap.rows[0]?.n) > 0) {
     warn('orphan_capitalization', `مصادر رسملة يتيمة: ${orphanCap.rows[0]?.n}`);
+  }
+
+  // ── اتساق فواتير المورد المُلغاة (VOID) مع الأصول الثابتة (8.A) ────
+  // فاتورة VOID لا يجوز أن تبقى مرتبطة بأصل غير مُلغى (CANCELLED)؛
+  // وأصل شراء (PURCHASE) لا يجوز أن يبقى مرتبطاً بفاتورة VOID إلا إذا أُلغي.
+  const voidInvoiceLinks = await txQuery<{
+    asset_id: string;
+    asset_number: string;
+    asset_status: string;
+    acquisition_type: string;
+    invoice_number: string;
+  }>(
+    client,
+    `SELECT fa.id AS asset_id, fa.asset_number,
+            fa.status AS asset_status, fa.acquisition_type,
+            si.invoice_number
+     FROM accounts.asset_capitalization_sources acs
+     JOIN accounts.supplier_invoices si ON si.id = acs.supplier_invoice_id
+     JOIN accounts.fixed_assets fa ON fa.id = acs.fixed_asset_id
+     WHERE si.status = 'VOID'`
+  );
+  for (const v of voidInvoiceLinks.rows) {
+    // فاتورة VOID مرتبطة بأصل غير مُلغى = خرق للسياسة (يجب أن يمنعه voidSupplierInvoice).
+    // الحالة المشروعة الوحيدة: أصل CANCELLED (رُسمِل ثم أُلغي قبل إلغاء الفاتورة).
+    if (v.asset_status !== 'CANCELLED') {
+      fail(
+        'void_invoice_active_asset',
+        `فاتورة مورد مُلغاة (${v.invoice_number}) مرتبطة بأصل غير مُلغى ${v.asset_number} (حالة ${v.asset_status}) — أصل ${v.acquisition_type}`,
+        v.asset_id
+      );
+    }
   }
 
   // ── نشاط GL غير مفسَّر على حسابات مجمع الإهلاك ─────────────────────
