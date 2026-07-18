@@ -258,6 +258,25 @@ export default function AccountsLayout({
               المشتريات
             </Link>
 
+            <Link
+              href="/accounts/fixed-assets"
+              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+                pathname === '/accounts/fixed-assets' || pathname?.startsWith('/accounts/fixed-assets/')
+                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4'
+                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
+              }`}
+            >
+              <div className="flex items-center">
+                {(pathname === '/accounts/fixed-assets' || pathname?.startsWith('/accounts/fixed-assets/')) && (
+                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
+                )}
+                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                </svg>
+              </div>
+              الأصول الثابتة
+            </Link>
+
             {/* Installments */}
             <Link
               href="/accounts/installments"
