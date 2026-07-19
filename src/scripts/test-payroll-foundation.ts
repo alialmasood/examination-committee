@@ -339,7 +339,9 @@ async function main() {
 
   await it('20) إنشاء كل طرق الاحتساب المسموح بها', async () => {
     for (const m of ['FIXED_AMOUNT', 'PERCENTAGE_OF_BASIC', 'QUANTITY_X_RATE', 'DAYS_X_DAILY_RATE', 'HOURS_X_HOURLY_RATE', 'LECTURES_X_RATE', 'MANUAL_AMOUNT']) {
-      const cmp = await mkComponent({ calculation_method: m });
+      // 9.A.2.1: «نسبة من الأساسي» تتطلب أساس احتساب CONTRACT_BASIC
+      const base = m === 'PERCENTAGE_OF_BASIC' ? { calculation_base_type: 'CONTRACT_BASIC' } : {};
+      const cmp = await mkComponent({ calculation_method: m, ...base });
       assert(cmp.calculation_method === m, `طريقة ${m}`);
     }
   });
@@ -489,8 +491,10 @@ async function main() {
   });
 
   await it('41) عضوية ACCOUNTS المجرّدة → عرض فقط', async () => {
+    // 9.A.2.1: VIEW_ONLY صار يشمل عرض التشغيلات (payroll_view_runs) أيضاً
     const caps = await getPayrollCapabilities(null, bareId);
-    assert(caps.has(P.VIEW) && caps.size === 1, 'VIEW فقط');
+    assert(caps.has(P.VIEW) && caps.has(P.VIEW_RUNS) && caps.size === 2, 'عرض السجل والتشغيلات فقط');
+    assert(!caps.has(P.MANAGE_PEOPLE) && !caps.has(P.MANAGE_PERIODS), 'لا إدارة');
   });
 
   await it('42) خارج النظام → لا صلاحيات', async () => {

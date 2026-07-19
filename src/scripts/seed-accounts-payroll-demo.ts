@@ -196,6 +196,8 @@ export async function seedPayrollDemo(): Promise<void> {
         component_code: comp.code, name_ar: comp.name, component_type: comp.type,
         calculation_method: comp.method, default_amount: comp.amount, default_rate: comp.rate,
         default_percentage: comp.percentage,
+        // 9.A.2.1: «نسبة من الأساسي» تتطلب أساس احتساب CONTRACT_BASIC؛ البقية NONE
+        calculation_base_type: comp.method === 'PERCENTAGE_OF_BASIC' ? 'CONTRACT_BASIC' : 'NONE',
         expense_account_id: comp.type === 'EARNING' ? expenseGl : undefined,
         liability_account_id: comp.type === 'DEDUCTION' ? liabilityGl : undefined,
         default_cost_center_id: costCenterId, effective_from: START, created_by: userId,
