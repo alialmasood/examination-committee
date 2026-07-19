@@ -15,6 +15,7 @@ import {
   optionalDate,
   optionalNonNegativeMoney,
   optionalPercentage,
+  payrollCalculationBaseType,
   payrollCode,
   rejectCustomFormula,
   requiredText,
@@ -30,6 +31,7 @@ export type PayrollComponentRow = {
   name_en: string | null;
   component_type: string;
   calculation_method: string;
+  calculation_base_type: string;
   default_amount: string | null;
   default_rate: string | null;
   default_percentage: string | null;
@@ -107,6 +109,7 @@ export async function createPayrollComponent(
     name_en?: unknown;
     component_type: unknown;
     calculation_method: unknown;
+    calculation_base_type?: unknown;
     default_amount?: unknown;
     default_rate?: unknown;
     default_percentage?: unknown;
@@ -127,6 +130,7 @@ export async function createPayrollComponent(
 ): Promise<PayrollComponentRow> {
   const method = oneOf(input.calculation_method, PAYROLL_ENUMS.CALCULATION_METHOD, 'طريقة الاحتساب');
   rejectCustomFormula(method);
+  const baseType = payrollCalculationBaseType(input.calculation_base_type, method);
   const componentCode = payrollCode(input.component_code, 'رمز المكوّن');
   await assertPayrollCodeAvailable(client, 'payroll_components', 'component_code', componentCode, 'رمز المكوّن');
   const from = oneOfDate(input.effective_from);
@@ -143,13 +147,13 @@ export async function createPayrollComponent(
   const r = await txQuery<PayrollComponentRow>(
     client,
     `INSERT INTO accounts.payroll_components
-       (component_code, name_ar, name_en, component_type, calculation_method,
+       (component_code, name_ar, name_en, component_type, calculation_method, calculation_base_type,
         default_amount, default_rate, default_percentage, expense_account_id, liability_account_id,
         default_cost_center_id, is_taxable, is_pensionable, show_on_payslip, allow_manual_override,
         is_system_seeded, effective_from, effective_to, minimum_amount, maximum_amount,
         created_by, updated_by)
-     VALUES ($1,$2,$3,$4,$5,$6::numeric,$7::numeric,$8::numeric,$9::uuid,$10::uuid,
-             $11::uuid,$12,$13,$14,$15,$16,$17::date,$18::date,$19::numeric,$20::numeric,$21::uuid,$21::uuid)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::numeric,$8::numeric,$9::numeric,$10::uuid,$11::uuid,
+             $12::uuid,$13,$14,$15,$16,$17,$18::date,$19::date,$20::numeric,$21::numeric,$22::uuid,$22::uuid)
      RETURNING *`,
     [
       componentCode,
@@ -157,6 +161,7 @@ export async function createPayrollComponent(
       textOrNull(input.name_en, 200),
       oneOf(input.component_type, PAYROLL_ENUMS.COMPONENT_TYPE, 'نوع المكوّن'),
       method,
+      baseType,
       optionalNonNegativeMoney(input.default_amount, 'المبلغ الافتراضي'),
       optionalNonNegativeMoney(input.default_rate, 'المعدّل الافتراضي'),
       optionalPercentage(input.default_percentage, 'النسبة الافتراضية'),
@@ -197,6 +202,7 @@ export async function updatePayrollComponent(
     name_en?: unknown;
     component_type?: unknown;
     calculation_method?: unknown;
+    calculation_base_type?: unknown;
     default_amount?: unknown;
     default_rate?: unknown;
     default_percentage?: unknown;
@@ -219,6 +225,11 @@ export async function updatePayrollComponent(
 
   const method = p.calculation_method === undefined ? row.calculation_method : oneOf(p.calculation_method, PAYROLL_ENUMS.CALCULATION_METHOD, 'طريقة الاحتساب');
   rejectCustomFormula(method);
+  // أساس الاحتساب يُتحقّق دائماً مقابل الطريقة الفعّالة (سواء تغيّر أحدهما أو كلاهما)
+  const baseType = payrollCalculationBaseType(
+    p.calculation_base_type === undefined ? row.calculation_base_type : p.calculation_base_type,
+    method
+  );
   const from = p.effective_from === undefined ? dateStr(row.effective_from)! : oneOfDate(p.effective_from);
   const to = p.effective_to === undefined ? dateStr(row.effective_to) : optionalDate(p.effective_to, 'تاريخ نهاية السريان');
   assertEffectiveRange(from, to);
@@ -233,12 +244,12 @@ export async function updatePayrollComponent(
   const r = await txQuery<PayrollComponentRow>(
     client,
     `UPDATE accounts.payroll_components SET
-       name_ar=$2, name_en=$3, component_type=$4, calculation_method=$5,
-       default_amount=$6::numeric, default_rate=$7::numeric, default_percentage=$8::numeric,
-       expense_account_id=$9::uuid, liability_account_id=$10::uuid, default_cost_center_id=$11::uuid,
-       is_taxable=$12, is_pensionable=$13, show_on_payslip=$14, allow_manual_override=$15,
-       effective_from=$16::date, effective_to=$17::date, minimum_amount=$18::numeric, maximum_amount=$19::numeric,
-       updated_by=$20::uuid, updated_at=NOW(), version=version+1
+       name_ar=$2, name_en=$3, component_type=$4, calculation_method=$5, calculation_base_type=$6,
+       default_amount=$7::numeric, default_rate=$8::numeric, default_percentage=$9::numeric,
+       expense_account_id=$10::uuid, liability_account_id=$11::uuid, default_cost_center_id=$12::uuid,
+       is_taxable=$13, is_pensionable=$14, show_on_payslip=$15, allow_manual_override=$16,
+       effective_from=$17::date, effective_to=$18::date, minimum_amount=$19::numeric, maximum_amount=$20::numeric,
+       updated_by=$21::uuid, updated_at=NOW(), version=version+1
      WHERE id=$1::uuid RETURNING *`,
     [
       row.id,
@@ -246,6 +257,7 @@ export async function updatePayrollComponent(
       p.name_en === undefined ? row.name_en : textOrNull(p.name_en, 200),
       p.component_type === undefined ? row.component_type : oneOf(p.component_type, PAYROLL_ENUMS.COMPONENT_TYPE, 'نوع المكوّن'),
       method,
+      baseType,
       p.default_amount === undefined ? row.default_amount : optionalNonNegativeMoney(p.default_amount, 'المبلغ الافتراضي'),
       p.default_rate === undefined ? row.default_rate : optionalNonNegativeMoney(p.default_rate, 'المعدّل الافتراضي'),
       p.default_percentage === undefined ? row.default_percentage : optionalPercentage(p.default_percentage, 'النسبة الافتراضية'),
