@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import PayrollNav from '../PayrollNav';
 import {
   API,
+  CALCULATION_BASE_TYPE,
   CALCULATION_METHOD,
   CAP,
   COMPONENT_TYPE,
@@ -19,12 +20,16 @@ const today = () => new Date().toISOString().slice(0, 10);
 // CUSTOM_FORMULA محجوز في هذه المرحلة ولا يُتاح للاختيار
 const SELECTABLE_METHODS = Object.entries(CALCULATION_METHOD).filter(([k]) => k !== 'CUSTOM_FORMULA');
 
+// 9.A.2.1 — أنواع أساس الاحتساب المنفَّذة فقط (البقية محجوزة ولا تُعرض كخيارات)
+const SELECTABLE_BASE_TYPES = ['NONE', 'CONTRACT_BASIC'] as const;
+
 const empty = () => ({
   component_code: '',
   name_ar: '',
   name_en: '',
   component_type: 'EARNING',
   calculation_method: 'FIXED_AMOUNT',
+  calculation_base_type: 'NONE',
   default_amount: '',
   default_rate: '',
   default_percentage: '',
@@ -90,6 +95,7 @@ export default function ComponentsPage() {
       name_en: c.name_en ?? '',
       component_type: c.component_type,
       calculation_method: c.calculation_method,
+      calculation_base_type: c.calculation_base_type ?? 'NONE',
       default_amount: c.default_amount ?? '',
       default_rate: c.default_rate ?? '',
       default_percentage: c.default_percentage ?? '',
@@ -244,6 +250,13 @@ export default function ComponentsPage() {
                 <select className="border p-2" value={form.calculation_method} onChange={(e) => set('calculation_method', e.target.value)}>
                   {SELECTABLE_METHODS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs text-gray-500">أساس الاحتساب *</span>
+                <select className="border p-2" value={form.calculation_base_type} onChange={(e) => set('calculation_base_type', e.target.value)}>
+                  {SELECTABLE_BASE_TYPES.map((k) => <option key={k} value={k}>{label(CALCULATION_BASE_TYPE, k)}</option>)}
+                </select>
+                <span className="text-[11px] text-gray-400">نسبة من الأساسي تتطلب «الأساسي من العقد».</span>
               </label>
               <label className="grid gap-1">
                 <span className="text-xs text-gray-500">المبلغ الافتراضي</span>

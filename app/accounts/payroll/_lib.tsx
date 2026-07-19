@@ -10,7 +10,19 @@ export const API = {
   componentAssignments: '/api/accounts/payroll/component-assignments',
   calendars: '/api/accounts/payroll/calendars',
   accountMappings: '/api/accounts/payroll/account-mappings',
+  periods: '/api/accounts/payroll/periods',
+  runs: '/api/accounts/payroll/runs',
 } as const;
+
+/** مسارات ديناميكية لطبقة الفترات/التشغيلات — 9.A.2.1 */
+export const periodUrl = (id: string) => `/api/accounts/payroll/periods/${id}`;
+export const periodActionUrl = (id: string, action: 'close' | 'reopen' | 'cancel') =>
+  `/api/accounts/payroll/periods/${id}/${action}`;
+export const runUrl = (id: string) => `/api/accounts/payroll/runs/${id}`;
+export const runCancelUrl = (id: string) => `/api/accounts/payroll/runs/${id}/cancel`;
+export const runScopeUrl = (id: string) => `/api/accounts/payroll/runs/${id}/scope-members`;
+export const runScopeMemberUrl = (id: string, personId: string) =>
+  `/api/accounts/payroll/runs/${id}/scope-members/${personId}`;
 
 export async function fetchJson(url: string, init?: RequestInit) {
   try {
@@ -37,6 +49,11 @@ export const CAP = {
   MANAGE_ASSIGNMENTS: 'payroll_manage_assignments',
   MANAGE_COMPONENTS: 'payroll_manage_components',
   MANAGE_MAPPINGS: 'payroll_manage_mappings',
+  VIEW_RUNS: 'payroll_view_runs',
+  MANAGE_PERIODS: 'payroll_manage_periods',
+  CREATE_RUNS: 'payroll_create_runs',
+  CALCULATE: 'payroll_calculate',
+  CANCEL_RUNS: 'payroll_cancel_runs',
   ADMIN: 'payroll_admin',
 } as const;
 
@@ -143,6 +160,49 @@ export const PAYMENT_METHOD: Record<string, string> = {
   RESERVED: 'محجوز',
 };
 
+/** أنواع أساس الاحتساب — 9.A.2.1 (المنفَّذ فقط NONE/CONTRACT_BASIC؛ البقية محجوزة). */
+export const CALCULATION_BASE_TYPE: Record<string, string> = {
+  NONE: 'بدون أساس',
+  CONTRACT_BASIC: 'الأساسي من العقد',
+  GROSS_EARNINGS: 'إجمالي الاستحقاقات (محجوز)',
+  SELECTED_COMPONENTS: 'مكوّنات مختارة (محجوز)',
+  COMPONENT_REFERENCE: 'إشارة لمكوّن (محجوز)',
+};
+
+/** حالات فترة الرواتب — 9.A.2.1 */
+export const PERIOD_STATUS: Record<string, string> = {
+  OPEN: 'مفتوحة',
+  PROCESSING: 'قيد المعالجة',
+  CLOSED: 'مغلقة',
+  CANCELLED: 'ملغاة',
+};
+
+/** أنواع تشغيل الرواتب — 9.A.2.1 */
+export const RUN_TYPE: Record<string, string> = {
+  REGULAR: 'اعتيادي',
+  CORRECTION: 'تصحيحي',
+  SUPPLEMENTAL: 'تكميلي',
+  TERMINATION: 'إنهاء خدمة',
+  MANUAL: 'يدوي',
+};
+
+/** حالات تشغيل الرواتب — 9.A.2.1 */
+export const RUN_STATUS: Record<string, string> = {
+  DRAFT: 'مسودة',
+  CALCULATING: 'قيد الاحتساب',
+  CALCULATED: 'محتسَب',
+  CANCELLED: 'ملغى',
+};
+
+/** أنواع نطاق التشغيل — 9.A.2.1 */
+export const SCOPE_TYPE: Record<string, string> = {
+  ALL: 'الكل',
+  COLLEGE: 'كلية',
+  DEPARTMENT: 'قسم',
+  COST_CENTER: 'مركز كلفة',
+  PERSON_LIST: 'قائمة أشخاص',
+};
+
 export function label(map: Record<string, string>, s: string | null | undefined): string {
   if (!s) return '—';
   return map[s] ?? s;
@@ -157,6 +217,11 @@ const STATUS_TONE: Record<string, string> = {
   EXPIRED: 'bg-gray-200 text-gray-700',
   CANCELLED: 'bg-red-100 text-red-800',
   INACTIVE: 'bg-gray-100 text-gray-500',
+  OPEN: 'bg-green-100 text-green-800',
+  PROCESSING: 'bg-blue-100 text-blue-800',
+  CLOSED: 'bg-gray-200 text-gray-700',
+  CALCULATING: 'bg-blue-100 text-blue-800',
+  CALCULATED: 'bg-green-100 text-green-800',
 };
 
 export function StatusBadge({ status, map }: { status: string; map: Record<string, string> }) {

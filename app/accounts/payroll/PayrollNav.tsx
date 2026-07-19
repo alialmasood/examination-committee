@@ -10,6 +10,8 @@ const tabs = [
   ['/accounts/payroll/assignments', 'التكليفات'],
   ['/accounts/payroll/components', 'المكوّنات'],
   ['/accounts/payroll/calendars', 'التقويمات'],
+  ['/accounts/payroll/periods', 'الفترات'],
+  ['/accounts/payroll/runs', 'التشغيلات'],
   ['/accounts/payroll/account-mappings', 'خرائط الحسابات'],
 ] as const;
 
