@@ -230,6 +230,18 @@ export function mapPgError(error: unknown): NextResponse {
     if (err.constraint?.includes('uq_payroll_account_mappings_code')) {
       return jsonError('رمز الخريطة مستخدم مسبقاً', 409);
     }
+    if (err.constraint?.includes('uq_payroll_periods_code')) {
+      return jsonError('رمز فترة الرواتب مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_payroll_runs_one_live_regular')) {
+      return jsonError('يوجد تشغيل رواتب اعتيادي حيّ آخر لنفس الفترة والنطاق', 409);
+    }
+    if (err.constraint?.includes('uq_payroll_runs_number')) {
+      return jsonError('رقم تشغيل الرواتب مستخدم مسبقاً', 409);
+    }
+    if (err.constraint?.includes('uq_run_scope_member')) {
+      return jsonError('الشخص مضاف إلى نطاق هذا التشغيل مسبقاً', 409);
+    }
     return jsonError('تعارض في البيانات: القيمة مكررة', 409);
   }
 

@@ -191,6 +191,44 @@ export async function assertComponentAssignmentUnique(
   }
 }
 
+/**
+ * تحقّق أساس الاحتساب (calculation_base_type — D18، النهج B).
+ *
+ * القيم على مستوى القاعدة: NONE / CONTRACT_BASIC + ثلاث محجوزة.
+ * في 9.A.2.1: المنفّذ فقط NONE و CONTRACT_BASIC؛ المحجوزة تُرفض خدمياً.
+ *
+ * قواعد الربط بطريقة الاحتساب (بلا Hardcoded Component Code):
+ *  - PERCENTAGE_OF_BASIC يتطلب CONTRACT_BASIC.
+ *  - بقية الطرق لا يجوز أن تعتمد على CONTRACT_BASIC (تُلزم بـ NONE) في هذه المرحلة.
+ */
+export function payrollCalculationBaseType(v: unknown, method: string): string {
+  const s = String(v ?? 'NONE').trim().toUpperCase();
+  const all = PAYROLL_ENUMS.CALCULATION_BASE_TYPE as readonly string[];
+  if (!all.includes(s)) {
+    throw new AccountsHttpError('أساس الاحتساب غير صالح', 400);
+  }
+  const implemented = PAYROLL_ENUMS.CALCULATION_BASE_TYPE_IMPLEMENTED as readonly string[];
+  if (!implemented.includes(s)) {
+    throw new AccountsHttpError(
+      'أساس الاحتساب المطلوب محجوز ولم يُفعّل بعد في هذه المرحلة',
+      400
+    );
+  }
+  if (method === 'PERCENTAGE_OF_BASIC' && s !== 'CONTRACT_BASIC') {
+    throw new AccountsHttpError(
+      'طريقة «نسبة من الأساسي» تتطلب أساس احتساب = الأساسي التعاقدي (CONTRACT_BASIC)',
+      400
+    );
+  }
+  if (method !== 'PERCENTAGE_OF_BASIC' && s === 'CONTRACT_BASIC') {
+    throw new AccountsHttpError(
+      'لا يجوز اعتماد الأساسي التعاقدي (CONTRACT_BASIC) إلا مع طريقة «نسبة من الأساسي» في هذه المرحلة',
+      400
+    );
+  }
+  return s;
+}
+
 /** يمنع استخدام CUSTOM_FORMULA فعلياً في 9.A (D14 — محجوز فقط) */
 export function rejectCustomFormula(method: string | null | undefined): void {
   if (method === 'CUSTOM_FORMULA') {
@@ -282,8 +320,13 @@ async function getDefaultActiveFiscalYear(
  */
 export async function nextPayrollNumber(
   client: TxClient,
-  documentType: 'PAYROLL_PERSON' | 'PAYROLL_CONTRACT' | 'PAYROLL_ASSIGNMENT',
-  prefix: 'PYP' | 'PYC' | 'PYA'
+  documentType:
+    | 'PAYROLL_PERSON'
+    | 'PAYROLL_CONTRACT'
+    | 'PAYROLL_ASSIGNMENT'
+    | 'PAYROLL_PERIOD'
+    | 'PAYROLL_RUN',
+  prefix: 'PYP' | 'PYC' | 'PYA' | 'PYPR' | 'PYR'
 ): Promise<string> {
   const year = await getDefaultActiveFiscalYear(client);
   await txQuery(
@@ -329,4 +372,14 @@ export const PAYROLL_ENUMS = {
   MAPPING_SCOPE: ['DEFAULT', 'PERSON_TYPE', 'COMPONENT', 'CALENDAR', 'ROUNDING'] as const,
   CALENDAR_TYPE: ['MONTHLY', 'LECTURER', 'DAILY', 'SUMMER', 'ACADEMIC'] as const,
   PAYMENT_METHOD: ['CASH', 'BANK', 'CHEQUE', 'RESERVED'] as const,
+  // 9.A.2.1 — الأساس المستخدم في الاحتساب (D18)
+  CALCULATION_BASE_TYPE: [
+    'NONE', 'CONTRACT_BASIC', 'GROSS_EARNINGS', 'SELECTED_COMPONENTS', 'COMPONENT_REFERENCE',
+  ] as const,
+  CALCULATION_BASE_TYPE_IMPLEMENTED: ['NONE', 'CONTRACT_BASIC'] as const,
+  // 9.A.2.1 — الفترات والتشغيلات والنطاق
+  PERIOD_STATUS: ['OPEN', 'PROCESSING', 'CLOSED', 'CANCELLED'] as const,
+  RUN_TYPE: ['REGULAR', 'CORRECTION', 'SUPPLEMENTAL', 'TERMINATION', 'MANUAL'] as const,
+  RUN_STATUS: ['DRAFT', 'CALCULATING', 'CALCULATED', 'CANCELLED'] as const,
+  SCOPE_TYPE: ['ALL', 'COLLEGE', 'DEPARTMENT', 'COST_CENTER', 'PERSON_LIST'] as const,
 } as const;

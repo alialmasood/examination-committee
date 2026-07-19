@@ -60,6 +60,8 @@ export type AccountingLockDomain =
   | 'PAYROLL_COMPONENT_ASSIGNMENT'
   | 'PAYROLL_MAPPING'
   | 'PAYROLL_CALENDAR'
+  | 'PAYROLL_PERIOD'
+  | 'PAYROLL_RUN'
   | 'GL_ACCOUNT';
 
 export type AccountingLockResource = {
@@ -282,4 +284,11 @@ export function payrollMappingLock(id: string): AccountingLockResource {
 }
 export function payrollCalendarLock(id: string): AccountingLockResource {
   return { domain: 'PAYROLL_CALENDAR', resourceId: id };
+}
+/** أقفال طبقة الفترات/التشغيلات (9.A.2.1) */
+export function payrollPeriodLock(id: string): AccountingLockResource {
+  return { domain: 'PAYROLL_PERIOD', resourceId: id };
+}
+export function payrollRunLock(id: string): AccountingLockResource {
+  return { domain: 'PAYROLL_RUN', resourceId: id };
 }

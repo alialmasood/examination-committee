@@ -4,11 +4,17 @@
  * عضوية ACCOUNTS المجرّدة → VIEW_ONLY فقط.
  * الإعداد المالي الحسّاس (المكوّنات/الخرائط) مقصور على Accounts Admin في هذه المرحلة.
  *
- * السياسة:
- *   accounts_viewer   → payroll_view
- *   accounts_clerk    → payroll_view + manage_people + manage_contracts + manage_assignments
- *   accounts_approver → payroll_view
- *   accounts_admin    → جميع صلاحيات 9.A.1
+ * السياسة (9.A.1 + إضافات 9.A.2.1 للفترات/التشغيلات):
+ *   accounts_viewer   → payroll_view + payroll_view_runs
+ *   accounts_clerk    → عرض + إدارة الأشخاص/العقود/التكليفات + إدارة الفترات + إنشاء التشغيلات
+ *   accounts_approver → payroll_view + payroll_view_runs
+ *   accounts_admin    → جميع الصلاحيات (بما فيها payroll_calculate و payroll_cancel_runs)
+ *
+ * قواعد 9.A.2.1:
+ *   - payroll_calculate محجوزة كقدرة (لا endpoint احتساب فعلي بعد) — admin فقط.
+ *   - payroll_cancel_runs (إلغاء التشغيل) — admin فقط.
+ *   - clerk لا يملك calculate ولا cancel.
+ *   - العضوية المجرّدة → VIEW_ONLY فقط (عرض السجل + عرض التشغيلات).
  */
 import { AccountsHttpError } from './auth';
 import {
@@ -33,19 +39,30 @@ export const PAYROLL_CAPABILITIES = {
   MANAGE_ASSIGNMENTS: 'payroll_manage_assignments',
   MANAGE_COMPONENTS: 'payroll_manage_components',
   MANAGE_MAPPINGS: 'payroll_manage_mappings',
+  // 9.A.2.1 — الفترات والتشغيلات والنطاق
+  VIEW_RUNS: 'payroll_view_runs',
+  MANAGE_PERIODS: 'payroll_manage_periods',
+  CREATE_RUNS: 'payroll_create_runs',
+  CALCULATE: 'payroll_calculate',
+  CANCEL_RUNS: 'payroll_cancel_runs',
   ADMIN: 'payroll_admin',
 } as const;
 
 export type PayrollCapability =
   (typeof PAYROLL_CAPABILITIES)[keyof typeof PAYROLL_CAPABILITIES];
 
-const VIEW_ONLY = new Set<string>([PAYROLL_CAPABILITIES.VIEW]);
+const VIEW_ONLY = new Set<string>([
+  PAYROLL_CAPABILITIES.VIEW,
+  PAYROLL_CAPABILITIES.VIEW_RUNS,
+]);
 
 const CLERK_CAPS = new Set<string>([
   ...VIEW_ONLY,
   PAYROLL_CAPABILITIES.MANAGE_PEOPLE,
   PAYROLL_CAPABILITIES.MANAGE_CONTRACTS,
   PAYROLL_CAPABILITIES.MANAGE_ASSIGNMENTS,
+  PAYROLL_CAPABILITIES.MANAGE_PERIODS,
+  PAYROLL_CAPABILITIES.CREATE_RUNS,
 ]);
 
 const APPROVER_CAPS = new Set<string>([...VIEW_ONLY]);
@@ -54,6 +71,8 @@ const ADMIN_CAPS = new Set<string>([
   ...CLERK_CAPS,
   PAYROLL_CAPABILITIES.MANAGE_COMPONENTS,
   PAYROLL_CAPABILITIES.MANAGE_MAPPINGS,
+  PAYROLL_CAPABILITIES.CALCULATE,
+  PAYROLL_CAPABILITIES.CANCEL_RUNS,
   PAYROLL_CAPABILITIES.ADMIN,
 ]);
 

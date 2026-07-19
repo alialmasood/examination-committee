@@ -168,7 +168,18 @@ export type AuditAction =
   | 'payroll_account_mapping.created'
   | 'payroll_account_mapping.updated'
   | 'payroll_account_mapping.activated'
-  | 'payroll_account_mapping.deactivated';
+  | 'payroll_account_mapping.deactivated'
+  | 'payroll_period.created'
+  | 'payroll_period.updated'
+  | 'payroll_period.closed'
+  | 'payroll_period.reopened'
+  | 'payroll_period.cancelled'
+  | 'payroll_run.created'
+  | 'payroll_run.updated'
+  | 'payroll_run.cancelled'
+  | 'payroll_run.scope_member_added'
+  | 'payroll_run.scope_member_removed'
+  | 'payroll_run.scope_members_replaced';
 
 export async function writeFinancialAudit(
   client: TxClient,

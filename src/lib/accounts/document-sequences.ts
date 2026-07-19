@@ -35,6 +35,8 @@ export const DOCUMENT_SEQUENCE_DEFAULTS = [
   { document_type: 'PAYROLL_PERSON', prefix: 'PYP' },
   { document_type: 'PAYROLL_CONTRACT', prefix: 'PYC' },
   { document_type: 'PAYROLL_ASSIGNMENT', prefix: 'PYA' },
+  { document_type: 'PAYROLL_PERIOD', prefix: 'PYPR' },
+  { document_type: 'PAYROLL_RUN', prefix: 'PYR' },
 ] as const;
 
 export type DocumentType = (typeof DOCUMENT_SEQUENCE_DEFAULTS)[number]['document_type'];
