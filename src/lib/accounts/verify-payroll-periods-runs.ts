@@ -27,9 +27,10 @@
  *  - scope_ref_id غير متوافق مع scope_type.
  *  - أعضاء نطاق يتيمون (تشغيل/شخص مفقود).
  *  - تسلسلات PAYROLL_PERIOD/PAYROLL_RUN غير موجودة (تحذير).
+ *  - أكثر من OPEN غير متداخل لنفس التقويم (تحذير تشغيلي — يترقّى في strict).
  *
  * strict:
- *  - أكثر من OPEN غير متداخل لنفس التقويم (يترقّى إلى فشل).
+ *  - ترقية كل التحذيرات و unexplained إلى فشل (بما فيها multiple_open_periods).
  *  - حقول احتساب غير صفرية في DRAFT قبل تفعيل المحرك (unexplained).
  *  - أي calculation_request_id/attempt>0 قبل تفعيل المحرك (unexplained).
  */
@@ -157,15 +158,13 @@ export async function verifyPayrollPeriodsRuns(
     }
   }
 
-  // strict: أكثر من OPEN غير متداخل لنفس التقويم
-  if (strict) {
-    const multiOpen = await txQuery<{ payroll_calendar_id: string; n: number }>(
-      client,
-      `SELECT payroll_calendar_id, COUNT(*)::int n FROM accounts.payroll_periods
-       WHERE status='OPEN' GROUP BY payroll_calendar_id HAVING COUNT(*)>1`
-    );
-    for (const row of multiOpen.rows) warn('multiple_open_periods', `أكثر من فترة OPEN لنفس التقويم (${row.n})`, row.payroll_calendar_id);
-  }
+  // تحذير تشغيلي: أكثر من OPEN غير متداخل لنفس التقويم (D15) — يظهر في normal ويترقّى في strict
+  const multiOpen = await txQuery<{ payroll_calendar_id: string; n: number }>(
+    client,
+    `SELECT payroll_calendar_id, COUNT(*)::int n FROM accounts.payroll_periods
+     WHERE status='OPEN' GROUP BY payroll_calendar_id HAVING COUNT(*)>1`
+  );
+  for (const row of multiOpen.rows) warn('multiple_open_periods', `أكثر من فترة OPEN لنفس التقويم (${row.n})`, row.payroll_calendar_id);
 
   // ── التشغيلات ─────────────────────────────────────────────────────
   const periodById = new Map(periods.rows.map((p) => [p.id, p] as const));

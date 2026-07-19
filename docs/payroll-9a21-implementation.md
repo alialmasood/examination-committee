@@ -188,3 +188,31 @@ Docs: هذا الملف.
 - سلسلة الإصدارات (`root/supersedes/superseded_by`) وحقول Idempotency والاحتساب موجودة كبنية محجوزة بقيم صفرية، تُفعّل مع المحرك.
 - `PROCESSING` كحالة فترة موجودة في المخطط لكنها لا تُضبط تلقائياً في 9.A.2.1 (تُدار عند الاحتساب لاحقاً).
 - `calculation_base_type` المحجوز الثلاثي و `CUSTOM_FORMULA` مرفوضة خدمياً حتى تُفعّل.
+
+### قيد REGULAR PERSON_LIST الحيّ (F4 — موثّق، بلا تغيير الآن)
+
+الفهرس الجزئي `uq_payroll_runs_one_live_regular` يمنع أكثر من تشغيل **REGULAR** حيّ واحد
+(`DRAFT` / `CALCULATING` / `CALCULATED`) لنفس الفترة مع نفس توقيع النطاق
+`(scope_type, COALESCE(scope_ref_id, ZERO_UUID))`.
+
+لأن `PERSON_LIST` يخزّن `scope_ref_id = NULL`، ينهار التوقيع إلى قيمة ثابتة واحدة لكل الفترة —
+أي أن القيد **يمنع أكثر من REGULAR PERSON_LIST حي واحد لنفس الفترة** بصرف النظر عن أعضاء القائمة.
+
+**لا تدّعِ أن المقارنة الحالية قائمة على تطابق الأعضاء.** المقارنة الدقيقة على مستوى
+الأشخاص/الأعضاء مؤجّلة إلى Migration 096 عند وجود `payroll_run_people` (أو حارس الشخص لكل فترة — D16).
+
+### ترقيم Document Sequences (F8 — توثيق فقط)
+
+أرقام `PAYROLL_PERIOD` (`PYPR`) و`PAYROLL_RUN` (`PYR`) تُخصَّص عبر `nextPayrollNumber` الذي يحلّ
+السنة المالية بنفس سياسة النظام الحالية: **السنة المالية الافتراضية النشطة** (`is_default` ثم أحدث `ACTIVE`)،
+وليس بالضرورة `fiscal_year_id` المخزَّن على الفترة نفسها. هذا مطابق لنمط ترقيم 9.A.1
+(`PAYROLL_PERSON` / `PAYROLL_CONTRACT` / `PAYROLL_ASSIGNMENT`). لا تغيير على منطق التسلسل في 9.A.2.1 Hardening.
+
+### Hardening قبول 9.A.2.1 (H1–H6)
+
+- **H1**: `updatePayrollPeriod` يكتسب `PAYROLL_CALENDAR` + `PAYROLL_PERIOD` بمكالمة قفل واحدة مفروزة حتمياً.
+- **H2**: رسائل التزامن المتفائل خاصة بالرواتب (لا «الجلسة»).
+- **H3**: UUID مشوّه → 400 قبل الاستعلام؛ `22P02` مُعرَّب في `mapPgError`.
+- **H4**: اختبارات بعزل ملكية + cleanup تلقائي؛ لا تراكم في قاعدة التطوير.
+- **H5**: اختبارات HTTP Route لقدرات viewer/clerk/approver/admin/bare.
+- **H6**: تحذير `multiple_open_periods` يظهر في normal ويُرقّى إلى فشل في strict.

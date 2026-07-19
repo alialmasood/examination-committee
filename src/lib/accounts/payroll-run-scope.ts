@@ -9,7 +9,7 @@ import { AccountsHttpError } from './auth';
 import { payrollPeriodLock, payrollRunLock } from './accounting-locks';
 import { acquirePayrollLocks } from './payroll-locks';
 import { loadPayrollRun, type PayrollRunRow } from './payroll-runs';
-import { assertPayrollConcurrency, iso } from './payroll-validation';
+import { assertPayrollConcurrency, iso, requirePayrollUuid } from './payroll-validation';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
 
@@ -28,14 +28,6 @@ export function serializeScopeMember(row: ScopeMemberRow) {
   return { ...row, created_at: iso(row.created_at)! };
 }
 
-function requireUuid(v: unknown, label: string): string {
-  const s = String(v ?? '').trim();
-  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s)) {
-    throw new AccountsHttpError(`${label} غير صالح`, 400);
-  }
-  return s;
-}
-
 export async function listScopeMembers(
   client: TxClient,
   runId: string
@@ -49,7 +41,7 @@ export async function listScopeMembers(
      JOIN accounts.payroll_people p ON p.id = m.payroll_person_id
      WHERE m.payroll_run_id=$1::uuid
      ORDER BY p.person_code`,
-    [runId]
+    [requirePayrollUuid(runId, 'معرّف التشغيل')]
   );
   return r.rows;
 }
@@ -64,7 +56,7 @@ async function loadDraftPersonListRun(
   const existing = await loadPayrollRun(client, runId);
   await acquirePayrollLocks(client, [payrollPeriodLock(existing.payroll_period_id), payrollRunLock(runId)]);
   const run = await loadPayrollRun(client, runId, true);
-  assertPayrollConcurrency(run, version, updatedAt);
+  assertPayrollConcurrency(run, version, updatedAt, 'تشغيل الرواتب');
   if (run.status !== 'DRAFT') {
     throw new AccountsHttpError('لا يمكن تعديل أعضاء النطاق إلا والتشغيل مسودة (DRAFT)', 409);
   }
@@ -99,7 +91,7 @@ export async function addScopeMember(
   client: TxClient,
   p: { runId: string; personId: unknown; userId: string; version: unknown; updated_at: unknown }
 ): Promise<{ run: PayrollRunRow; members: ScopeMemberRow[] }> {
-  const personId = requireUuid(p.personId, 'معرّف الشخص');
+  const personId = requirePayrollUuid(p.personId, 'معرّف الشخص');
   const run = await loadDraftPersonListRun(client, p.runId, p.version, p.updated_at);
   await assertPersonActive(client, personId);
   const dup = await txQuery<{ id: string }>(
@@ -123,7 +115,7 @@ export async function removeScopeMember(
   client: TxClient,
   p: { runId: string; personId: unknown; userId: string; version: unknown; updated_at: unknown }
 ): Promise<{ run: PayrollRunRow; members: ScopeMemberRow[] }> {
-  const personId = requireUuid(p.personId, 'معرّف الشخص');
+  const personId = requirePayrollUuid(p.personId, 'معرّف الشخص');
   const run = await loadDraftPersonListRun(client, p.runId, p.version, p.updated_at);
   const del = await txQuery(
     client,
@@ -141,7 +133,7 @@ export async function replaceScopeMembers(
   p: { runId: string; personIds: unknown; userId: string; version: unknown; updated_at: unknown }
 ): Promise<{ run: PayrollRunRow; members: ScopeMemberRow[] }> {
   const list = Array.isArray(p.personIds) ? p.personIds : [];
-  const ids = [...new Set(list.map((v) => requireUuid(v, 'معرّف الشخص')))];
+  const ids = [...new Set(list.map((v) => requirePayrollUuid(v, 'معرّف الشخص')))];
   const run = await loadDraftPersonListRun(client, p.runId, p.version, p.updated_at);
   for (const id of ids) await assertPersonActive(client, id);
   await txQuery(

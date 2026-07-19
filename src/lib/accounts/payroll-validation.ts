@@ -6,7 +6,6 @@
  * العامة والتنسيقات والتواريخ والحسابات فقط.
  */
 import { AccountsHttpError } from './auth';
-import { assertCashSessionOptimisticConcurrency } from './cash-session-concurrency';
 import { normalizeCurrencyCode } from './currency';
 import {
   nextDocumentNumber,
@@ -16,6 +15,31 @@ import { normalizeMoneyInput } from './money';
 import { assertPostingAccount } from './posting-account';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
+
+const UUID_RE =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+function toEpochMs(value: unknown): number {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  return new Date(String(value)).getTime();
+}
+
+/** يفرض UUID صالحًا قبل أي استعلام — خطأ 400 عربي عام. */
+export function requirePayrollUuid(v: unknown, label = 'المعرّف'): string {
+  const s = String(v ?? '').trim();
+  if (!UUID_RE.test(s)) {
+    throw new AccountsHttpError(`${label} غير صالح`, 400);
+  }
+  return s;
+}
+
+/** UUID اختياري: فارغ → null، غير صالح → 400. */
+export function optionalPayrollUuid(v: unknown, label = 'المعرّف'): string | null {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  return requirePayrollUuid(s, label);
+}
 
 export const iso = (v: Date | string | null | undefined): string | null =>
   v == null ? null : v instanceof Date ? v.toISOString() : new Date(String(v)).toISOString();
@@ -134,18 +158,44 @@ export function assertEffectiveRange(from: string, to: string | null): void {
   }
 }
 
-/** تزامن متفائل موحّد للرواتب (version + updated_at) */
+/**
+ * تزامن متفائل موحّد للرواتب (version + updated_at).
+ * رسائل عربية خاصة بالرواتب — لا تعتمد على صياغة «الجلسة» من Cash Session.
+ * أكواد HTTP كما هي: 400 ناقص/غير صالح، 409 تعارض نسخة.
+ */
 export function assertPayrollConcurrency(
   row: { version: number; updated_at: Date | string },
   version: unknown,
-  updatedAt: unknown
+  updatedAt: unknown,
+  entityLabel = 'السجل'
 ): void {
-  assertCashSessionOptimisticConcurrency({
-    currentVersion: row.version,
-    currentUpdatedAt: row.updated_at,
-    expectedVersion: version,
-    expectedUpdatedAt: updatedAt,
-  });
+  if (version == null) {
+    throw new AccountsHttpError('رقم الإصدار (version) مطلوب', 400);
+  }
+  const v = Number(version);
+  if (!Number.isInteger(v) || v < 1) {
+    throw new AccountsHttpError('رقم الإصدار غير صالح', 400);
+  }
+  if (v !== row.version) {
+    throw new AccountsHttpError(
+      `تم تعديل ${entityLabel} بواسطة مستخدم آخر. حدّث الصفحة ثم أعد المحاولة.`,
+      409
+    );
+  }
+  if (updatedAt == null || updatedAt === '') {
+    throw new AccountsHttpError('حقل updated_at مطلوب للتحقق من التزامن', 400);
+  }
+  const currentMs = toEpochMs(row.updated_at);
+  const expectedMs = toEpochMs(updatedAt);
+  if (!Number.isFinite(currentMs) || !Number.isFinite(expectedMs)) {
+    throw new AccountsHttpError('قيمة updated_at غير صالحة', 400);
+  }
+  if (currentMs !== expectedMs) {
+    throw new AccountsHttpError(
+      `تم تعديل ${entityLabel} بواسطة مستخدم آخر (updated_at). حدّث الصفحة ثم أعد المحاولة.`,
+      409
+    );
+  }
 }
 
 /**

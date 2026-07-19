@@ -16,9 +16,11 @@ import {
   iso,
   nextPayrollNumber,
   optionalDate,
+  optionalPayrollUuid,
   requiredDate,
   requiredReason,
   requiredText,
+  requirePayrollUuid,
   textOrNull,
 } from './payroll-validation';
 import type { TxClient } from './with-transaction';
@@ -75,22 +77,14 @@ export async function loadPayrollPeriod(
   id: string,
   forUpdate = false
 ): Promise<PayrollPeriodRow> {
+  const periodId = requirePayrollUuid(id, 'معرّف الفترة');
   const r = await txQuery<PayrollPeriodRow>(
     client,
     `SELECT * FROM accounts.payroll_periods WHERE id=$1::uuid ${forUpdate ? 'FOR UPDATE' : ''}`,
-    [id]
+    [periodId]
   );
   if (!r.rows[0]) throw new AccountsHttpError('فترة الرواتب غير موجودة', 404);
   return r.rows[0];
-}
-
-function optionalUuid(v: unknown): string | null {
-  const s = String(v ?? '').trim();
-  if (!s) return null;
-  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s)) {
-    throw new AccountsHttpError('معرّف غير صالح', 400);
-  }
-  return s;
 }
 
 /** فترة تُنشأ ضمن تقويم فعّال ساري عند بداية الفترة، وبعملة التقويم نفسها. */
@@ -188,7 +182,7 @@ export async function createPayrollPeriod(
     created_by: string;
   }
 ): Promise<PayrollPeriodRow> {
-  const calendarId = optionalUuid(input.payroll_calendar_id);
+  const calendarId = optionalPayrollUuid(input.payroll_calendar_id, 'تقويم الرواتب');
   if (!calendarId) throw new AccountsHttpError('تقويم الرواتب مطلوب', 400);
 
   const start = requiredDate(input.start_date, 'تاريخ بداية الفترة');
@@ -202,7 +196,11 @@ export async function createPayrollPeriod(
   // قفل التقويم قبل فحص التداخل لمنع سباق إنشاء فترتين متداخلتين
   await acquirePayrollLocks(client, [payrollCalendarLock(calendarId)]);
   const cal = await resolveCalendarForPeriod(client, calendarId, start, end);
-  const fiscal = await resolveFiscal(client, optionalUuid(input.fiscal_year_id), optionalUuid(input.fiscal_period_id));
+  const fiscal = await resolveFiscal(
+    client,
+    optionalPayrollUuid(input.fiscal_year_id, 'السنة المالية'),
+    optionalPayrollUuid(input.fiscal_period_id, 'الفترة المالية')
+  );
 
   // عملة الفترة تطابق التقويم؛ إن مُرّرت عملة مختلفة تُرفض
   const providedCurrency = input.currency_code == null || String(input.currency_code).trim() === ''
@@ -277,23 +275,46 @@ export async function updatePayrollPeriod(
     fiscal_period_id?: unknown;
   }
 ): Promise<PayrollPeriodRow> {
-  await acquirePayrollLocks(client, [payrollPeriodLock(p.id)]);
+  // قراءة أولية بلا قفل لمعرفة التقويم وتحديد الأقفال — بدون ترتيب مخالف
+  const peek = await loadPayrollPeriod(client, p.id, false);
+  const wantsSensitive = SENSITIVE_FIELDS.some((f) => (p as Record<string, unknown>)[f] !== undefined);
+
+  const locks = [payrollPeriodLock(p.id)];
+  let plannedCalendarId: string | null = null;
+  if (wantsSensitive) {
+    plannedCalendarId =
+      p.payroll_calendar_id === undefined
+        ? peek.payroll_calendar_id
+        : optionalPayrollUuid(p.payroll_calendar_id, 'تقويم الرواتب');
+    if (!plannedCalendarId) throw new AccountsHttpError('تقويم الرواتب مطلوب', 400);
+    locks.push(payrollCalendarLock(plannedCalendarId));
+  }
+
+  // مكالمة قفل واحدة — الفرز الحتمي داخل acquirePayrollLocks (Calendar قبل Period)
+  await acquirePayrollLocks(client, locks);
   const row = await loadPayrollPeriod(client, p.id, true);
-  assertPayrollConcurrency(row, p.version, p.updated_at);
+  assertPayrollConcurrency(row, p.version, p.updated_at, 'الفترة');
   if (row.status !== 'OPEN') {
     throw new AccountsHttpError('لا يمكن تعديل فترة إلا وهي مفتوحة (OPEN)', 409);
   }
 
-  const wantsSensitive = SENSITIVE_FIELDS.some((f) => (p as Record<string, unknown>)[f] !== undefined);
   if (wantsSensitive) {
     const runs = await countNonCancelledRuns(client, p.id);
     if (runs > 0) {
       throw new AccountsHttpError('لا يمكن تعديل الحقول الحساسة للفترة بوجود تشغيلات غير ملغاة', 409);
     }
-    // قفل التقويم لإعادة فحص التداخل تحت الحماية
-    const nextCalendarId = p.payroll_calendar_id === undefined ? row.payroll_calendar_id : optionalUuid(p.payroll_calendar_id);
+    const nextCalendarId =
+      p.payroll_calendar_id === undefined
+        ? row.payroll_calendar_id
+        : optionalPayrollUuid(p.payroll_calendar_id, 'تقويم الرواتب');
     if (!nextCalendarId) throw new AccountsHttpError('تقويم الرواتب مطلوب', 400);
-    await acquirePayrollLocks(client, [payrollCalendarLock(nextCalendarId)]);
+    // بعد نجاح التزامن المتفائل يجب أن يطابق التقويم المخطط (المقفول مسبقاً)
+    if (plannedCalendarId && nextCalendarId !== plannedCalendarId) {
+      throw new AccountsHttpError(
+        'تم تعديل الفترة بواسطة مستخدم آخر. حدّث الصفحة ثم أعد المحاولة.',
+        409
+      );
+    }
 
     const start = p.start_date === undefined ? dateStr(row.start_date)! : requiredDate(p.start_date, 'تاريخ بداية الفترة');
     const end = p.end_date === undefined ? dateStr(row.end_date)! : requiredDate(p.end_date, 'تاريخ نهاية الفترة');
@@ -304,8 +325,8 @@ export async function updatePayrollPeriod(
     const cal = await resolveCalendarForPeriod(client, nextCalendarId, start, end);
     const fiscal = await resolveFiscal(
       client,
-      p.fiscal_year_id === undefined ? row.fiscal_year_id : optionalUuid(p.fiscal_year_id),
-      p.fiscal_period_id === undefined ? row.fiscal_period_id : optionalUuid(p.fiscal_period_id)
+      p.fiscal_year_id === undefined ? row.fiscal_year_id : optionalPayrollUuid(p.fiscal_year_id, 'السنة المالية'),
+      p.fiscal_period_id === undefined ? row.fiscal_period_id : optionalPayrollUuid(p.fiscal_period_id, 'الفترة المالية')
     );
     const providedCurrency = p.currency_code === undefined ? row.currency_code : currencyCode(p.currency_code);
     if (providedCurrency !== cal.currency_code) {
@@ -377,7 +398,7 @@ export async function closePayrollPeriod(
 ): Promise<PayrollPeriodRow> {
   await acquirePayrollLocks(client, [payrollPeriodLock(p.id)]);
   const row = await loadPayrollPeriod(client, p.id, true);
-  assertPayrollConcurrency(row, p.version, p.updated_at);
+  assertPayrollConcurrency(row, p.version, p.updated_at, 'الفترة');
   if (row.status !== 'OPEN' && row.status !== 'PROCESSING') {
     throw new AccountsHttpError('لا يمكن إغلاق فترة إلا وهي مفتوحة', 409);
   }
@@ -406,7 +427,7 @@ export async function reopenPayrollPeriod(
   const reason = requiredReason(p.reason, 'سبب إعادة فتح الفترة');
   await acquirePayrollLocks(client, [payrollPeriodLock(p.id)]);
   const row = await loadPayrollPeriod(client, p.id, true);
-  assertPayrollConcurrency(row, p.version, p.updated_at);
+  assertPayrollConcurrency(row, p.version, p.updated_at, 'الفترة');
   if (row.status !== 'CLOSED') {
     throw new AccountsHttpError('لا يمكن إعادة فتح فترة إلا وهي مغلقة', 409);
   }
@@ -427,7 +448,7 @@ export async function cancelPayrollPeriod(
   const reason = requiredReason(p.reason, 'سبب إلغاء الفترة');
   await acquirePayrollLocks(client, [payrollPeriodLock(p.id)]);
   const row = await loadPayrollPeriod(client, p.id, true);
-  assertPayrollConcurrency(row, p.version, p.updated_at);
+  assertPayrollConcurrency(row, p.version, p.updated_at, 'الفترة');
   if (row.status === 'CANCELLED') {
     throw new AccountsHttpError('الفترة ملغاة مسبقاً', 409);
   }

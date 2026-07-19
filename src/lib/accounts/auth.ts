@@ -97,6 +97,10 @@ export function mapPgError(error: unknown): NextResponse {
   const err = error as { code?: string; constraint?: string; message?: string };
   console.error('خطأ قاعدة بيانات نظام الحسابات:', err);
 
+  if (err?.code === '22P02') {
+    return jsonError('معرّف غير صالح', 400);
+  }
+
   if (err?.code === '23505') {
     if (err.constraint?.includes('fiscal_years_code') || err.constraint?.includes('uq_fiscal_years_code')) {
       return jsonError('يوجد عام مالي آخر يستخدم الرمز نفسه', 409);

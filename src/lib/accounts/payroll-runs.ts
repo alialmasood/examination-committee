@@ -16,6 +16,8 @@ import {
   iso,
   nextPayrollNumber,
   oneOf,
+  optionalPayrollUuid,
+  requirePayrollUuid,
   requiredReason,
 } from './payroll-validation';
 import type { TxClient } from './with-transaction';
@@ -76,22 +78,14 @@ export async function loadPayrollRun(
   id: string,
   forUpdate = false
 ): Promise<PayrollRunRow> {
+  const runId = requirePayrollUuid(id, 'معرّف التشغيل');
   const r = await txQuery<PayrollRunRow>(
     client,
     `SELECT * FROM accounts.payroll_runs WHERE id=$1::uuid ${forUpdate ? 'FOR UPDATE' : ''}`,
-    [id]
+    [runId]
   );
   if (!r.rows[0]) throw new AccountsHttpError('تشغيل الرواتب غير موجود', 404);
   return r.rows[0];
-}
-
-function optionalUuid(v: unknown): string | null {
-  const s = String(v ?? '').trim();
-  if (!s) return null;
-  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s)) {
-    throw new AccountsHttpError('معرّف غير صالح', 400);
-  }
-  return s;
 }
 
 /** يتحقق من شكل النطاق ومن وجود المرجع (بلا الاعتماد على person_type كنطاق). */
@@ -101,7 +95,7 @@ async function resolveScope(
   scopeRefRaw: unknown
 ): Promise<{ scope_type: string; scope_ref_id: string | null }> {
   const scope = oneOf(scopeType, PAYROLL_ENUMS.SCOPE_TYPE, 'نوع النطاق');
-  const ref = optionalUuid(scopeRefRaw);
+  const ref = optionalPayrollUuid(scopeRefRaw, 'مرجع النطاق');
   if (scope === 'ALL' || scope === 'PERSON_LIST') {
     if (ref) throw new AccountsHttpError('هذا النطاق لا يقبل مرجعاً مباشراً', 400);
     return { scope_type: scope, scope_ref_id: null };
@@ -175,7 +169,7 @@ export async function createPayrollRun(
     created_by: string;
   }
 ): Promise<PayrollRunRow> {
-  const periodId = optionalUuid(input.payroll_period_id);
+  const periodId = optionalPayrollUuid(input.payroll_period_id, 'فترة الرواتب');
   if (!periodId) throw new AccountsHttpError('فترة الرواتب مطلوبة', 400);
 
   // قفل الفترة لتسلسل فحص التكرار + الإدراج
@@ -251,7 +245,7 @@ export async function updatePayrollRun(
   const existing = await loadPayrollRun(client, p.id);
   await acquirePayrollLocks(client, [payrollPeriodLock(existing.payroll_period_id), payrollRunLock(p.id)]);
   const row = await loadPayrollRun(client, p.id, true);
-  assertPayrollConcurrency(row, p.version, p.updated_at);
+  assertPayrollConcurrency(row, p.version, p.updated_at, 'تشغيل الرواتب');
   if (row.status !== 'DRAFT') {
     throw new AccountsHttpError('لا يمكن تعديل تشغيل إلا وهو مسودة (DRAFT)', 409);
   }
@@ -301,7 +295,7 @@ export async function cancelPayrollRun(
   const existing = await loadPayrollRun(client, p.id);
   await acquirePayrollLocks(client, [payrollPeriodLock(existing.payroll_period_id), payrollRunLock(p.id)]);
   const row = await loadPayrollRun(client, p.id, true);
-  assertPayrollConcurrency(row, p.version, p.updated_at);
+  assertPayrollConcurrency(row, p.version, p.updated_at, 'تشغيل الرواتب');
   if (row.status === 'CANCELLED') {
     throw new AccountsHttpError('التشغيل ملغى مسبقاً', 409);
   }
