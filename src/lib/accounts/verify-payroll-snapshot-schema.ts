@@ -183,8 +183,10 @@ export async function verifyPayrollSnapshotSchema(
   }
 
   for (const run of runs.rows) {
-    if (run.status === 'CALCULATED' && !(peopleByRun.get(run.id)?.length)) {
-      fail('calculated_run_no_people', 'تشغيل CALCULATED بلا أشخاص لقطة', run.id);
+    const runPeople = peopleByRun.get(run.id) ?? [];
+    // CALCULATED فارغ مسموح عند نطاق فارغ (people_count=0) — 9.A.2.3
+    if (run.status === 'CALCULATED' && Number(run.people_count) > 0 && runPeople.length === 0) {
+      fail('calculated_run_no_people', 'تشغيل CALCULATED بلا أشخاص لقطة رغم people_count>0', run.id);
     }
   }
 
