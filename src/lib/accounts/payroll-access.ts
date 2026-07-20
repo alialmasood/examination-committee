@@ -8,12 +8,13 @@
  *   accounts_viewer   → payroll_view + payroll_view_runs
  *   accounts_clerk    → عرض + إدارة الأشخاص/العقود/التكليفات + إدارة الفترات + إنشاء التشغيلات
  *   accounts_approver → payroll_view + payroll_view_runs
- *   accounts_admin    → جميع الصلاحيات (بما فيها payroll_calculate و payroll_cancel_runs)
+ *   accounts_admin    → جميع الصلاحيات (بما فيها payroll_calculate و payroll_cancel_runs و payroll_recalculate)
  *
- * قواعد 9.A.2.1:
+ * قواعد 9.A.2.1 / 9.A.2.4.1:
  *   - payroll_calculate — admin فقط (POST .../runs/[id]/calculate).
+ *   - payroll_recalculate — admin فقط (API لاحقاً في 9.A.2.4.2).
  *   - payroll_cancel_runs (إلغاء التشغيل) — admin فقط.
- *   - clerk لا يملك calculate ولا cancel.
+ *   - clerk لا يملك calculate ولا recalculate ولا cancel.
  *   - العضوية المجرّدة → VIEW_ONLY فقط (عرض السجل + عرض التشغيلات).
  */
 import { AccountsHttpError } from './auth';
@@ -44,6 +45,8 @@ export const PAYROLL_CAPABILITIES = {
   MANAGE_PERIODS: 'payroll_manage_periods',
   CREATE_RUNS: 'payroll_create_runs',
   CALCULATE: 'payroll_calculate',
+  /** 9.A.2.4.1 — إعادة احتساب تشغيل CALCULATED (منفصلة عن calculate) */
+  RECALCULATE: 'payroll_recalculate',
   CANCEL_RUNS: 'payroll_cancel_runs',
   ADMIN: 'payroll_admin',
 } as const;
@@ -72,6 +75,7 @@ const ADMIN_CAPS = new Set<string>([
   PAYROLL_CAPABILITIES.MANAGE_COMPONENTS,
   PAYROLL_CAPABILITIES.MANAGE_MAPPINGS,
   PAYROLL_CAPABILITIES.CALCULATE,
+  PAYROLL_CAPABILITIES.RECALCULATE,
   PAYROLL_CAPABILITIES.CANCEL_RUNS,
   PAYROLL_CAPABILITIES.ADMIN,
 ]);

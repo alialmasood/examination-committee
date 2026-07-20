@@ -183,7 +183,11 @@ export type AuditAction =
   | 'payroll_run.calculation_started'
   | 'payroll_run.calculated'
   | 'payroll_run.calculation_blocked'
-  | 'payroll_run.calculation_failed';
+  | 'payroll_run.calculation_failed'
+  | 'payroll_run.recalculation_started'
+  | 'payroll_run.recalculated'
+  | 'payroll_run.recalculation_blocked'
+  | 'payroll_run.recalculation_failed';
 
 export async function writeFinancialAudit(
   client: TxClient,

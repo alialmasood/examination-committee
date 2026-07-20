@@ -444,6 +444,446 @@ async function buildSummary(
   };
 }
 
+/** خطافات failpoint لمسار إعادة البناء المشترك (calculate / recalculate). */
+export type RebuildArtifactsFailpointHooks = {
+  afterFirstPerson?: () => void;
+  afterFirstLine?: () => void;
+  beforeRunHash?: () => void;
+  beforeTotalsUpdate?: () => void;
+};
+
+export type RebuildPayrollRunArtifactsResult = {
+  run: PayrollRunRow;
+  peopleCount: number;
+  errorCount: number;
+  warningCount: number;
+  grossTotal: string;
+  deductionTotal: string;
+  employerTotal: string;
+  netTotal: string;
+  snapshotHash: string;
+};
+
+/**
+ * INTERNAL: إعادة بناء آثار الاحتساب بينما التشغيل في CALCULATING.
+ * يفترض أن المسح (إن لزم) وتم تعيين CALCULATING قد أُنجزا مسبقاً.
+ * لا يكتب Audit نجاح — المستدعي مسؤول عن ذلك.
+ */
+export async function rebuildPayrollRunArtifactsWhileCalculating(
+  client: TxClient,
+  input: {
+    run: PayrollRunRow;
+    calcDate: string;
+    userId: string;
+    requestIdUuid: string;
+    failpointHooks?: RebuildArtifactsFailpointHooks;
+  }
+): Promise<RebuildPayrollRunArtifactsResult> {
+  const { run, calcDate, userId } = input;
+  const hooks = input.failpointHooks ?? {};
+
+  const persons = await resolvePayrollRunPersons(client, {
+    scope_type: run.scope_type,
+    scope_ref_id: run.scope_ref_id,
+    calculation_date: calcDate,
+    run_id: run.id,
+  });
+
+  const personHashes: string[] = [];
+  let peopleCount = 0;
+  let errorCount = 0;
+  let warningCount = 0;
+  const grossParts: string[] = [];
+  const dedParts: string[] = [];
+  const empParts: string[] = [];
+  const netParts: string[] = [];
+
+  const runIssues: PayrollCalcIssueDraft[] = [];
+  if (persons.length === 0 && run.scope_type !== 'PERSON_LIST') {
+    runIssues.push(
+      buildCalcIssue(PAYROLL_CALC_ISSUE.RUN_EMPTY_SCOPE, {
+        entity_type: 'RUN',
+        entity_id: run.id,
+      })
+    );
+    warningCount += 1;
+  }
+
+  let firstPersonInserted = false;
+  let firstLineInserted = false;
+  const afterFirstPersonInsert = () => {
+    if (!firstPersonInserted) {
+      firstPersonInserted = true;
+      hooks.afterFirstPerson?.();
+    }
+  };
+
+  for (const person of persons) {
+    peopleCount += 1;
+
+    if (person.scope_ineligible) {
+      const { snapshot, snapshot_hash } = buildPersonSnapshotJson({
+        person,
+        contract: null,
+        assignments: [],
+        component_assignment_ids: [],
+        calculation_date: calcDate,
+        currency_code: run.currency_code,
+        scope_type: run.scope_type,
+        scope_ref_id: run.scope_ref_id,
+        resolved_via: 'PERSON_LIST',
+      });
+      const rp = await insertRunPersonSnapshot(client, {
+        payroll_run_id: run.id,
+        payroll_person_id: person.id,
+        person_code_snapshot: person.person_code,
+        full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type,
+        college_id_snapshot: null,
+        department_id_snapshot: person.department_id,
+        cost_center_id_snapshot: person.default_cost_center_id,
+        currency_code: run.currency_code,
+        basic_amount: '0',
+        gross_amount: '0',
+        deductions_amount: '0',
+        employer_contributions_amount: '0',
+        net_amount: '0',
+        calculation_status: 'EXCLUDED',
+        warning_count: 1,
+        error_count: 0,
+        snapshot_json: snapshot,
+        snapshot_hash,
+        created_by: userId,
+      });
+      afterFirstPersonInsert();
+      await persistIssues(
+        client,
+        run.id,
+        rp.id,
+        [
+          buildCalcIssue(PAYROLL_CALC_ISSUE.SCOPE_PERSON_INELIGIBLE, {
+            entity_type: 'PERSON',
+            entity_id: person.id,
+          }),
+        ],
+        userId
+      );
+      warningCount += 1;
+      personHashes.push(snapshot_hash);
+      continue;
+    }
+
+    const contractRes = await resolveActiveContract(
+      client,
+      person.id,
+      calcDate,
+      run.currency_code
+    );
+
+    if (!contractRes.ok) {
+      const { snapshot, snapshot_hash } = buildPersonSnapshotJson({
+        person,
+        contract: null,
+        assignments: [],
+        component_assignment_ids: [],
+        calculation_date: calcDate,
+        currency_code: run.currency_code,
+        scope_type: run.scope_type,
+        scope_ref_id: run.scope_ref_id,
+        resolved_via: run.scope_type,
+      });
+      const rp = await insertRunPersonSnapshot(client, {
+        payroll_run_id: run.id,
+        payroll_person_id: person.id,
+        person_code_snapshot: person.person_code,
+        full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type,
+        department_id_snapshot: person.department_id,
+        cost_center_id_snapshot: person.default_cost_center_id,
+        currency_code: run.currency_code,
+        basic_amount: '0',
+        gross_amount: '0',
+        deductions_amount: '0',
+        employer_contributions_amount: '0',
+        net_amount: '0',
+        calculation_status: 'ERROR',
+        warning_count: 0,
+        error_count: 1,
+        snapshot_json: snapshot,
+        snapshot_hash,
+        created_by: userId,
+      });
+      afterFirstPersonInsert();
+      await persistIssues(client, run.id, rp.id, [contractRes.issue], userId);
+      errorCount += 1;
+      personHashes.push(snapshot_hash);
+      continue;
+    }
+
+    const contract = contractRes.contract;
+    const assignments = await loadActiveAssignments(client, person.id, calcDate);
+    const collegeId = await resolveCollegeIdForDepartment(
+      client,
+      assignments.find((a) => a.department_id)?.department_id ?? person.department_id
+    );
+
+    const sources = await resolveComponentSources(client, {
+      personId: person.id,
+      contractId: contract.id,
+      calculationDate: calcDate,
+    });
+
+    const { lines, blocking, warnings } = computePersonLines(
+      sources,
+      contract.base_amount,
+      run.currency_code,
+      calcDate
+    );
+
+    const personWarnings: PayrollCalcIssueDraft[] = [...warnings];
+    if (
+      person.default_currency_code.toUpperCase() !== run.currency_code.toUpperCase()
+    ) {
+      personWarnings.push(
+        buildCalcIssue(PAYROLL_CALC_ISSUE.PERSON_CURRENCY_DIFFERS, {
+          entity_type: 'PERSON',
+          entity_id: person.id,
+        })
+      );
+    }
+
+    if (blocking.length > 0) {
+      const { snapshot, snapshot_hash } = buildPersonSnapshotJson({
+        person,
+        contract,
+        assignments,
+        component_assignment_ids: sources.map((s) => s.pca_id),
+        calculation_date: calcDate,
+        currency_code: run.currency_code,
+        scope_type: run.scope_type,
+        scope_ref_id: run.scope_ref_id,
+        resolved_via: run.scope_type,
+        college_id: collegeId,
+      });
+      const rp = await insertRunPersonSnapshot(client, {
+        payroll_run_id: run.id,
+        payroll_person_id: person.id,
+        payroll_contract_id: contract.id,
+        person_code_snapshot: person.person_code,
+        full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type,
+        college_id_snapshot: collegeId,
+        department_id_snapshot: person.department_id,
+        cost_center_id_snapshot: person.default_cost_center_id,
+        currency_code: run.currency_code,
+        basic_amount: normalizeMoneyInput(contract.base_amount),
+        gross_amount: '0',
+        deductions_amount: '0',
+        employer_contributions_amount: '0',
+        net_amount: '0',
+        calculation_status: 'ERROR',
+        warning_count: personWarnings.length,
+        error_count: blocking.length,
+        snapshot_json: snapshot,
+        snapshot_hash,
+        created_by: userId,
+      });
+      afterFirstPersonInsert();
+      await persistIssues(
+        client,
+        run.id,
+        rp.id,
+        [...blocking, ...personWarnings],
+        userId
+      );
+      errorCount += 1;
+      warningCount += personWarnings.length;
+      personHashes.push(snapshot_hash);
+      continue;
+    }
+
+    const totals = summarizeLines(lines);
+    if (lines.filter((l) => l.component_type === 'EARNING').length === 0) {
+      personWarnings.push(
+        buildCalcIssue(PAYROLL_CALC_ISSUE.NO_EARNINGS, {
+          entity_type: 'PERSON',
+          entity_id: person.id,
+        })
+      );
+    }
+    if (moneyToMillisSigned(totals.net) < BigInt(0)) {
+      personWarnings.push(
+        buildCalcIssue(PAYROLL_CALC_ISSUE.NEGATIVE_NET, {
+          entity_type: 'PERSON',
+          entity_id: person.id,
+        })
+      );
+    }
+
+    const { snapshot, snapshot_hash } = buildPersonSnapshotJson({
+      person,
+      contract,
+      assignments,
+      component_assignment_ids: sources.map((s) => s.pca_id),
+      calculation_date: calcDate,
+      currency_code: run.currency_code,
+      scope_type: run.scope_type,
+      scope_ref_id: run.scope_ref_id,
+      resolved_via: run.scope_type,
+      college_id: collegeId,
+    });
+
+    const rp = await insertRunPersonSnapshot(client, {
+      payroll_run_id: run.id,
+      payroll_person_id: person.id,
+      payroll_contract_id: contract.id,
+      person_code_snapshot: person.person_code,
+      full_name_snapshot: person.full_name_ar,
+      person_type_snapshot: person.person_type,
+      college_id_snapshot: collegeId,
+      department_id_snapshot: person.department_id,
+      cost_center_id_snapshot: person.default_cost_center_id,
+      currency_code: run.currency_code,
+      basic_amount: normalizeMoneyInput(contract.base_amount),
+      gross_amount: totals.gross,
+      deductions_amount: totals.deductions,
+      employer_contributions_amount: totals.employer,
+      net_amount: totals.net,
+      calculation_status: 'CALCULATED',
+      warning_count: personWarnings.length,
+      error_count: 0,
+      snapshot_json: snapshot,
+      snapshot_hash,
+      created_by: userId,
+    });
+    afterFirstPersonInsert();
+
+    for (const line of lines) {
+      await insertRunLine(client, {
+        payroll_run_id: run.id,
+        payroll_run_person_id: rp.id,
+        payroll_component_id: line.payroll_component_id,
+        payroll_assignment_id: line.payroll_assignment_id,
+        payroll_component_assignment_id: line.payroll_component_assignment_id,
+        component_code_snapshot: line.component_code_snapshot,
+        component_name_snapshot: line.component_name_snapshot,
+        component_type: line.component_type,
+        calculation_method: line.calculation_method,
+        calculation_base_type: line.calculation_base_type,
+        percentage: line.percentage,
+        base_amount: line.base_amount,
+        calculated_amount: line.calculated_amount,
+        source_effective_from: line.source_effective_from,
+        source_effective_to: line.source_effective_to,
+        line_source: 'GENERATED',
+        sequence: line.sequence,
+        created_by: userId,
+      });
+      if (!firstLineInserted) {
+        firstLineInserted = true;
+        hooks.afterFirstLine?.();
+      }
+    }
+    await persistIssues(client, run.id, rp.id, personWarnings, userId);
+
+    warningCount += personWarnings.length;
+    grossParts.push(totals.gross);
+    dedParts.push(totals.deductions);
+    empParts.push(totals.employer);
+    netParts.push(totals.net);
+    personHashes.push(snapshot_hash);
+  }
+
+  await persistIssues(client, run.id, null, runIssues, userId);
+
+  const grossTotal = sumMoney(grossParts);
+  const deductionTotal = sumMoney(dedParts);
+  const employerTotal = sumMoney(empParts);
+  const netTotal = millisToSignedMoney(
+    netParts.reduce((acc, v) => acc + moneyToMillisSigned(v), BigInt(0))
+  );
+
+  let snapshotHash: string;
+  try {
+    hooks.beforeRunHash?.();
+    snapshotHash = buildRunSnapshotHash({
+      person_snapshot_hashes: personHashes,
+      people_count: peopleCount,
+      gross_total: grossTotal,
+      deduction_total: deductionTotal,
+      employer_contribution_total: employerTotal,
+      net_total: netTotal,
+      warning_count: warningCount,
+      error_count: errorCount,
+    });
+  } catch (e) {
+    if (
+      e instanceof Error &&
+      (e.message.startsWith('CALC_FAILPOINT_') || e.message.startsWith('RECALC_FAILPOINT_'))
+    ) {
+      throw e;
+    }
+    throw new AccountsHttpError('فشل توليد بصمة لقطة التشغيل', 500);
+  }
+
+  hooks.beforeTotalsUpdate?.();
+  const final = await txQuery<PayrollRunRow>(
+    client,
+    `UPDATE accounts.payroll_runs SET
+       status = 'CALCULATED',
+       people_count = $2,
+       gross_total = $3::numeric,
+       deduction_total = $4::numeric,
+       employer_contribution_total = $5::numeric,
+       net_total = $6::numeric,
+       warning_count = $7,
+       error_count = $8,
+       snapshot_hash = $9,
+       last_calculation_request_id = calculation_request_id,
+       calculated_at = NOW(),
+       calculated_by = $10::uuid,
+       updated_by = $10::uuid,
+       updated_at = NOW(),
+       version = version + 1
+     WHERE id = $1::uuid
+     RETURNING *`,
+    [
+      run.id,
+      peopleCount,
+      grossTotal,
+      deductionTotal,
+      employerTotal,
+      netTotal,
+      warningCount,
+      errorCount,
+      snapshotHash,
+      userId,
+    ]
+  );
+
+  const pending = await txQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int n FROM accounts.payroll_run_people
+     WHERE payroll_run_id=$1::uuid AND calculation_status='PENDING'`,
+    [run.id]
+  );
+  if ((pending.rows[0]?.n ?? 0) > 0) {
+    throw new AccountsHttpError('بقي أشخاص بحالة PENDING بعد الاحتساب', 500);
+  }
+
+  return {
+    run: final.rows[0],
+    peopleCount,
+    errorCount,
+    warningCount,
+    grossTotal,
+    deductionTotal,
+    employerTotal,
+    netTotal,
+    snapshotHash,
+  };
+}
+
 export async function calculatePayrollRunCore(
   client: TxClient,
   input: {
@@ -573,397 +1013,19 @@ export async function calculatePayrollRunCore(
       description: `بدء احتساب تشغيل الرواتب ${run.run_number}`,
     });
 
-    // 9) حل الأشخاص
-    const persons = await resolvePayrollRunPersons(client, {
-      scope_type: run.scope_type,
-      scope_ref_id: run.scope_ref_id,
-      calculation_date: calcDate,
-      run_id: run.id,
+    const rebuilt = await rebuildPayrollRunArtifactsWhileCalculating(client, {
+      run: calculatingRun,
+      calcDate,
+      userId: input.userId,
+      requestIdUuid: requestId,
+      failpointHooks: {
+        afterFirstPerson: () => hitFailpoint('after_first_person'),
+        afterFirstLine: () => hitFailpoint('after_first_line'),
+        beforeRunHash: () => hitFailpoint('before_run_hash'),
+        beforeTotalsUpdate: () => hitFailpoint('before_totals_update'),
+      },
     });
 
-    const personHashes: string[] = [];
-    let peopleCount = 0;
-    let errorCount = 0;
-    let warningCount = 0;
-    const grossParts: string[] = [];
-    const dedParts: string[] = [];
-    const empParts: string[] = [];
-    const netParts: string[] = [];
-
-    const runIssues: PayrollCalcIssueDraft[] = [];
-    if (persons.length === 0 && run.scope_type !== 'PERSON_LIST') {
-      runIssues.push(
-        buildCalcIssue(PAYROLL_CALC_ISSUE.RUN_EMPTY_SCOPE, {
-          entity_type: 'RUN',
-          entity_id: run.id,
-        })
-      );
-      warningCount += 1;
-    }
-
-    let firstPersonInserted = false;
-    let firstLineInserted = false;
-    const afterFirstPersonInsert = () => {
-      if (!firstPersonInserted) {
-        firstPersonInserted = true;
-        hitFailpoint('after_first_person');
-      }
-    };
-
-    // 10–12) لكل شخص
-    for (const person of persons) {
-      peopleCount += 1;
-
-      if (person.scope_ineligible) {
-        const { snapshot, snapshot_hash } = buildPersonSnapshotJson({
-          person,
-          contract: null,
-          assignments: [],
-          component_assignment_ids: [],
-          calculation_date: calcDate,
-          currency_code: run.currency_code,
-          scope_type: run.scope_type,
-          scope_ref_id: run.scope_ref_id,
-          resolved_via: 'PERSON_LIST',
-        });
-        const rp = await insertRunPersonSnapshot(client, {
-          payroll_run_id: run.id,
-          payroll_person_id: person.id,
-          person_code_snapshot: person.person_code,
-          full_name_snapshot: person.full_name_ar,
-          person_type_snapshot: person.person_type,
-          college_id_snapshot: null,
-          department_id_snapshot: person.department_id,
-          cost_center_id_snapshot: person.default_cost_center_id,
-          currency_code: run.currency_code,
-          basic_amount: '0',
-          gross_amount: '0',
-          deductions_amount: '0',
-          employer_contributions_amount: '0',
-          net_amount: '0',
-          calculation_status: 'EXCLUDED',
-          warning_count: 1,
-          error_count: 0,
-          snapshot_json: snapshot,
-          snapshot_hash,
-          created_by: input.userId,
-        });
-        afterFirstPersonInsert();
-        await persistIssues(
-          client,
-          run.id,
-          rp.id,
-          [
-            buildCalcIssue(PAYROLL_CALC_ISSUE.SCOPE_PERSON_INELIGIBLE, {
-              entity_type: 'PERSON',
-              entity_id: person.id,
-            }),
-          ],
-          input.userId
-        );
-        warningCount += 1;
-        personHashes.push(snapshot_hash);
-        continue;
-      }
-
-      const contractRes = await resolveActiveContract(
-        client,
-        person.id,
-        calcDate,
-        run.currency_code
-      );
-
-      if (!contractRes.ok) {
-        const { snapshot, snapshot_hash } = buildPersonSnapshotJson({
-          person,
-          contract: null,
-          assignments: [],
-          component_assignment_ids: [],
-          calculation_date: calcDate,
-          currency_code: run.currency_code,
-          scope_type: run.scope_type,
-          scope_ref_id: run.scope_ref_id,
-          resolved_via: run.scope_type,
-        });
-        const rp = await insertRunPersonSnapshot(client, {
-          payroll_run_id: run.id,
-          payroll_person_id: person.id,
-          person_code_snapshot: person.person_code,
-          full_name_snapshot: person.full_name_ar,
-          person_type_snapshot: person.person_type,
-          department_id_snapshot: person.department_id,
-          cost_center_id_snapshot: person.default_cost_center_id,
-          currency_code: run.currency_code,
-          basic_amount: '0',
-          gross_amount: '0',
-          deductions_amount: '0',
-          employer_contributions_amount: '0',
-          net_amount: '0',
-          calculation_status: 'ERROR',
-          warning_count: 0,
-          error_count: 1,
-          snapshot_json: snapshot,
-          snapshot_hash,
-          created_by: input.userId,
-        });
-        afterFirstPersonInsert();
-        await persistIssues(client, run.id, rp.id, [contractRes.issue], input.userId);
-        errorCount += 1;
-        personHashes.push(snapshot_hash);
-        continue;
-      }
-
-      const contract = contractRes.contract;
-      const assignments = await loadActiveAssignments(client, person.id, calcDate);
-      const collegeId = await resolveCollegeIdForDepartment(
-        client,
-        assignments.find((a) => a.department_id)?.department_id ?? person.department_id
-      );
-
-      const sources = await resolveComponentSources(client, {
-        personId: person.id,
-        contractId: contract.id,
-        calculationDate: calcDate,
-      });
-
-      const { lines, blocking, warnings } = computePersonLines(
-        sources,
-        contract.base_amount,
-        run.currency_code,
-        calcDate
-      );
-
-      const personWarnings: PayrollCalcIssueDraft[] = [...warnings];
-      if (
-        person.default_currency_code.toUpperCase() !== run.currency_code.toUpperCase()
-      ) {
-        personWarnings.push(
-          buildCalcIssue(PAYROLL_CALC_ISSUE.PERSON_CURRENCY_DIFFERS, {
-            entity_type: 'PERSON',
-            entity_id: person.id,
-          })
-        );
-      }
-
-      if (blocking.length > 0) {
-        const { snapshot, snapshot_hash } = buildPersonSnapshotJson({
-          person,
-          contract,
-          assignments,
-          component_assignment_ids: sources.map((s) => s.pca_id),
-          calculation_date: calcDate,
-          currency_code: run.currency_code,
-          scope_type: run.scope_type,
-          scope_ref_id: run.scope_ref_id,
-          resolved_via: run.scope_type,
-          college_id: collegeId,
-        });
-        const rp = await insertRunPersonSnapshot(client, {
-          payroll_run_id: run.id,
-          payroll_person_id: person.id,
-          payroll_contract_id: contract.id,
-          person_code_snapshot: person.person_code,
-          full_name_snapshot: person.full_name_ar,
-          person_type_snapshot: person.person_type,
-          college_id_snapshot: collegeId,
-          department_id_snapshot: person.department_id,
-          cost_center_id_snapshot: person.default_cost_center_id,
-          currency_code: run.currency_code,
-          basic_amount: normalizeMoneyInput(contract.base_amount),
-          gross_amount: '0',
-          deductions_amount: '0',
-          employer_contributions_amount: '0',
-          net_amount: '0',
-          calculation_status: 'ERROR',
-          warning_count: personWarnings.length,
-          error_count: blocking.length,
-          snapshot_json: snapshot,
-          snapshot_hash,
-          created_by: input.userId,
-        });
-        afterFirstPersonInsert();
-        await persistIssues(
-          client,
-          run.id,
-          rp.id,
-          [...blocking, ...personWarnings],
-          input.userId
-        );
-        errorCount += 1;
-        warningCount += personWarnings.length;
-        personHashes.push(snapshot_hash);
-        continue;
-      }
-
-      // شخص ناجح
-      const totals = summarizeLines(lines);
-      if (lines.filter((l) => l.component_type === 'EARNING').length === 0) {
-        personWarnings.push(
-          buildCalcIssue(PAYROLL_CALC_ISSUE.NO_EARNINGS, {
-            entity_type: 'PERSON',
-            entity_id: person.id,
-          })
-        );
-      }
-      if (moneyToMillisSigned(totals.net) < BigInt(0)) {
-        personWarnings.push(
-          buildCalcIssue(PAYROLL_CALC_ISSUE.NEGATIVE_NET, {
-            entity_type: 'PERSON',
-            entity_id: person.id,
-          })
-        );
-      }
-
-      const { snapshot, snapshot_hash } = buildPersonSnapshotJson({
-        person,
-        contract,
-        assignments,
-        component_assignment_ids: sources.map((s) => s.pca_id),
-        calculation_date: calcDate,
-        currency_code: run.currency_code,
-        scope_type: run.scope_type,
-        scope_ref_id: run.scope_ref_id,
-        resolved_via: run.scope_type,
-        college_id: collegeId,
-      });
-
-      const rp = await insertRunPersonSnapshot(client, {
-        payroll_run_id: run.id,
-        payroll_person_id: person.id,
-        payroll_contract_id: contract.id,
-        person_code_snapshot: person.person_code,
-        full_name_snapshot: person.full_name_ar,
-        person_type_snapshot: person.person_type,
-        college_id_snapshot: collegeId,
-        department_id_snapshot: person.department_id,
-        cost_center_id_snapshot: person.default_cost_center_id,
-        currency_code: run.currency_code,
-        basic_amount: normalizeMoneyInput(contract.base_amount),
-        gross_amount: totals.gross,
-        deductions_amount: totals.deductions,
-        employer_contributions_amount: totals.employer,
-        net_amount: totals.net,
-        calculation_status: 'CALCULATED',
-        warning_count: personWarnings.length,
-        error_count: 0,
-        snapshot_json: snapshot,
-        snapshot_hash,
-        created_by: input.userId,
-      });
-      afterFirstPersonInsert();
-
-      for (const line of lines) {
-        await insertRunLine(client, {
-          payroll_run_id: run.id,
-          payroll_run_person_id: rp.id,
-          payroll_component_id: line.payroll_component_id,
-          payroll_assignment_id: line.payroll_assignment_id,
-          payroll_component_assignment_id: line.payroll_component_assignment_id,
-          component_code_snapshot: line.component_code_snapshot,
-          component_name_snapshot: line.component_name_snapshot,
-          component_type: line.component_type,
-          calculation_method: line.calculation_method,
-          calculation_base_type: line.calculation_base_type,
-          percentage: line.percentage,
-          base_amount: line.base_amount,
-          calculated_amount: line.calculated_amount,
-          source_effective_from: line.source_effective_from,
-          source_effective_to: line.source_effective_to,
-          line_source: 'GENERATED',
-          sequence: line.sequence,
-          created_by: input.userId,
-        });
-        if (!firstLineInserted) {
-          firstLineInserted = true;
-          hitFailpoint('after_first_line');
-        }
-      }
-      await persistIssues(client, run.id, rp.id, personWarnings, input.userId);
-
-      warningCount += personWarnings.length;
-      grossParts.push(totals.gross);
-      dedParts.push(totals.deductions);
-      empParts.push(totals.employer);
-      netParts.push(totals.net);
-      personHashes.push(snapshot_hash);
-    }
-
-    await persistIssues(client, run.id, null, runIssues, input.userId);
-
-    // 13) إجماليات التشغيل
-    const grossTotal = sumMoney(grossParts);
-    const deductionTotal = sumMoney(dedParts);
-    const employerTotal = sumMoney(empParts);
-    const netTotal = millisToSignedMoney(
-      netParts.reduce((acc, v) => acc + moneyToMillisSigned(v), BigInt(0))
-    );
-
-    let snapshotHash: string;
-    try {
-      hitFailpoint('before_run_hash');
-      snapshotHash = buildRunSnapshotHash({
-        person_snapshot_hashes: personHashes,
-        people_count: peopleCount,
-        gross_total: grossTotal,
-        deduction_total: deductionTotal,
-        employer_contribution_total: employerTotal,
-        net_total: netTotal,
-        warning_count: warningCount,
-        error_count: errorCount,
-      });
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith('CALC_FAILPOINT_')) throw e;
-      throw new AccountsHttpError('فشل توليد بصمة لقطة التشغيل', 500);
-    }
-
-    // 14) CALCULATED
-    hitFailpoint('before_totals_update');
-    const final = await txQuery<PayrollRunRow>(
-      client,
-      `UPDATE accounts.payroll_runs SET
-         status = 'CALCULATED',
-         people_count = $2,
-         gross_total = $3::numeric,
-         deduction_total = $4::numeric,
-         employer_contribution_total = $5::numeric,
-         net_total = $6::numeric,
-         warning_count = $7,
-         error_count = $8,
-         snapshot_hash = $9,
-         last_calculation_request_id = calculation_request_id,
-         calculated_at = NOW(),
-         calculated_by = $10::uuid,
-         updated_by = $10::uuid,
-         updated_at = NOW(),
-         version = version + 1
-       WHERE id = $1::uuid
-       RETURNING *`,
-      [
-        run.id,
-        peopleCount,
-        grossTotal,
-        deductionTotal,
-        employerTotal,
-        netTotal,
-        warningCount,
-        errorCount,
-        snapshotHash,
-        input.userId,
-      ]
-    );
-
-    // لا PENDING
-    const pending = await txQuery<{ n: number }>(
-      client,
-      `SELECT COUNT(*)::int n FROM accounts.payroll_run_people
-       WHERE payroll_run_id=$1::uuid AND calculation_status='PENDING'`,
-      [run.id]
-    );
-    if ((pending.rows[0]?.n ?? 0) > 0) {
-      throw new AccountsHttpError('بقي أشخاص بحالة PENDING بعد الاحتساب', 500);
-    }
-
-    // 15) audit
     hitFailpoint('during_audit');
     await writeFinancialAudit(client, {
       userId: input.userId,
@@ -972,20 +1034,20 @@ export async function calculatePayrollRunCore(
       entityId: run.id,
       newValues: {
         attempt: calculatingRun.calculation_attempt_number,
-        people_count: peopleCount,
-        error_count: errorCount,
-        warning_count: warningCount,
-        gross_total: grossTotal,
-        deduction_total: deductionTotal,
-        employer_contribution_total: employerTotal,
-        net_total: netTotal,
-        snapshot_hash: snapshotHash,
+        people_count: rebuilt.peopleCount,
+        error_count: rebuilt.errorCount,
+        warning_count: rebuilt.warningCount,
+        gross_total: rebuilt.grossTotal,
+        deduction_total: rebuilt.deductionTotal,
+        employer_contribution_total: rebuilt.employerTotal,
+        net_total: rebuilt.netTotal,
+        snapshot_hash: rebuilt.snapshotHash,
         calculation_request_id: requestId,
       },
       description: `اكتمال احتساب تشغيل الرواتب ${run.run_number}`,
     });
 
-    return buildSummary(client, final.rows[0]);
+    return buildSummary(client, rebuilt.run);
   } catch (e) {
     // فشل تقني بعد CALCULATING → rollback كامل عبر withTransaction (يبقى DRAFT).
     // Audit failed يُسجَّل خارج هذه المعاملة من المستدعي إن لزم (9.A.2.3.2).
