@@ -170,6 +170,26 @@ async function hasTerminalActionForCycle(
   return Number(r.rows[0]?.n ?? 0) > 0;
 }
 
+async function requireSubmitActionForCycle(
+  client: TxClient,
+  runId: string,
+  cycle: number
+): Promise<void> {
+  const r = await txQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int n FROM accounts.payroll_run_approval_actions
+     WHERE payroll_run_id=$1::uuid AND approval_cycle=$2
+       AND action='SUBMITTED_FOR_REVIEW'`,
+    [runId, cycle]
+  );
+  if (Number(r.rows[0]?.n ?? 0) < 1) {
+    throw new AccountsHttpError(
+      'سجل إرسال المراجعة مفقود لهذه الدورة — رُفضت العملية (APPROVAL_INTEGRITY_CONFLICT)',
+      409
+    );
+  }
+}
+
 function serializeAction(a: PayrollApprovalActionRow) {
   return {
     id: a.id,
@@ -559,6 +579,7 @@ export async function approvePayrollRunCore(
   await assertPeriodAllowsApproval(client, run.payroll_period_id);
 
   const cycle = Number(run.approval_cycle);
+  await requireSubmitActionForCycle(client, run.id, cycle);
   if (await hasTerminalActionForCycle(client, run.id, cycle)) {
     throw new AccountsHttpError(
       'هذه الدورة انتهت مسبقاً باعتماد أو رفض — لا يمكن الاعتماد مجدداً',
@@ -697,6 +718,7 @@ export async function rejectPayrollRunReviewCore(
   hitPayrollApprovalFailpoint('reject_after_reason_validation');
 
   const cycle = Number(run.approval_cycle);
+  await requireSubmitActionForCycle(client, run.id, cycle);
   if (await hasTerminalActionForCycle(client, run.id, cycle)) {
     throw new AccountsHttpError(
       'هذه الدورة انتهت مسبقاً باعتماد أو رفض — لا يمكن الرفض مجدداً',

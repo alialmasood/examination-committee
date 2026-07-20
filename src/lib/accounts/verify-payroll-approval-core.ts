@@ -134,6 +134,9 @@ export async function verifyPayrollApprovalCore(
       if (run.approved_snapshot_hash || run.approved_at || run.approved_by) {
         fail('under_review_has_approved_fields', 'UNDER_REVIEW بحقول اعتماد غير فارغة', run.id);
       }
+      if (Number(run.approval_cycle) < 1) {
+        fail('under_review_cycle_zero', 'UNDER_REVIEW مع approval_cycle < 1', run.id);
+      }
     }
 
     if (run.status === 'APPROVED') {
@@ -164,6 +167,9 @@ export async function verifyPayrollApprovalCore(
       ) {
         fail('sod_submitter_equals_approver', 'Submitter = Approver', run.id);
       }
+      if (Number(run.approval_cycle) < 1) {
+        fail('approved_cycle_zero', 'APPROVED مع approval_cycle=0', run.id);
+      }
     }
 
     if (run.status === 'CALCULATED') {
@@ -179,6 +185,55 @@ export async function verifyPayrollApprovalCore(
     if (run.status === 'CANCELLED') {
       if (run.review_snapshot_hash || run.submitted_for_review_at || run.submitted_for_review_by) {
         fail('cancelled_active_review_fields', 'CANCELLED بحقول مراجعة نشطة', run.id);
+      }
+    }
+
+    // انحراف الآثار عن إجماليات التشغيل (UNDER_REVIEW / APPROVED)
+    if (run.status === 'UNDER_REVIEW' || run.status === 'APPROVED') {
+      const arts = await txQuery<{
+        people_n: number;
+        gross: string;
+        ded: string;
+        emp: string;
+        net: string;
+      }>(
+        client,
+        `SELECT
+           COUNT(*)::int AS people_n,
+           COALESCE(SUM(gross_amount),0)::text AS gross,
+           COALESCE(SUM(deductions_amount),0)::text AS ded,
+           COALESCE(SUM(employer_contributions_amount),0)::text AS emp,
+           COALESCE(SUM(net_amount),0)::text AS net
+         FROM accounts.payroll_run_people
+         WHERE payroll_run_id=$1::uuid AND superseded=FALSE`,
+        [run.id]
+      );
+      const row = arts.rows[0];
+      if (row) {
+        const runTotals = await txQuery<{
+          people_count: number;
+          gross_total: string;
+          deduction_total: string;
+          employer_contribution_total: string;
+          net_total: string;
+        }>(
+          client,
+          `SELECT people_count, gross_total::text, deduction_total::text,
+                  employer_contribution_total::text, net_total::text
+           FROM accounts.payroll_runs WHERE id=$1::uuid`,
+          [run.id]
+        );
+        const rt = runTotals.rows[0];
+        if (
+          rt &&
+          (Number(row.people_n) !== Number(rt.people_count) ||
+            Number(row.gross) !== Number(rt.gross_total) ||
+            Number(row.ded) !== Number(rt.deduction_total) ||
+            Number(row.emp) !== Number(rt.employer_contribution_total) ||
+            Number(row.net) !== Number(rt.net_total))
+        ) {
+          fail('artifacts_totals_drift', 'آثار الاحتساب لا تطابق إجماليات التشغيل', run.id);
+        }
       }
     }
   }
@@ -243,12 +298,54 @@ export async function verifyPayrollApprovalCore(
         fail('reject_without_reason', 'REJECTED بلا سبب كافٍ', a.id);
       }
     }
+    if (!a.actor_id) {
+      fail('action_missing_actor', 'Action بلا actor_id', a.id);
+    }
     const meta = a.metadata_json ?? {};
     const blob = JSON.stringify(meta) + str(a.comment) + str(a.reason);
     if (/idempotency[_-]?key/i.test(blob) && /["'][^"']{8,}["']/.test(blob)) {
-      // تحذير فقط إن وُجد مفتاح خام واضح
       if (/"idempotency_key"\s*:/.test(blob) || /idempotency_key=/.test(blob)) {
         fail('raw_idempotency_key_leaked', 'مفتاح تكرار خام في metadata/comment', a.id);
+      }
+    }
+  }
+
+  // ربط الحالة ↔ الأفعال + فجوات الدورات
+  for (const run of runs.rows) {
+    const cycle = Number(run.approval_cycle);
+    if (run.status === 'UNDER_REVIEW' || run.status === 'APPROVED') {
+      const submitKey = `${run.id}:${cycle}`;
+      const cycleList = byRunCycle.get(submitKey) ?? [];
+      if (!cycleList.some((x) => x.action === 'SUBMITTED_FOR_REVIEW')) {
+        fail(
+          run.status === 'UNDER_REVIEW'
+            ? 'under_review_missing_submit_action'
+            : 'approved_missing_submit_action',
+          `${run.status} بلا SUBMITTED_FOR_REVIEW للدورة ${cycle}`,
+          run.id
+        );
+      }
+    }
+    if (run.status === 'APPROVED') {
+      const cycleList = byRunCycle.get(`${run.id}:${cycle}`) ?? [];
+      if (!cycleList.some((x) => x.action === 'APPROVED')) {
+        fail('approved_run_missing_approve_action', 'APPROVED بلا APPROVED action', run.id);
+      }
+    }
+    // فجوة دورات: إن وُجدت أفعال لدورة n>1 فيجب وجود Submit للدورة السابقة
+    if (cycle >= 2) {
+      for (let c = 1; c < cycle; c++) {
+        const prev = byRunCycle.get(`${run.id}:${c}`) ?? [];
+        if (prev.length > 0 && !prev.some((x) => x.action === 'SUBMITTED_FOR_REVIEW')) {
+          fail('cycle_gap_missing_submit', `دورة ${c} بلا Submit قبل الدورة ${cycle}`, run.id);
+        }
+      }
+      const prevCycle = byRunCycle.get(`${run.id}:${cycle - 1}`) ?? [];
+      if (
+        prevCycle.length === 0 &&
+        (byRunCycle.get(`${run.id}:${cycle}`) ?? []).length > 0
+      ) {
+        fail('cycle_gap_skipped', `تخطّي دورة ${cycle - 1} قبل الدورة ${cycle}`, run.id);
       }
     }
   }
@@ -278,6 +375,40 @@ export async function verifyPayrollApprovalCore(
       );
     }
 
+    // سلسلة الإصدارات داخل الدورة
+    const ordered = [...list].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+    for (let i = 1; i < ordered.length; i++) {
+      const prev = ordered[i - 1];
+      const cur = ordered[i];
+      if (Number(cur.version_before) < Number(prev.version_after)) {
+        fail(
+          'version_chain_broken',
+          `سلسلة إصدارات مكسورة في ${k}: ${prev.version_after}→${cur.version_before}`,
+          cur.id
+        );
+      }
+    }
+    if (submits.length === 1 && approved.length === 1) {
+      if (Number(approved[0].version_before) !== Number(submits[0].version_after)) {
+        fail(
+          'version_chain_submit_approve',
+          'Approve.version_before ≠ Submit.version_after',
+          approved[0].id
+        );
+      }
+    }
+    if (submits.length === 1 && rejected.length === 1) {
+      if (Number(rejected[0].version_before) !== Number(submits[0].version_after)) {
+        fail(
+          'version_chain_submit_reject',
+          'Reject.version_before ≠ Submit.version_after',
+          rejected[0].id
+        );
+      }
+    }
+
     const runId = list[0]?.payroll_run_id;
     if (runId) {
       const runRow = runs.rows.find((r) => r.id === runId);
@@ -288,13 +419,17 @@ export async function verifyPayrollApprovalCore(
           runId
         );
       }
-      if (runRow?.status === 'APPROVED' && approved.length === 0) {
-        const cycleActions = list.filter(
-          (x) => Number(x.approval_cycle) === Number(runRow.approval_cycle)
+      // terminal لدورة خاطئة: APPROVED للدورة بينما Run في دورة أخرى مع APPROVED status
+      if (
+        approved.length > 0 &&
+        runRow?.status === 'APPROVED' &&
+        Number(runRow.approval_cycle) !== Number(list[0].approval_cycle)
+      ) {
+        fail(
+          'terminal_action_wrong_cycle',
+          `APPROVED action لدورة ${list[0].approval_cycle} بينما Run على ${runRow.approval_cycle}`,
+          runId
         );
-        if (cycleActions.length > 0 && !cycleActions.some((x) => x.action === 'APPROVED')) {
-          fail('approved_run_missing_approve_action', 'APPROVED بلا APPROVED action', runId);
-        }
       }
       if (approved.length > 0 && submits.length > 0) {
         const sub = submits[0];
@@ -329,10 +464,6 @@ export async function verifyPayrollApprovalCore(
     if (n > 1) {
       fail('duplicate_request_key_hash', `request_key_hash مكرر (${n})`, hash.slice(0, 16));
     }
-  }
-
-  if (strict && runs.rows.length === 0 && actions.rows.length === 0) {
-    // بيئة فارغة مقبولة في strict
   }
 
   return {
