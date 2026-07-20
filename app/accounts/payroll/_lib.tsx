@@ -21,6 +21,8 @@ export const periodActionUrl = (id: string, action: 'close' | 'reopen' | 'cancel
 export const runUrl = (id: string) => `/api/accounts/payroll/runs/${id}`;
 export const runCancelUrl = (id: string) => `/api/accounts/payroll/runs/${id}/cancel`;
 export const runCalculateUrl = (id: string) => `/api/accounts/payroll/runs/${id}/calculate`;
+export const runRecalculateUrl = (id: string) => `/api/accounts/payroll/runs/${id}/recalculate`;
+export const runRecalculationsUrl = (id: string) => `/api/accounts/payroll/runs/${id}/recalculations`;
 export const runPeopleUrl = (id: string) => `/api/accounts/payroll/runs/${id}/people`;
 export const runPersonDetailUrl = (id: string, runPersonId: string) =>
   `/api/accounts/payroll/runs/${id}/people/${runPersonId}`;
@@ -57,6 +59,7 @@ export const CAP = {
   MANAGE_PERIODS: 'payroll_manage_periods',
   CREATE_RUNS: 'payroll_create_runs',
   CALCULATE: 'payroll_calculate',
+  RECALCULATE: 'payroll_recalculate',
   CANCEL_RUNS: 'payroll_cancel_runs',
   ADMIN: 'payroll_admin',
 } as const;
@@ -293,6 +296,11 @@ export function ConfirmDialog({
   cancelLabel,
   warning,
   busyLabel,
+  reasonLabel,
+  reasonPlaceholder,
+  reasonHelper,
+  reasonMinLength = 1,
+  extraWarning,
 }: {
   open: boolean;
   title: string;
@@ -307,32 +315,54 @@ export function ConfirmDialog({
   cancelLabel?: string;
   warning?: string;
   busyLabel?: string;
+  reasonLabel?: string;
+  reasonPlaceholder?: string;
+  reasonHelper?: string;
+  reasonMinLength?: number;
+  extraWarning?: string;
 }) {
   if (!open) return null;
-  const reasonEmpty = reasonRequired ? !(reason ?? '').trim() : false;
+  const trimmed = (reason ?? '').trim();
+  const reasonInvalid = reasonRequired
+    ? trimmed.length < reasonMinLength || trimmed.length > 500
+    : false;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" dir="rtl">
       <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-5">
         <h3 className="text-lg font-semibold mb-2">{title}</h3>
         <p className="text-sm text-gray-600 mb-3 whitespace-pre-line">{message}</p>
         {warning && (
-          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-4">
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-3">
             {warning}
+          </p>
+        )}
+        {extraWarning && (
+          <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded px-3 py-2 mb-4">
+            {extraWarning}
           </p>
         )}
         {reasonRequired && (
           <div className="mb-4">
-            <label className="block text-sm text-gray-700 mb-1">السبب (إلزامي)</label>
+            <label className="block text-sm text-gray-700 mb-1">
+              {reasonLabel ?? 'السبب (إلزامي)'}
+            </label>
             <textarea
               className="w-full border rounded px-3 py-2 text-sm"
               rows={3}
               maxLength={500}
               value={reason ?? ''}
               disabled={busy}
-              placeholder="اذكر سبب هذا الإجراء…"
+              placeholder={reasonPlaceholder ?? 'اذكر سبب هذا الإجراء…'}
               onChange={(e) => onReasonChange?.(e.target.value)}
             />
-            {reasonEmpty && <p className="text-xs text-red-600 mt-1">يجب إدخال سبب واضح قبل التأكيد.</p>}
+            {reasonHelper && (
+              <p className="text-xs text-gray-500 mt-1">{reasonHelper}</p>
+            )}
+            {reasonInvalid && (
+              <p className="text-xs text-red-600 mt-1">
+                اكتب سبباً واضحاً بين {reasonMinLength} و 500 حرفاً.
+              </p>
+            )}
           </div>
         )}
         <div className="flex justify-end gap-2">
@@ -341,7 +371,7 @@ export function ConfirmDialog({
           </button>
           <button
             className="bg-red-800 text-white rounded px-3 py-2 text-sm disabled:opacity-50"
-            disabled={busy || reasonEmpty}
+            disabled={busy || reasonInvalid}
             onClick={onConfirm}
           >
             {busy ? (busyLabel ?? 'جارٍ التنفيذ…') : (confirmLabel ?? 'تأكيد')}

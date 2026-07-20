@@ -22,6 +22,8 @@ import {
   runUrl,
   runCancelUrl,
   runCalculateUrl,
+  runRecalculateUrl,
+  runRecalculationsUrl,
   runPeopleUrl,
   runPersonDetailUrl,
   runScopeUrl,
@@ -55,6 +57,35 @@ function calcErrorMsg(r: any): string {
   return errMsg(r);
 }
 
+function recalcErrorMsg(r: any): string {
+  const code = r?.error?.code;
+  if (r?.__status === 400 || code === 'INVALID_REASON') {
+    return 'يرجى كتابة سبب واضح لإعادة الاحتساب لا يقل عن 10 أحرف.';
+  }
+  if (r?.__status === 403 || code === 'FORBIDDEN') {
+    return 'ليس لديك صلاحية إعادة احتساب الرواتب.';
+  }
+  if (r?.__status === 404 || code === 'PAYROLL_RUN_NOT_FOUND') {
+    return 'تعذر العثور على تشغيل الرواتب أو لا تملك صلاحية الوصول إليه.';
+  }
+  if (code === 'IDEMPOTENCY_CONFLICT') {
+    return 'تعذر تأكيد العملية لأن بيانات الطلب تغيرت. أعد المحاولة من جديد.';
+  }
+  if (code === 'RECALCULATION_INTEGRITY_CONFLICT') {
+    return 'تعذر التحقق من سجل عملية سابقة. لم يتم تعديل النتائج الحالية.';
+  }
+  if (r?.__status === 409) {
+    return 'تم تعديل تشغيل الرواتب أو إعادة احتسابه بواسطة مستخدم آخر. يرجى تحديث الصفحة.';
+  }
+  if (r?.__status === 422) {
+    return 'تعذر إعادة احتساب الرواتب بسبب إعدادات التشغيل الحالية. بقيت النتائج السابقة محفوظة.';
+  }
+  if (r?.__status === 500) {
+    return 'حدث خطأ تقني أثناء إعادة احتساب الرواتب. بقيت النتائج السابقة محفوظة دون تغيير.';
+  }
+  return errMsg(r);
+}
+
 export default function RunDetailPage() {
   const params = useParams();
   const id = String(params?.id ?? '');
@@ -83,6 +114,15 @@ export default function RunDetailPage() {
   const [detailBusy, setDetailBusy] = useState(false);
   const [calcSummary, setCalcSummary] = useState<any>(null);
 
+  const [recalcOpen, setRecalcOpen] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
+  const [recalcReason, setRecalcReason] = useState('');
+  const [recalcMsg, setRecalcMsg] = useState('');
+  const [recalcMeta, setRecalcMeta] = useState<any>(null);
+  const [recalcHistory, setRecalcHistory] = useState<any[]>([]);
+  const [recalcIdempotencyKey, setRecalcIdempotencyKey] = useState<string | null>(null);
+  const [recalcAttemptReason, setRecalcAttemptReason] = useState<string | null>(null);
+
   const loadPeople = async (status: PeopleFilter = peopleFilter, search: string = peopleSearch) => {
     const qs = new URLSearchParams({ page: '1', page_size: '100' });
     if (status !== 'ALL') qs.set('status', status);
@@ -95,6 +135,12 @@ export default function RunDetailPage() {
     setPeople(Array.isArray(r.data?.items) ? r.data.items : []);
   };
 
+  const loadRecalcHistory = async () => {
+    const r = await fetchJson(`${runRecalculationsUrl(id)}?page=1&page_size=20`);
+    if (!r.success) return;
+    setRecalcHistory(Array.isArray(r.data?.items) ? r.data.items : []);
+  };
+
   const load = async () => {
     const r = await fetchJson(runUrl(id));
     if (!r.success) return setError(errMsg(r));
@@ -103,10 +149,13 @@ export default function RunDetailPage() {
     setRun(nextRun);
     setMembers(Array.isArray(r.data?.scope_members) ? r.data.scope_members : []);
     setCalcSummary(r.data?.calculation_summary ?? null);
+    setRecalcMeta(r.data?.recalculation ?? null);
     if (nextRun?.status === 'CALCULATED') {
       await loadPeople();
+      await loadRecalcHistory();
     } else {
       setPeople([]);
+      setRecalcHistory([]);
     }
   };
 
@@ -136,6 +185,7 @@ export default function RunDetailPage() {
   const create = can(caps, CAP.CREATE_RUNS);
   const cancelCap = can(caps, CAP.CANCEL_RUNS);
   const canCalculate = can(caps, CAP.CALCULATE);
+  const canRecalculateCap = can(caps, CAP.RECALCULATE);
   const departments: any[] = options?.departments ?? [];
   const costCenters: any[] = options?.cost_centers ?? [];
   const activePeople: any[] = options?.active_people ?? [];
@@ -223,6 +273,68 @@ export default function RunDetailPage() {
     }
   }
 
+  function openRecalcDialog() {
+    setRecalcMsg('');
+    setRecalcReason('');
+    setRecalcIdempotencyKey(newIdempotencyKey());
+    setRecalcAttemptReason(null);
+    setRecalcOpen(true);
+  }
+
+  async function doRecalculate() {
+    const trimmed = recalcReason.trim();
+    if (trimmed.length < 10 || trimmed.length > 500) {
+      setRecalcMsg('يرجى كتابة سبب واضح لإعادة الاحتساب لا يقل عن 10 أحرف.');
+      return;
+    }
+    if (recalculating) return;
+
+    let key = recalcIdempotencyKey;
+    if (!key || (recalcAttemptReason != null && recalcAttemptReason !== trimmed)) {
+      key = newIdempotencyKey();
+      setRecalcIdempotencyKey(key);
+    }
+    setRecalcAttemptReason(trimmed);
+    setRecalculating(true);
+    setRecalcMsg('');
+    try {
+      const r = await fetchJson(runRecalculateUrl(id), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          version: run.version,
+          updated_at: run.updated_at,
+          idempotency_key: key,
+          reason: trimmed,
+          confirmation: true,
+        }),
+      });
+      if (!r.success) {
+        const msg = recalcErrorMsg(r);
+        setRecalcMsg(msg);
+        setError(msg);
+        return;
+      }
+      setRecalcOpen(false);
+      setRecalcReason('');
+      setRecalcMsg('');
+      setError('');
+      setRecalcIdempotencyKey(null);
+      setRecalcAttemptReason(null);
+      const noChange = r.recalculation?.no_change === true;
+      setToast(
+        r.idempotent_replay
+          ? 'تم تأكيد نتيجة إعادة الاحتساب السابقة دون إنشاء عملية جديدة.'
+          : noChange
+            ? 'تمت إعادة الاحتساب ولم تتغير نتائج الرواتب.'
+            : 'تمت إعادة احتساب الرواتب بنجاح.'
+      );
+      await load();
+    } finally {
+      setRecalculating(false);
+    }
+  }
+
   async function addMember() {
     if (!addPerson) return;
     setBusy(true);
@@ -279,6 +391,12 @@ export default function RunDetailPage() {
   const canScope = create && isDraft && run.scope_type === 'PERSON_LIST';
   const canCancel = cancelCap && (run.status === 'DRAFT' || run.status === 'CALCULATED');
   const showCalculate = isDraft && canCalculate;
+  const showRecalculate =
+    isCalculated &&
+    canRecalculateCap &&
+    run.currency_code === 'IQD' &&
+    recalcMeta?.can_recalculate !== false &&
+    !recalculating;
   const scopeRefName = run.scope_ref_id
     ? (run.scope_type === 'COST_CENTER'
         ? (costCenters.find((c) => c.id === run.scope_ref_id)?.name_ar ?? run.scope_ref_id)
@@ -305,7 +423,9 @@ export default function RunDetailPage() {
           {toast}
         </div>
       )}
-      {(error || calcMsg) && <p className="text-red-600 mb-3 text-sm">{error || calcMsg}</p>}
+      {(error || calcMsg || recalcMsg) && (
+        <p className="text-red-600 mb-3 text-sm">{error || calcMsg || recalcMsg}</p>
+      )}
       <div className="flex justify-between items-center mb-4">
         <div>
           <Link href="/accounts/payroll/runs" className="text-blue-600 text-sm">→ عودة للتشغيلات</Link>
@@ -378,9 +498,61 @@ export default function RunDetailPage() {
             احتساب الرواتب
           </button>
         )}
+        {showRecalculate && (
+          <button
+            className="bg-amber-800 text-white rounded px-3 py-1.5 text-sm disabled:opacity-50"
+            disabled={recalculating}
+            onClick={openRecalcDialog}
+          >
+            إعادة احتساب الرواتب
+          </button>
+        )}
         {canEdit && <button className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm" onClick={openEdit}>تعديل</button>}
         {canCancel && <button className="bg-red-800 text-white rounded px-3 py-1.5 text-sm" onClick={() => { setReason(''); setCancelOpen(true); }}>إلغاء التشغيل</button>}
       </div>
+
+      {isCalculated && (recalcHistory.length > 0 || recalcMeta?.has_recalculation_history) && (
+        <section className="mb-6">
+          <h2 className="text-lg font-semibold mb-2">سجل إعادة الاحتساب</h2>
+          <div className="bg-white shadow rounded overflow-x-auto">
+            <table className="w-full text-sm text-right">
+              <thead className="bg-gray-50 text-gray-500">
+                <tr>
+                  <th className="p-2">التاريخ</th>
+                  <th>المستخدم</th>
+                  <th>السبب</th>
+                  <th>الأشخاص</th>
+                  <th>الأخطاء</th>
+                  <th>الاستحقاقات</th>
+                  <th>الاستقطاعات</th>
+                  <th>الصافي</th>
+                  <th>التغيّر</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recalcHistory.map((h) => (
+                  <tr key={h.id} className="border-t">
+                    <td className="p-2 whitespace-nowrap">
+                      {h.created_at ? new Date(h.created_at).toLocaleString('ar-IQ') : '—'}
+                    </td>
+                    <td>{h.actor_display_name || '—'}</td>
+                    <td className="max-w-[14rem] truncate" title={h.reason}>{h.reason}</td>
+                    <td>{h.previous_people_count} → {h.new_people_count}</td>
+                    <td>{h.previous_error_count} → {h.new_error_count}</td>
+                    <td>{iqdWhole(h.previous_gross_total)} → {iqdWhole(h.new_gross_total)}</td>
+                    <td>{iqdWhole(h.previous_deduction_total)} → {iqdWhole(h.new_deduction_total)}</td>
+                    <td>{iqdWhole(h.previous_net_total)} → {iqdWhole(h.new_net_total)}</td>
+                    <td>{h.no_change ? 'بدون تغيّر' : 'تغيّرت'}</td>
+                  </tr>
+                ))}
+                {!recalcHistory.length && (
+                  <tr><td colSpan={9} className="p-3 text-gray-400">لا سجلات بعد</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {isCalculated && (
         <section className="mb-6">
@@ -600,6 +772,33 @@ export default function RunDetailPage() {
         busy={calculating}
         onCancel={() => { if (!calculating) { setCalcOpen(false); setCalcMsg(''); } }}
         onConfirm={() => void doCalculate()}
+      />
+
+      <ConfirmDialog
+        open={recalcOpen}
+        title="تأكيد إعادة احتساب الرواتب"
+        message="سيعيد النظام قراءة بيانات الموظفين والعقود والمخصصات والاستقطاعات وفق تاريخ الاحتساب، ثم يستبدل نتائج التشغيل الحالية بنتائج جديدة. ستبقى معلومات العملية السابقة محفوظة في سجل التدقيق، لكن لن تبقى تفاصيل أسطرها قابلة للعرض."
+        warning="قد تتغير قائمة الموظفين والمبالغ والأخطاء إذا تغيرت العقود أو التكليفات أو المخصصات منذ الاحتساب السابق."
+        extraWarning="الإصدار الحالي يدعم الدينار العراقي IQD فقط."
+        reasonRequired
+        reason={recalcReason}
+        onReasonChange={setRecalcReason}
+        reasonLabel="سبب إعادة الاحتساب"
+        reasonPlaceholder="مثال: تعديل الراتب الأساسي لموظف أو تصحيح مخصصات مستحقة"
+        reasonHelper="اكتب سبباً واضحاً لا يقل عن 10 أحرف."
+        reasonMinLength={10}
+        confirmLabel="بدء إعادة الاحتساب"
+        cancelLabel="إلغاء"
+        busyLabel="جارٍ إعادة احتساب الرواتب..."
+        busy={recalculating}
+        onCancel={() => {
+          if (!recalculating) {
+            setRecalcOpen(false);
+            setRecalcMsg('');
+            setRecalcReason('');
+          }
+        }}
+        onConfirm={() => void doRecalculate()}
       />
 
       <ConfirmDialog
