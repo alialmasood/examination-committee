@@ -270,56 +270,54 @@ export async function recalculatePayrollRunCore(
   );
 
   if (prior.rows.length > 0) {
-    const match = prior.rows.find((row) => {
-      const nv = row.new_values;
-      return nv && String(nv.request_payload_hash ?? '') === requestPayloadHash;
-    });
-    const conflict = prior.rows.find((row) => {
-      const nv = row.new_values;
-      return nv && String(nv.request_payload_hash ?? '') !== requestPayloadHash;
-    });
-
-    if (match) {
-      const newHash = auditNewSnapshotHash(match.new_values);
-      if (!newHash || !isPayrollSnapshotHash(newHash)) {
-        throw new AccountsHttpError(
-          'سجل تدقيق إعادة الاحتساب السابق ناقص أو تالف — رُفضت الإعادة الآمنة',
-          409
-        );
-      }
-      if (run.status !== 'CALCULATED' || String(run.snapshot_hash) !== newHash) {
-        throw new AccountsHttpError(
-          'تعارض سلامة إعادة الاحتساب: اللقطة الحالية لا تطابق سجل تدقيق إعادة الاحتساب',
-          409
-        );
-      }
-      return buildRecalcResult(
-        client,
-        run,
-        previousFromAudit(match.old_values, run),
-        fingerprints,
-        true
+    // تكرار نجاح لنفس المفتاح = فساد سلامة — لا اختيار اعتباطي
+    if (prior.rows.length > 1) {
+      throw new AccountsHttpError(
+        'تكرار سجلات نجاح لنفس مفتاح إعادة الاحتساب — رُفضت الإعادة الآمنة (DUPLICATE_RECALC_AUDIT)',
+        409
       );
     }
 
-    if (conflict) {
-      const nv = conflict.new_values;
-      const storedPayload = nv ? String(nv.request_payload_hash ?? '') : '';
-      if (!storedPayload) {
-        throw new AccountsHttpError(
-          'سجل تدقيق إعادة الاحتساب السابق ناقص أو تالف — رُفضت الإعادة الآمنة',
-          409
-        );
-      }
+    const row = prior.rows[0];
+    const nv = row.new_values;
+    const ov = row.old_values;
+    const storedPayload = nv ? String(nv.request_payload_hash ?? '').trim() : '';
+    const newHash = auditNewSnapshotHash(nv);
+    const auditEntityOk = true; // الاستعلام مقيّد بـ entity_id=runId
+
+    if (
+      !nv ||
+      !storedPayload ||
+      !/^[0-9a-f]{64}$/.test(storedPayload) ||
+      !newHash ||
+      !isPayrollSnapshotHash(newHash) ||
+      !auditEntityOk
+    ) {
+      throw new AccountsHttpError(
+        'سجل تدقيق إعادة الاحتساب السابق ناقص أو تالف — رُفضت الإعادة الآمنة',
+        409
+      );
+    }
+
+    if (storedPayload !== requestPayloadHash) {
       throw new AccountsHttpError(
         'تعارض مفتاح التكرار: نفس المفتاح مع حمولة مختلفة (IDEMPOTENCY_CONFLICT)',
         409
       );
     }
 
-    throw new AccountsHttpError(
-      'سجل تدقيق إعادة الاحتساب السابق ناقص أو تالف — رُفضت الإعادة الآمنة',
-      409
+    if (run.status !== 'CALCULATED' || String(run.snapshot_hash) !== newHash) {
+      throw new AccountsHttpError(
+        'تعارض سلامة إعادة الاحتساب: اللقطة الحالية لا تطابق سجل تدقيق إعادة الاحتساب',
+        409
+      );
+    }
+    return buildRecalcResult(
+      client,
+      run,
+      previousFromAudit(ov, run),
+      fingerprints,
+      true
     );
   }
 
@@ -362,21 +360,30 @@ export async function recalculatePayrollRunCore(
   }
   if (!isSupportedPayrollCurrency(run.currency_code)) {
     throw new AccountsHttpError(
-      'عملة تشغيل الرواتب غير مدعومة حاليًا. يدعم النظام الدينار العراقي IQD فقط',
+      'عملة تشغيل الرواتب غير مدعومة حاليًا. يدعم النظام الدينار العراقي IQD فقط (UNSUPPORTED_PAYROLL_CURRENCY)',
       422
     );
   }
   if (!isSupportedPayrollCurrency(period.currency_code)) {
     throw new AccountsHttpError(
-      'عملة تشغيل الرواتب غير مدعومة حاليًا. يدعم النظام الدينار العراقي IQD فقط',
+      'عملة تشغيل الرواتب غير مدعومة حاليًا. يدعم النظام الدينار العراقي IQD فقط (UNSUPPORTED_PAYROLL_CURRENCY)',
       422
     );
   }
   if (run.scope_type === 'PERSON_LIST') {
+    // قفل صفوف الأعضاء يمنع بناء لقطة من قائمة نصف قديمة/نصف جديدة
+    await txQuery(
+      client,
+      `SELECT id FROM accounts.payroll_run_scope_members
+       WHERE payroll_run_id = $1::uuid
+       ORDER BY payroll_person_id
+       FOR UPDATE`,
+      [run.id]
+    );
     const n = await countPayrollRunScopeMembers(client, run.id);
     if (n === 0) {
       throw new AccountsHttpError(
-        'قائمة أشخاص التشغيل فارغة — لا يمكن إعادة الاحتساب',
+        'قائمة أشخاص التشغيل فارغة — لا يمكن إعادة الاحتساب (EMPTY_PERSON_LIST)',
         422
       );
     }

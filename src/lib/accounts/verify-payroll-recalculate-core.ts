@@ -16,6 +16,7 @@ export type PayrollRecalculateVerifyResult = {
   summary: {
     recalculated_audits: number;
     checked_runs: number;
+    empty_audits_info?: string;
   };
 };
 
@@ -43,8 +44,7 @@ export async function verifyPayrollRecalculateCore(
   const warnings: RecalcVerifyIssue[] = [];
   const fail = (kind: string, detail: string, entity_id?: string) =>
     mismatches.push({ kind, detail, entity_id });
-  const warn = (kind: string, detail: string, entity_id?: string) =>
-    warnings.push({ kind, detail, entity_id });
+  void warnings; // محجوز لمستقبل غير فشل؛ بيئة فارغة لا تُنتج warning
 
   try {
     await probeTransactionRollback(client);
@@ -189,9 +189,8 @@ export async function verifyPayrollRecalculateCore(
     }
   }
 
-  if (strict && audits.rows.length === 0) {
-    warn('no_recalc_audits', 'لا توجد سجلات recalculated للفحص (طبيعي قبل الاستخدام)');
-  }
+  // بيئة فارغة بلا Audits: غياب البيانات ليس فسادًا — ok=true في normal وstrict
+  // (لا warning يسبب فشلًا أو التباسًا)
 
   return {
     ok: mismatches.length === 0,
@@ -201,6 +200,10 @@ export async function verifyPayrollRecalculateCore(
     summary: {
       recalculated_audits: audits.rows.length,
       checked_runs: checkedRuns,
+      empty_audits_info:
+        audits.rows.length === 0
+          ? 'لا توجد سجلات recalculated — طبيعي قبل الاستخدام'
+          : undefined,
     },
   };
 }
