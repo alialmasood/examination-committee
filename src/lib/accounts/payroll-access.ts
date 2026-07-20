@@ -12,7 +12,7 @@
  *
  * قواعد 9.A.2.1 / 9.A.2.4.1:
  *   - payroll_calculate — admin فقط (POST .../runs/[id]/calculate).
- *   - payroll_recalculate — admin فقط (API لاحقاً في 9.A.2.4.2).
+ *   - payroll_recalculate — admin فقط (POST .../runs/[id]/recalculate) — 9.A.2.4.2.
  *   - payroll_cancel_runs (إلغاء التشغيل) — admin فقط.
  *   - clerk لا يملك calculate ولا recalculate ولا cancel.
  *   - العضوية المجرّدة → VIEW_ONLY فقط (عرض السجل + عرض التشغيلات).
@@ -91,6 +91,21 @@ function runnerFor(client: TxClient | null): Runner {
     : (text, params) => query(text, params);
 }
 
+/** اختبار فقط: فرض مجموعة صلاحيات لمستخدم (مثل calculate بلا recalculate). */
+const __testCapsOverride = new Map<string, Set<string>>();
+
+export function __setPayrollCapabilitiesOverrideForTests(
+  userId: string,
+  caps: string[] | null
+): void {
+  if (caps == null) __testCapsOverride.delete(userId);
+  else __testCapsOverride.set(userId, new Set(caps));
+}
+
+export function __clearPayrollCapabilitiesOverrideForTests(): void {
+  __testCapsOverride.clear();
+}
+
 async function loadAccountsPlatformRoleCode(
   runner: Runner,
   userId: string
@@ -112,6 +127,8 @@ export async function getPayrollCapabilities(
   client: TxClient | null,
   userId: string
 ): Promise<Set<string>> {
+  const overridden = __testCapsOverride.get(userId);
+  if (overridden) return new Set(overridden);
   if (await hasAccountsAdminAccess(client, userId)) return new Set(ADMIN_CAPS);
   const runner = runnerFor(client);
   const code = await loadAccountsPlatformRoleCode(runner, userId);
