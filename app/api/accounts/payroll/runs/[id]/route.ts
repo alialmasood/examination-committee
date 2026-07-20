@@ -7,9 +7,15 @@ import { isSupportedPayrollCurrency } from '@/src/lib/accounts/payroll-calculati
 import { loadLatestRecalculationSummary } from '@/src/lib/accounts/payroll-recalculate-history';
 import { loadPayrollRun, serializePayrollRun, updatePayrollRun } from '@/src/lib/accounts/payroll-runs';
 import { listScopeMembers, serializeScopeMember } from '@/src/lib/accounts/payroll-run-scope';
-import { withTransaction } from '@/src/lib/accounts/with-transaction';
+import { isPayrollSnapshotHash } from '@/src/lib/accounts/payroll-snapshot-hash';
+import { withTransaction, txQuery } from '@/src/lib/accounts/with-transaction';
 
 type Ctx = { params: Promise<{ id: string }> };
+
+function shortHash(h: string | null | undefined): string | null {
+  if (!h || !isPayrollSnapshotHash(h)) return null;
+  return `${String(h).slice(0, 8)}…${String(h).slice(-6)}`;
+}
 
 export async function GET(request: NextRequest, context: Ctx) {
   const auth = await requireAccountsAccess(request); if (isAuthFailure(auth)) return auth.response;
@@ -26,10 +32,75 @@ export async function GET(request: NextRequest, context: Ctx) {
         auth.user.id,
         PAYROLL_CAPABILITIES.RECALCULATE
       );
+      const canSubmitCap = await hasPayrollCapability(
+        client,
+        auth.user.id,
+        PAYROLL_CAPABILITIES.SUBMIT_REVIEW
+      );
+
+      const blockingIssues = await txQuery<{ n: number }>(
+        client,
+        `SELECT COUNT(*)::int n FROM accounts.payroll_run_issues
+         WHERE payroll_run_id=$1::uuid AND severity='ERROR'`,
+        [id]
+      );
+      const blocking_issues_count = Number(blockingIssues.rows[0]?.n ?? 0);
+
+      const readiness_blockers: string[] = [];
+      if (row.status !== 'CALCULATED') readiness_blockers.push('STATUS_NOT_CALCULATED');
+      if (!isSupportedPayrollCurrency(row.currency_code)) {
+        readiness_blockers.push('UNSUPPORTED_CURRENCY');
+      }
+      if (Number(row.error_count) > 0) readiness_blockers.push('HAS_ERRORS');
+      if (blocking_issues_count > 0) readiness_blockers.push('HAS_BLOCKING_ISSUES');
+      if (!isPayrollSnapshotHash(row.snapshot_hash)) {
+        readiness_blockers.push('MISSING_SNAPSHOT_HASH');
+      }
+      const readiness_for_review = readiness_blockers.length === 0;
+
       const can_recalculate =
         canRecalcCap &&
         row.status === 'CALCULATED' &&
         isSupportedPayrollCurrency(row.currency_code);
+
+      const can_submit_for_review =
+        canSubmitCap &&
+        row.status === 'CALCULATED' &&
+        readiness_for_review;
+
+      let submitted_by: { id: string; display_name: string } | null = null;
+      let submit_comment: string | null = null;
+      if (row.submitted_for_review_by) {
+        const u = await txQuery<{ name: string | null }>(
+          client,
+          `SELECT COALESCE(full_name, username) AS name FROM student_affairs.users WHERE id=$1::uuid`,
+          [row.submitted_for_review_by]
+        );
+        submitted_by = {
+          id: String(row.submitted_for_review_by),
+          display_name: u.rows[0]?.name ? String(u.rows[0].name) : '',
+        };
+      }
+      if (row.status === 'UNDER_REVIEW' && Number(row.approval_cycle) >= 1) {
+        const act = await txQuery<{ comment: string | null }>(
+          client,
+          `SELECT comment FROM accounts.payroll_run_approval_actions
+           WHERE payroll_run_id=$1::uuid AND approval_cycle=$2
+             AND action='SUBMITTED_FOR_REVIEW'
+           ORDER BY created_at DESC LIMIT 1`,
+          [id, row.approval_cycle]
+        );
+        submit_comment = act.rows[0]?.comment ?? null;
+      }
+
+      const review_state =
+        row.status === 'UNDER_REVIEW'
+          ? 'UNDER_REVIEW'
+          : row.status === 'APPROVED'
+            ? 'APPROVED'
+            : Number(row.approval_cycle ?? 0) > 0
+              ? 'PREVIOUS_CYCLE'
+              : 'NONE';
 
       return {
         run: serializePayrollRun(row),
@@ -63,6 +134,25 @@ export async function GET(request: NextRequest, context: Ctx) {
                 no_change: lastRecalc.no_change,
               }
             : null,
+        },
+        approval: {
+          can_submit_for_review,
+          can_recalculate,
+          review_state,
+          approval_cycle: Number(row.approval_cycle ?? 0),
+          submitted_for_review_at: row.submitted_for_review_at
+            ? row.submitted_for_review_at instanceof Date
+              ? row.submitted_for_review_at.toISOString()
+              : String(row.submitted_for_review_at)
+            : null,
+          submitted_for_review_by: submitted_by,
+          review_snapshot_hash_short: shortHash(row.review_snapshot_hash),
+          submit_comment,
+          error_count: Number(row.error_count),
+          blocking_issues_count,
+          warning_count: Number(row.warning_count),
+          readiness_for_review,
+          readiness_blockers,
         },
       };
     });
