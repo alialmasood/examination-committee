@@ -1,8 +1,8 @@
 # 9.A.2.4.1 — Payroll Recalculate Core
 
-> **الحالة:** Implemented (Core only)  
-> **Architecture:** `docs/payroll-9a24-recalculate-architecture.md` (ACCEPTED)  
-> **Baseline:** `4dacb95` · Architecture commit: `2417923`  
+> **الحالة:** Implemented (Core only)
+> **Architecture:** `docs/payroll-9a24-recalculate-architecture.md` (ACCEPTED)
+> **Baseline:** `4dacb95` · Architecture commit: `2417923`
 > **خارج النطاق:** Public API · UI · Migration 097 · 9.A.2.4.2 · تعديل 094–096
 
 ---
