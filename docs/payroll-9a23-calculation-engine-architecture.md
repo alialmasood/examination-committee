@@ -90,8 +90,11 @@
 | **ALL** | كل `payroll_people` السارية عند `calculation_date` | `status=ACTIVE` و`effective_from ≤ calc_date` و(`effective_to` NULL أو ≥) | يُحل لاحقًا لكل شخص | `person_code ASC, id ASC` | Warning `RUN_EMPTY_SCOPE` → Run `CALCULATED` بـ 0 أشخاص |
 | **DEPARTMENT** | `department_id = scope_ref_id` + نفس شروط النشاط | كما أعلاه | كما أعلاه | كما أعلاه | Warning فارغ |
 | **COLLEGE** | عبر مسار الكلية الحقيقي (أدناه) — **ليس** DEPARTMENT | كما أعلاه | كما أعلاه | كما أعلاه | Warning فارغ |
-| **COST_CENTER** | `default_cost_center_id = scope_ref_id` | كما أعلاه | كما أعلاه | كما أعلاه | Warning فارغ |
+| **COST_CENTER** | تكليف فعّال `payroll_assignments.cost_center_id = scope_ref_id` فقط — **ليس** `default_cost_center_id` | كما أعلاه + تكليف يغطي التاريخ | كما أعلاه | كما أعلاه | Warning فارغ |
 | **PERSON_LIST** | أعضاء `payroll_run_scope_members` فقط | عضو موجود؛ الأهلية تُقيَّم لاحقًا | كما أعلاه | ترتيب الإدراج ثم `person_code, id` | **422 قبل أي تغيير حالة** — انظر §30 O2 |
+
+> **توضيح إصداري (9.A.2.3.1):** احتساب الرواتب الحالي يدعم **IQD فقط**.
+> أهلية COST_CENTER = `assignment.cost_center_id` فقط؛ `default_cost_center_id` إداري ولا يُدخل الشخص في نطاق COST_CENTER.
 
 ### COLLEGE — مسار الحل المعتمد (O1)
 

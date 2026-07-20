@@ -20,6 +20,7 @@ export const PAYROLL_CALC_ISSUE = {
   PERSON_CURRENCY_DIFFERS: 'PERSON_CURRENCY_DIFFERS',
   SNAPSHOT_VALIDATION_FAILED: 'SNAPSHOT_VALIDATION_FAILED',
   HASH_GENERATION_FAILED: 'HASH_GENERATION_FAILED',
+  UNSUPPORTED_PAYROLL_CURRENCY: 'UNSUPPORTED_PAYROLL_CURRENCY',
 } as const;
 
 export type PayrollCalcIssueCode =
@@ -54,6 +55,8 @@ const AR: Record<string, string> = {
   PERSON_CURRENCY_DIFFERS: 'عملة الشخص الافتراضية تختلف عن عملة التشغيل',
   SNAPSHOT_VALIDATION_FAILED: 'فشل تحقق لقطة الاحتساب',
   HASH_GENERATION_FAILED: 'فشل توليد بصمة اللقطة',
+  UNSUPPORTED_PAYROLL_CURRENCY:
+    'عملة تشغيل الرواتب غير مدعومة حاليًا. يدعم النظام الدينار العراقي IQD فقط',
 };
 
 export function buildCalcIssue(

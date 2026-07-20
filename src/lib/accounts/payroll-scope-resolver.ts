@@ -140,21 +140,16 @@ export async function resolvePayrollRunPersons(
 
   if (scope === 'COST_CENTER') {
     const ref = requirePayrollUuid(p.scope_ref_id, 'مرجع مركز الكلفة');
-    // تكليف نشط بـ cost_center_id أو شخص بـ default_cost_center_id
+    // مصدر وحيد: تكليف فعّال بـ cost_center_id — لا default_cost_center_id على الشخص
+    // (default_cost_center_id قيمة إدارية فقط ولا تثبت تكليف Payroll فعّال)
     const r = await txQuery(
       client,
       `SELECT DISTINCT ON (p.id) ${PERSON_SELECT}
-       FROM accounts.payroll_people p
-       WHERE ${ACTIVE_PERSON_ON_DATE}
-         AND (
-           p.default_cost_center_id = $2::uuid
-           OR EXISTS (
-             SELECT 1 FROM accounts.payroll_assignments a
-             WHERE a.payroll_person_id = p.id
-               AND a.cost_center_id = $2::uuid
-               AND ${ACTIVE_ASSIGNMENT_ON_DATE}
-           )
-         )
+       FROM accounts.payroll_assignments a
+       JOIN accounts.payroll_people p ON p.id = a.payroll_person_id
+       WHERE a.cost_center_id = $2::uuid
+         AND ${ACTIVE_ASSIGNMENT_ON_DATE}
+         AND ${ACTIVE_PERSON_ON_DATE}
        ORDER BY p.id, p.person_code`,
       [calcDate, ref]
     );

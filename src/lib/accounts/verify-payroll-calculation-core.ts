@@ -1,6 +1,7 @@
 /**
  * تحقق قواعد محرك الاحتساب 9.A.2.3.1 عند وجود تشغيلات CALCULATED.
  */
+import { isSupportedPayrollCurrency } from './payroll-calculation-formulas';
 import { isPayrollSnapshotHash } from './payroll-snapshot-hash';
 import { buildRunSnapshotHash } from './payroll-snapshot-builder';
 import { moneyToMillisSigned, sumMoney } from './money';
@@ -21,6 +22,18 @@ export type PayrollCalculationVerifyResult = {
   };
 };
 
+/** مسبار Transaction + ROLLBACK عبر SAVEPOINT — بلا أثر دائم. */
+async function probeTransactionRollback(client: TxClient): Promise<void> {
+  await txQuery(client, `SAVEPOINT __payroll_calc_core_verify_probe`);
+  try {
+    await txQuery(client, `CREATE TEMP TABLE IF NOT EXISTS __payroll_calc_core_probe (n int)`);
+    await txQuery(client, `INSERT INTO __payroll_calc_core_probe(n) VALUES (1)`);
+  } finally {
+    await txQuery(client, `ROLLBACK TO SAVEPOINT __payroll_calc_core_verify_probe`);
+    await txQuery(client, `RELEASE SAVEPOINT __payroll_calc_core_verify_probe`);
+  }
+}
+
 export async function verifyPayrollCalculationCore(
   client: TxClient,
   options: { strict?: boolean } = {}
@@ -33,9 +46,50 @@ export async function verifyPayrollCalculationCore(
   const warn = (kind: string, detail: string, entity_id?: string) =>
     warnings.push({ kind, detail, entity_id });
 
+  try {
+    await probeTransactionRollback(client);
+  } catch (e) {
+    fail(
+      'tx_rollback_probe',
+      `فشل مسبار Transaction/ROLLBACK: ${e instanceof Error ? e.message.slice(0, 80) : 'unknown'}`
+    );
+  }
+
+  // تشغيلات بعملة غير IQD ومعها آثار احتساب — سياسة الإصدار الحالي
+  const nonIqdRuns = await txQuery<{
+    id: string;
+    status: string;
+    currency_code: string;
+    snapshot_hash: string | null;
+    people_n: number;
+    lines_n: number;
+    issues_n: number;
+  }>(
+    client,
+    `SELECT r.id, r.status, r.currency_code, r.snapshot_hash,
+            (SELECT COUNT(*)::int FROM accounts.payroll_run_people p WHERE p.payroll_run_id = r.id) AS people_n,
+            (SELECT COUNT(*)::int FROM accounts.payroll_run_lines l WHERE l.payroll_run_id = r.id) AS lines_n,
+            (SELECT COUNT(*)::int FROM accounts.payroll_run_issues i WHERE i.payroll_run_id = r.id) AS issues_n
+     FROM accounts.payroll_runs r
+     WHERE UPPER(TRIM(r.currency_code)) <> 'IQD'`
+  );
+  for (const r of nonIqdRuns.rows) {
+    const hasArtifacts = r.people_n > 0 || r.lines_n > 0 || r.issues_n > 0;
+    const calculatedWithSnapshot =
+      r.status === 'CALCULATED' && r.snapshot_hash != null && String(r.snapshot_hash).length > 0;
+    if (hasArtifacts || calculatedWithSnapshot) {
+      fail(
+        'unsupported_currency_artifacts',
+        `تشغيل بعملة غير مدعومة مع آثار احتساب: people=${r.people_n} lines=${r.lines_n} issues=${r.issues_n} status=${r.status}`,
+        r.id
+      );
+    }
+  }
+
   const runs = await txQuery<{
     id: string;
     status: string;
+    currency_code: string;
     people_count: number;
     warning_count: number;
     error_count: number;
@@ -47,7 +101,7 @@ export async function verifyPayrollCalculationCore(
     calculation_attempt_number: number;
   }>(
     client,
-    `SELECT id, status, people_count, warning_count, error_count,
+    `SELECT id, status, currency_code, people_count, warning_count, error_count,
             gross_total::text, deduction_total::text, employer_contribution_total::text, net_total::text,
             snapshot_hash, calculation_attempt_number
      FROM accounts.payroll_runs
@@ -58,6 +112,13 @@ export async function verifyPayrollCalculationCore(
   let checkedLines = 0;
 
   for (const run of runs.rows) {
+    if (!isSupportedPayrollCurrency(run.currency_code)) {
+      fail(
+        'calculated_unsupported_currency',
+        `تشغيل CALCULATED بعملة غير مدعومة`,
+        run.id
+      );
+    }
     if (run.calculation_attempt_number < 1) {
       fail('calc_attempt', 'calculation_attempt_number < 1 بعد CALCULATED', run.id);
     }
@@ -70,6 +131,7 @@ export async function verifyPayrollCalculationCore(
       payroll_person_id: string;
       payroll_contract_id: string | null;
       calculation_status: string;
+      currency_code: string;
       basic_amount: string;
       gross_amount: string;
       deductions_amount: string;
@@ -79,7 +141,7 @@ export async function verifyPayrollCalculationCore(
       person_code_snapshot: string;
     }>(
       client,
-      `SELECT id, payroll_person_id, payroll_contract_id, calculation_status,
+      `SELECT id, payroll_person_id, payroll_contract_id, calculation_status, currency_code,
               basic_amount::text, gross_amount::text, deductions_amount::text,
               employer_contributions_amount::text, net_amount::text, snapshot_hash,
               person_code_snapshot
@@ -112,6 +174,13 @@ export async function verifyPayrollCalculationCore(
 
     for (const p of people.rows) {
       hashes.push(p.snapshot_hash);
+      if (!isSupportedPayrollCurrency(p.currency_code)) {
+        fail(
+          'person_unsupported_currency',
+          `لقطة شخص بعملة غير مدعومة status=${p.calculation_status}`,
+          p.id
+        );
+      }
       if (p.calculation_status === 'ERROR') {
         errorPeople += 1;
         if (
@@ -129,6 +198,19 @@ export async function verifyPayrollCalculationCore(
         );
         if ((lines.rows[0]?.n ?? 0) > 0) {
           fail('error_person_has_lines', 'شخص ERROR بأسطر مالية', p.id);
+        }
+        const errIssues = await txQuery<{ n: number }>(
+          client,
+          `SELECT COUNT(*)::int n FROM accounts.payroll_run_issues
+           WHERE payroll_run_person_id=$1::uuid AND severity='ERROR'`,
+          [p.id]
+        );
+        if ((errIssues.rows[0]?.n ?? 0) === 0) {
+          fail(
+            'error_person_without_error_issue',
+            'شخص ERROR بلا issue بشدة ERROR مرتبط',
+            p.id
+          );
         }
         continue;
       }
@@ -244,8 +326,6 @@ export async function verifyPayrollCalculationCore(
         fail('run_snapshot_hash_recompute', 'بصمة التشغيل لا تطابق إعادة الحساب', run.id);
       }
     }
-
-    // لا آثار حية تحت CANCELLED إلا superseded
   }
 
   const cancelledArtifacts = await txQuery<{ n: number }>(

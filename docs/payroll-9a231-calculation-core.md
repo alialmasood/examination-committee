@@ -10,6 +10,17 @@
 
 `DRAFT → CALCULATING → CALCULATED` داخل معاملة واحدة، مع Persist للقطة الأشخاص/الأسطر/المشاكل حتى عند `error_count > 0`.
 
+## سياسة العملة (الإصدار الحالي)
+
+- احتساب الرواتب يدعم **IQD فقط**.
+- تشغيل أو فترة بعملة غير IQD → `422` برمز/رسالة `UNSUPPORTED_PAYROLL_CURRENCY` **قبل** أي mutation أو `CALCULATING` أو Audit Started.
+- لا يُسمح بآثار احتساب (people/lines/issues أو CALCULATED مع snapshot) لتشغيل غير IQD.
+
+## COST_CENTER — الأهلية
+
+- مصدر الأهلية الوحيد: تكليف فعّال `payroll_assignments.cost_center_id = scope_ref_id` يغطي `calculation_date`.
+- `payroll_people.default_cost_center_id` قيمة إدارية افتراضية فقط و**لا** تُدخل الشخص في نطاق تشغيل COST_CENTER.
+
 ## الملفات
 
 | ملف | دور |
@@ -17,7 +28,7 @@
 | `payroll-scope-resolver.ts` | حل نطاق الأشخاص (ALL / DEPARTMENT / COLLEGE / COST_CENTER / PERSON_LIST) |
 | `payroll-contract-resolver.ts` | عقد ACTIVE وحيد يغطي التاريخ + عملة التشغيل |
 | `payroll-component-resolver.ts` | مصادر PCA مرتبة حتمياً |
-| `payroll-calculation-formulas.ts` | FIXED / PERCENTAGE + ROUND_HALF_UP (bigint) |
+| `payroll-calculation-formulas.ts` | FIXED / PERCENTAGE + ROUND_HALF_UP (bigint) · IQD فقط |
 | `payroll-calculation-issues.ts` | رموز Issues وحمولات عربية |
 | `payroll-snapshot-builder.ts` | `PayrollPersonSnapshotJson` + hash شخص/تشغيل |
 | `payroll-calculation-engine.ts` | `calculatePayrollRunCore` |
@@ -73,6 +84,6 @@ npm run accounts:verify-payroll-calculation-core:strict
 
 ## خارج النطاق (→ 9.A.2.3.2 / 9.A.2.4)
 
-- `POST .../calculate` + UI  
-- Recalculate  
-- Posting / Payment / Approval  
+- `POST .../calculate` + UI
+- Recalculate
+- Posting / Payment / Approval

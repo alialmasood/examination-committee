@@ -11,6 +11,7 @@ import { payrollPeriodLock, payrollRunLock } from './accounting-locks';
 import {
   calculateFixedAmount,
   calculatePercentageOfBasic,
+  isSupportedPayrollCurrency,
 } from './payroll-calculation-formulas';
 import {
   buildCalcIssue,
@@ -59,6 +60,29 @@ const UUID_RE =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 const SUPPORTED_METHODS = new Set(['FIXED_AMOUNT', 'PERCENTAGE_OF_BASIC']);
+
+/** نقاط فشل للاختبارات فقط — ليست أعلام إنتاج ولا معاملات مسار. */
+export type PayrollCalcFailpoint =
+  | 'after_first_person'
+  | 'after_first_line'
+  | 'before_run_hash'
+  | 'before_totals_update'
+  | 'during_audit'
+  | null;
+
+let __testFailpoint: PayrollCalcFailpoint = null;
+
+export function __setPayrollCalcFailpointForTests(fp: PayrollCalcFailpoint) {
+  __testFailpoint = fp;
+}
+
+export function __clearPayrollCalcFailpointForTests() {
+  __testFailpoint = null;
+}
+
+function hitFailpoint(name: Exclude<PayrollCalcFailpoint, null>) {
+  if (__testFailpoint === name) throw new Error(`CALC_FAILPOINT_${name}`);
+}
 
 function millisToSignedMoney(millis: bigint): string {
   if (millis < BigInt(0)) {
@@ -313,6 +337,13 @@ function computePersonLines(
             entity_id: src.pca_id,
           })
         );
+      } else if (msg === 'UNSUPPORTED_PAYROLL_CURRENCY') {
+        blocking.push(
+          buildCalcIssue(PAYROLL_CALC_ISSUE.UNSUPPORTED_PAYROLL_CURRENCY, {
+            entity_type: 'PCA',
+            entity_id: src.pca_id,
+          })
+        );
       } else {
         blocking.push(
           buildCalcIssue(PAYROLL_CALC_ISSUE.UNSUPPORTED_METHOD, {
@@ -495,6 +526,20 @@ export async function calculatePayrollRunCore(
     }
   }
 
+  // 6b) IQD فقط — قبل أي mutation / CALCULATING / audit started
+  if (!isSupportedPayrollCurrency(run.currency_code)) {
+    throw new AccountsHttpError(
+      'عملة تشغيل الرواتب غير مدعومة حاليًا. يدعم النظام الدينار العراقي IQD فقط',
+      422
+    );
+  }
+  if (!isSupportedPayrollCurrency(period.currency_code)) {
+    throw new AccountsHttpError(
+      'عملة تشغيل الرواتب غير مدعومة حاليًا. يدعم النظام الدينار العراقي IQD فقط',
+      422
+    );
+  }
+
   try {
     // 7) مسح آثار سابقة
     await clearRunCalculationArtifacts(client, run.id);
@@ -556,6 +601,15 @@ export async function calculatePayrollRunCore(
       warningCount += 1;
     }
 
+    let firstPersonInserted = false;
+    let firstLineInserted = false;
+    const afterFirstPersonInsert = () => {
+      if (!firstPersonInserted) {
+        firstPersonInserted = true;
+        hitFailpoint('after_first_person');
+      }
+    };
+
     // 10–12) لكل شخص
     for (const person of persons) {
       peopleCount += 1;
@@ -594,6 +648,7 @@ export async function calculatePayrollRunCore(
           snapshot_hash,
           created_by: input.userId,
         });
+        afterFirstPersonInsert();
         await persistIssues(
           client,
           run.id,
@@ -651,6 +706,7 @@ export async function calculatePayrollRunCore(
           snapshot_hash,
           created_by: input.userId,
         });
+        afterFirstPersonInsert();
         await persistIssues(client, run.id, rp.id, [contractRes.issue], input.userId);
         errorCount += 1;
         personHashes.push(snapshot_hash);
@@ -725,6 +781,7 @@ export async function calculatePayrollRunCore(
           snapshot_hash,
           created_by: input.userId,
         });
+        afterFirstPersonInsert();
         await persistIssues(
           client,
           run.id,
@@ -793,6 +850,7 @@ export async function calculatePayrollRunCore(
         snapshot_hash,
         created_by: input.userId,
       });
+      afterFirstPersonInsert();
 
       for (const line of lines) {
         await insertRunLine(client, {
@@ -815,6 +873,10 @@ export async function calculatePayrollRunCore(
           sequence: line.sequence,
           created_by: input.userId,
         });
+        if (!firstLineInserted) {
+          firstLineInserted = true;
+          hitFailpoint('after_first_line');
+        }
       }
       await persistIssues(client, run.id, rp.id, personWarnings, input.userId);
 
@@ -838,6 +900,7 @@ export async function calculatePayrollRunCore(
 
     let snapshotHash: string;
     try {
+      hitFailpoint('before_run_hash');
       snapshotHash = buildRunSnapshotHash({
         person_snapshot_hashes: personHashes,
         people_count: peopleCount,
@@ -848,11 +911,13 @@ export async function calculatePayrollRunCore(
         warning_count: warningCount,
         error_count: errorCount,
       });
-    } catch {
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith('CALC_FAILPOINT_')) throw e;
       throw new AccountsHttpError('فشل توليد بصمة لقطة التشغيل', 500);
     }
 
     // 14) CALCULATED
+    hitFailpoint('before_totals_update');
     const final = await txQuery<PayrollRunRow>(
       client,
       `UPDATE accounts.payroll_runs SET
@@ -899,6 +964,7 @@ export async function calculatePayrollRunCore(
     }
 
     // 15) audit
+    hitFailpoint('during_audit');
     await writeFinancialAudit(client, {
       userId: input.userId,
       action: 'payroll_run.calculated',

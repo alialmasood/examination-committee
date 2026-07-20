@@ -1,6 +1,8 @@
 /**
  * تقريب مالي ROUND_HALF_UP — بلا JavaScript Number.
  * دقة داخلية ≥ 6 منازل (مقياس ثابت 1e6).
+ *
+ * الإصدار الحالي: IQD فقط (scale=0). أي عملة أخرى → Unsupported.
  */
 import { normalizeMoneyInput, moneyToMillis, millisToMoney } from './money';
 
@@ -12,12 +14,20 @@ const THOUSAND = BigInt(1_000);
 const TEN_THOUSAND = BigInt(10_000);
 const HUNDRED = BigInt(100);
 
-/** مقياس العملة المعتمد — IQD = 0 منازل. */
+export const SUPPORTED_PAYROLL_CURRENCY = 'IQD';
+
+export function isSupportedPayrollCurrency(currencyCode: unknown): boolean {
+  return String(currencyCode ?? '').trim().toUpperCase() === SUPPORTED_PAYROLL_CURRENCY;
+}
+
+/**
+ * مقياس العملة المعتمد للاحتساب.
+ * IQD → 0. أي عملة أخرى ترمى (لا fallback صامت).
+ */
 export function currencyDecimalScale(currencyCode: string): number {
-  const c = String(currencyCode ?? 'IQD').trim().toUpperCase();
-  if (c === 'IQD') return 0;
-  // افتراضي آمن لعملات أخرى حتى يُعرَّف جدول عملات لاحقًا
-  return 2;
+  const c = String(currencyCode ?? '').trim().toUpperCase();
+  if (c === SUPPORTED_PAYROLL_CURRENCY) return 0;
+  throw new Error('UNSUPPORTED_PAYROLL_CURRENCY');
 }
 
 /** يحوّل مبلغًا مخزَّنًا (حتى 3 منازل) إلى مقياس داخلي 6. */
@@ -35,8 +45,6 @@ export function percentageToScale6Fraction(percentage: unknown): bigint {
   const [intPart, frac = ''] = raw.split('.');
   const padded = (frac + '0000').slice(0, 4);
   const pctE4 = BigInt(intPart) * TEN_THOUSAND + BigInt(padded);
-  // 12.5% → 0.125 → scale6 = 125000
-  // pctE4(12.5000)=125000; 125000 * 1e6 / (10000*100) = 125000
   return (pctE4 * SCALE6) / (TEN_THOUSAND * HUNDRED);
 }
 
@@ -49,17 +57,14 @@ export function roundHalfUpScale6ToMoney(valueScale6: bigint, currencyScale: num
     throw new Error('INVALID_CURRENCY_SCALE');
   }
   const neg = valueScale6 < ZERO;
-  let abs = neg ? -valueScale6 : valueScale6;
+  const abs = neg ? -valueScale6 : valueScale6;
 
-  // وحدات عند مقياس العملة داخل scale6
-  // scale0: divisor = 1e6; scale2: divisor = 1e4; scale3: divisor = 1e3
   const divisor = BigInt(10) ** BigInt(6 - currencyScale);
   const half = divisor / TWO;
   let units = abs / divisor;
   const rem = abs % divisor;
   if (rem >= half) units += ONE;
 
-  // units عند currencyScale منازل → حوّل إلى millis (3 منازل)
   const millisFactor = BigInt(10) ** BigInt(3 - currencyScale);
   let millis = units * millisFactor;
   if (neg) millis = -millis;
@@ -89,7 +94,6 @@ export function calculatePercentageOfBasic(
   const base = normalizeMoneyInput(baseAmount);
   const baseS6 = moneyToScale6(base);
   const fracS6 = percentageToScale6Fraction(percentage);
-  // product at scale6: baseS6 * (frac as portion of 1e6) / 1e6
   const product = (baseS6 * fracS6) / SCALE6;
   return {
     calculated: roundHalfUpScale6ToMoney(product, scale),

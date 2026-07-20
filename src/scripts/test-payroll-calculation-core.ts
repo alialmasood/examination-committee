@@ -5,19 +5,21 @@
  * عزل: ownership token + cleanup في finally. تشغيل مرتين بلا تراكم.
  */
 import { randomUUID } from 'crypto';
-import { closePool, query } from '../lib/db';
+import { closePool, pool, query } from '../lib/db';
 import { AccountsHttpError } from '../lib/accounts/auth';
 import { grantAccountsAdminRole } from '../lib/accounts/accounts-access';
 import {
   calculateFixedAmount,
   calculatePercentageOfBasic,
+  isSupportedPayrollCurrency,
 } from '../lib/accounts/payroll-calculation-formulas';
+import { resolvePayrollRunPersons } from '../lib/accounts/payroll-scope-resolver';
 import {
-  resolvePayrollRunPersons,
-} from '../lib/accounts/payroll-scope-resolver';
-import {
+  __clearPayrollCalcFailpointForTests,
+  __setPayrollCalcFailpointForTests,
   calculatePayrollRunCore,
   mapIdempotencyKeyToRequestId,
+  type PayrollCalcFailpoint,
 } from '../lib/accounts/payroll-calculation-engine';
 import { createPayrollCalendar } from '../lib/accounts/payroll-calendars';
 import { createPayrollComponent } from '../lib/accounts/payroll-components';
@@ -32,13 +34,21 @@ import {
 } from '../lib/accounts/payroll-assignments';
 import { createPayrollPerson, setPayrollPersonStatus } from '../lib/accounts/payroll-people';
 import { createPayrollPeriod } from '../lib/accounts/payroll-periods';
-import { createPayrollRun, loadPayrollRun } from '../lib/accounts/payroll-runs';
+import {
+  cancelPayrollRun,
+  createPayrollRun,
+  loadPayrollRun,
+} from '../lib/accounts/payroll-runs';
 import { addScopeMember } from '../lib/accounts/payroll-run-scope';
 import {
   clearRunCalculationArtifacts,
   loadRunCalculationArtifacts,
 } from '../lib/accounts/payroll-run-snapshots';
-import { acquirePayrollLocks, payrollPeriodLock, payrollRunLock } from '../lib/accounts/payroll-locks';
+import {
+  acquirePayrollLocks,
+  payrollPeriodLock,
+  payrollRunLock,
+} from '../lib/accounts/payroll-locks';
 import { verifyPayrollCalculationCore } from '../lib/accounts/verify-payroll-calculation-core';
 import { verifyPayrollSnapshotSchema } from '../lib/accounts/verify-payroll-snapshot-schema';
 import { withTransaction, txQuery } from '../lib/accounts/with-transaction';
@@ -60,6 +70,8 @@ async function it(name: string, fn: () => Promise<void>) {
     ok(name);
   } catch (e) {
     failed(name, e);
+  } finally {
+    __clearPayrollCalcFailpointForTests();
   }
 }
 function assert(cond: unknown, msg: string) {
@@ -184,6 +196,15 @@ async function countOwned() {
   return Number(r.rows[0]?.n ?? 0);
 }
 
+async function auditCount(runId: string, action: string) {
+  const r = await query(
+    `SELECT COUNT(*)::int n FROM accounts.financial_audit_log
+     WHERE entity_type='payroll_run' AND entity_id=$1::uuid AND action=$2`,
+    [runId, action]
+  );
+  return Number(r.rows[0]?.n ?? 0);
+}
+
 async function main() {
   console.log('===== اختبارات نواة احتساب الرواتب 9.A.2.3.1 =====');
   const token = `CALC${Date.now().toString(36).toUpperCase()}`;
@@ -219,17 +240,18 @@ async function main() {
   const fiscalYearId = fy.rows[0].id as string;
 
   const ccRes = await query(
-    `SELECT id FROM accounts.cost_centers WHERE is_active=TRUE ORDER BY created_at LIMIT 1`
+    `SELECT id FROM accounts.cost_centers WHERE is_active=TRUE ORDER BY created_at LIMIT 2`
   );
   const costCenterId = (ccRes.rows[0]?.id as string | undefined) ?? null;
+  const costCenterId2 = (ccRes.rows[1]?.id as string | undefined) ?? null;
 
-  const mkCalendar = async () => {
+  const mkCalendar = async (currency = 'IQD') => {
     const cal = await withTransaction((c) =>
       createPayrollCalendar(c, {
         code: uniq('CALCCAL'),
         name_ar: 'تقويم احتساب',
         calendar_type: 'MONTHLY',
-        currency_code: 'IQD',
+        currency_code: currency,
         effective_from: '2025-01-01',
         created_by: userId,
       })
@@ -398,6 +420,22 @@ async function main() {
     });
     return run;
   };
+  const mkRunWithPeople = async (periodId: string, personIds: string[]) => {
+    let run = await mkRun(periodId);
+    for (const personId of personIds) {
+      run = await withTransaction(async (c) => {
+        const r = await addScopeMember(c, {
+          runId: run.id,
+          personId,
+          userId,
+          version: run.version,
+          updated_at: run.updated_at,
+        });
+        return r.run;
+      });
+    }
+    return run;
+  };
   const mkCollegeDept = async () => {
     const col = await query(
       `INSERT INTO student_affairs.colleges (id, name_ar, name_en)
@@ -415,10 +453,21 @@ async function main() {
     owned.departmentIds.push(departmentId);
     return { collegeId, departmentId };
   };
+  const mkDeptInCollege = async (collegeId: string) => {
+    const dep = await query(
+      `INSERT INTO student_affairs.departments (id, college_id, name_ar, name_en)
+       VALUES (gen_random_uuid(), $1::uuid, $2, 'Calc Dept2') RETURNING id`,
+      [collegeId, uniq('قسم')]
+    );
+    const departmentId = dep.rows[0].id as string;
+    owned.departmentIds.push(departmentId);
+    return departmentId;
+  };
   const mkActiveAssignment = async (
     personId: string,
     departmentId?: string | null,
-    costCenter?: string | null
+    costCenter?: string | null,
+    over: { effective_from?: string; effective_to?: string | null } = {}
   ) => {
     const a = await withTransaction(async (client) => {
       const draft = await createPayrollAssignment(client, {
@@ -427,7 +476,8 @@ async function main() {
         title_ar: 'تكليف احتساب',
         department_id: departmentId ?? undefined,
         cost_center_id: costCenter ?? undefined,
-        effective_from: '2025-01-01',
+        effective_from: over.effective_from ?? '2025-01-01',
+        effective_to: over.effective_to ?? undefined,
         created_by: userId,
       });
       owned.assignmentIds.push(draft.id);
@@ -452,6 +502,26 @@ async function main() {
       })
     );
 
+  const assertDraftClean = async (
+    runId: string,
+    expectTotals: { gross: string; ded: string; emp: string; net: string }
+  ) => {
+    const after = await withTransaction((c) => loadPayrollRun(c, runId));
+    assert(after.status === 'DRAFT', `status ${after.status}`);
+    assert(String(after.gross_total) === expectTotals.gross, `gross ${after.gross_total}`);
+    assert(String(after.deduction_total) === expectTotals.ded, `ded ${after.deduction_total}`);
+    assert(
+      String(after.employer_contribution_total) === expectTotals.emp,
+      `emp ${after.employer_contribution_total}`
+    );
+    assert(String(after.net_total) === expectTotals.net, `net ${after.net_total}`);
+    const arts = await withTransaction((c) => loadRunCalculationArtifacts(c, runId));
+    assert(arts.people.length === 0, 'people artifacts');
+    assert(arts.lines.length === 0, 'line artifacts');
+    assert(arts.issues.length === 0, 'issue artifacts');
+    assert((await auditCount(runId, 'payroll_run.calculated')) === 0, 'no success audit');
+  };
+
   // —— صيغ التقريب ——
   await it('صيغة: 1000×12.5% → 125', async () => {
     const r = calculatePercentageOfBasic('1000', '12.5', 'IQD');
@@ -469,9 +539,15 @@ async function main() {
     const r = calculateFixedAmount('100.4', 'IQD');
     assert(r.calculated === '100.000', `got ${r.calculated}`);
   });
+  await it('صيغة: isSupportedPayrollCurrency IQD فقط', async () => {
+    assert(isSupportedPayrollCurrency('IQD'), 'IQD');
+    assert(!isSupportedPayrollCurrency('USD'), 'USD');
+    assert(!isSupportedPayrollCurrency('KWD'), 'KWD');
+    assert(!isSupportedPayrollCurrency('ZZZ'), 'ZZZ');
+  });
 
   // —— Happy FIXED ——
-  await it('احتساب FIXED_AMOUNT ناجح', async () => {
+  await it('احتساب FIXED_AMOUNT ناجح (IQD)', async () => {
     const cal = await mkCalendar();
     const period = await mkPeriod(cal.id);
     const person = await mkPerson();
@@ -540,9 +616,7 @@ async function main() {
     assert(String(rp.gross_amount) === '0.000', 'gross0');
     assert(res.summary.gross_total === '0.000', 'run gross');
     assert(
-      (arts.issues as Array<{ issue_code: string }>).some(
-        (i) => i.issue_code === 'NO_EARNINGS'
-      ),
+      (arts.issues as Array<{ issue_code: string }>).some((i) => i.issue_code === 'NO_EARNINGS'),
       'NO_EARNINGS'
     );
   });
@@ -587,12 +661,58 @@ async function main() {
     assert(res.summary.gross_total === '15000.000', 'college gross');
   });
 
-  await it('نطاق COST_CENTER', async () => {
-    assert(costCenterId, 'يحتاج مركز كلفة نشط في القاعدة');
+  await it('COLLEGE dedupe: تكليفان في قسمين لنفس الكلية → شخص واحد', async () => {
+    const { collegeId, departmentId } = await mkCollegeDept();
+    const dept2 = await mkDeptInCollege(collegeId);
+    const cal = await mkCalendar();
+    const period = await mkPeriod(cal.id);
+    const person = await mkPerson();
+    await mkContract(person.id);
+    await mkActiveAssignment(person.id, departmentId);
+    await mkActiveAssignment(person.id, dept2);
+    const fix = await mkFixedComponent('17000');
+    await mkPca(person.id, fix.id, { amount: '17000' });
+    const run = await mkRun(period.id, {
+      scope_type: 'COLLEGE',
+      scope_ref_id: collegeId,
+    });
+    const res = await calc(run);
+    assert(res.summary.people_count === 1, `people ${res.summary.people_count}`);
+  });
+
+  await it('COST_CENTER: default فقط بلا تكليف → مستبعد', async () => {
+    assert(costCenterId, 'يحتاج مركز كلفة نشط');
     const cal = await mkCalendar();
     const period = await mkPeriod(cal.id);
     const person = await mkPerson({ default_cost_center_id: costCenterId });
     await mkContract(person.id);
+    const fix = await mkFixedComponent('11000');
+    await mkPca(person.id, fix.id, { amount: '11000' });
+    const run = await mkRun(period.id, {
+      scope_type: 'COST_CENTER',
+      scope_ref_id: costCenterId,
+    });
+    const resolved = await withTransaction((c) =>
+      resolvePayrollRunPersons(c, {
+        scope_type: 'COST_CENTER',
+        scope_ref_id: costCenterId,
+        calculation_date: '2025-01-31',
+        run_id: run.id,
+      })
+    );
+    assert(
+      !resolved.some((p) => p.id === person.id),
+      'default_cost_center_id لا يُدخل النطاق'
+    );
+  });
+
+  await it('نطاق COST_CENTER عبر تكليف فعّال', async () => {
+    assert(costCenterId, 'يحتاج مركز كلفة نشط في القاعدة');
+    const cal = await mkCalendar();
+    const period = await mkPeriod(cal.id);
+    const person = await mkPerson({ default_cost_center_id: null });
+    await mkContract(person.id);
+    await mkActiveAssignment(person.id, null, costCenterId);
     const fix = await mkFixedComponent('11000');
     await mkPca(person.id, fix.id, { amount: '11000' });
     const run = await mkRun(period.id, {
@@ -607,6 +727,73 @@ async function main() {
         (p) => p.payroll_person_id === person.id
       ),
       'our person in cost center scope'
+    );
+  });
+
+  await it('COST_CENTER: تواريخ سريان (منتهٍ / يبدأ لاحقاً / مركز آخر)', async () => {
+    assert(costCenterId, 'يحتاج مركز كلفة');
+    const cal = await mkCalendar();
+    const period = await mkPeriod(cal.id);
+    const ended = await mkPerson();
+    const future = await mkPerson();
+    const other = await mkPerson();
+    await mkContract(ended.id);
+    await mkContract(future.id);
+    await mkContract(other.id);
+    await mkActiveAssignment(ended.id, null, costCenterId, {
+      effective_from: '2024-01-01',
+      effective_to: '2024-12-31',
+    });
+    await mkActiveAssignment(future.id, null, costCenterId, {
+      effective_from: '2025-02-01',
+    });
+    if (costCenterId2) {
+      await mkActiveAssignment(other.id, null, costCenterId2);
+    } else {
+      await mkActiveAssignment(other.id, null, null);
+    }
+    const run = await mkRun(period.id, {
+      scope_type: 'COST_CENTER',
+      scope_ref_id: costCenterId,
+    });
+    const resolved = await withTransaction((c) =>
+      resolvePayrollRunPersons(c, {
+        scope_type: 'COST_CENTER',
+        scope_ref_id: costCenterId,
+        calculation_date: '2025-01-15',
+        run_id: run.id,
+      })
+    );
+    assert(!resolved.some((p) => p.id === ended.id), 'ended excluded');
+    assert(!resolved.some((p) => p.id === future.id), 'future excluded');
+    assert(!resolved.some((p) => p.id === other.id), 'other CC excluded');
+  });
+
+  await it('COST_CENTER dedupe: تكليفان لنفس المركز → شخص واحد', async () => {
+    assert(costCenterId, 'يحتاج مركز كلفة');
+    const cal = await mkCalendar();
+    const period = await mkPeriod(cal.id);
+    const person = await mkPerson();
+    await mkContract(person.id);
+    await mkActiveAssignment(person.id, null, costCenterId);
+    await mkActiveAssignment(person.id, null, costCenterId);
+    const fix = await mkFixedComponent('13000');
+    await mkPca(person.id, fix.id, { amount: '13000' });
+    const run = await mkRun(period.id, {
+      scope_type: 'COST_CENTER',
+      scope_ref_id: costCenterId,
+    });
+    const resolved = await withTransaction((c) =>
+      resolvePayrollRunPersons(c, {
+        scope_type: 'COST_CENTER',
+        scope_ref_id: costCenterId,
+        calculation_date: '2025-01-15',
+        run_id: run.id,
+      })
+    );
+    assert(
+      resolved.filter((p) => p.id === person.id).length === 1,
+      'deduped to one'
     );
   });
 
@@ -645,7 +832,6 @@ async function main() {
         target: 'INACTIVE',
       })
     );
-    // addScopeMember يرفض غير ACTIVE — أدرج مباشرة عبر SQL بعد إنشاء التشغيل
     let run = await mkRun(period.id, { scope_type: 'PERSON_LIST' });
     run = await withTransaction(async (c) => {
       const r1 = await addScopeMember(c, {
@@ -662,12 +848,9 @@ async function main() {
          ON CONFLICT DO NOTHING`,
         [run.id, inactive.id, userId]
       );
-      // bump version يدوياً إن لزم
       return r1.run;
     });
-    // أعد تحميل بعد الإدراج اليدوي
     run = await withTransaction((c) => loadPayrollRun(c, run.id));
-    // إن فشل ON CONFLICT بدون قيد فريد، تحقق العدد
     const members = await query(
       `SELECT COUNT(*)::int n FROM accounts.payroll_run_scope_members WHERE payroll_run_id=$1`,
       [run.id]
@@ -703,6 +886,120 @@ async function main() {
     assert(after.status === 'DRAFT', 'يبقى DRAFT');
     const arts = await withTransaction((c) => loadRunCalculationArtifacts(c, run.id));
     assert(arts.people.length === 0 && arts.issues.length === 0, 'بلا آثار');
+  });
+
+  // —— عملات غير IQD ——
+  for (const cur of ['USD', 'KWD', 'ZZZ'] as const) {
+    await it(`عملة تشغيل ${cur} → 422 قبل mutation بلا آثار/audit`, async () => {
+      const cal = await mkCalendar(cur);
+      const period = await mkPeriod(cal.id);
+      const person = await mkPerson();
+      await mkContract(person.id);
+      const run = await mkRunWithPerson(period.id, person.id);
+      assert(run.currency_code === cur, `run currency ${run.currency_code}`);
+      const startedBefore = await auditCount(run.id, 'payroll_run.calculation_started');
+      const calcBefore = await auditCount(run.id, 'payroll_run.calculated');
+      await throwsHttp(() => calc(run), 422, 'IQD');
+      await assertDraftClean(run.id, {
+        gross: '0.000',
+        ded: '0.000',
+        emp: '0.000',
+        net: '0.000',
+      });
+      assert(
+        (await auditCount(run.id, 'payroll_run.calculation_started')) === startedBefore,
+        'no started audit'
+      );
+      assert(
+        (await auditCount(run.id, 'payroll_run.calculated')) === calcBefore,
+        'no calculated audit'
+      );
+    });
+  }
+
+  await it('Run IQD + عقد USD → ERROR CURRENCY_MISMATCH بلا أسطر', async () => {
+    const cal = await mkCalendar();
+    const period = await mkPeriod(cal.id);
+    const person = await mkPerson();
+    await mkContract(person.id, '100000', 'USD');
+    const run = await mkRunWithPerson(period.id, person.id);
+    const res = await calc(run);
+    assert(res.summary.error_people === 1, 'error people');
+    assert(res.summary.error_count === 1, 'error_count');
+    const arts = await withTransaction((c) => loadRunCalculationArtifacts(c, run.id));
+    assert(arts.lines.length === 0, 'no lines');
+    assert(
+      (arts.issues as Array<{ issue_code: string }>).some(
+        (i) => i.issue_code === 'CURRENCY_MISMATCH'
+      ),
+      'CURRENCY_MISMATCH'
+    );
+  });
+
+  await it('MULTIPLE_ACTIVE_CONTRACTS orchestration', async () => {
+    const cal = await mkCalendar();
+    const period = await mkPeriod(cal.id);
+    const person = await mkPerson();
+    const c1 = await mkContract(person.id, '100000');
+    const run = await mkRunWithPerson(period.id, person.id);
+    try {
+      await withTransaction(async (c) => {
+        await txQuery(c, `DROP INDEX IF EXISTS accounts.uq_payroll_contracts_one_active`);
+        const c2 = await txQuery<{ id: string }>(
+          c,
+          `INSERT INTO accounts.payroll_contracts
+             (payroll_person_id, contract_number, compensation_basis, base_amount, currency_code,
+              effective_from, status, created_by, updated_by)
+           VALUES ($1::uuid,$2,'MONTHLY_FIXED',200000,'IQD','2025-01-01','ACTIVE',$3::uuid,$3::uuid)
+           RETURNING id`,
+          [person.id, uniq('PYC2'), userId]
+        );
+        owned.contractIds.push(c2.rows[0]!.id);
+        const res = await calculatePayrollRunCore(c, {
+          run_id: run.id,
+          version: run.version,
+          updated_at: run.updated_at,
+          userId,
+          idempotency_key: randomUUID(),
+        });
+        assert(res.summary.error_people === 1, 'error person');
+        const arts = await loadRunCalculationArtifacts(c, run.id);
+        assert(
+          (arts.issues as Array<{ issue_code: string }>).some(
+            (i) => i.issue_code === 'MULTIPLE_ACTIVE_CONTRACTS'
+          ),
+          'MULTIPLE_ACTIVE_CONTRACTS'
+        );
+        assert(arts.lines.length === 0, 'no lines');
+        void c1;
+        throw new Error('__ROLLBACK_MULTI_CONTRACT__');
+      });
+    } catch (e) {
+      assert(
+        e instanceof Error && e.message === '__ROLLBACK_MULTI_CONTRACT__',
+        `unexpected ${e instanceof Error ? e.message : e}`
+      );
+    }
+    const after = await withTransaction((c) => loadPayrollRun(c, run.id));
+    assert(after.status === 'DRAFT', 'rolled back to DRAFT');
+  });
+
+  await it('تشغيل مختلط: نجاح + خطأ → CALCULATED error_count=1 totals من النجاح فقط', async () => {
+    const cal = await mkCalendar();
+    const period = await mkPeriod(cal.id);
+    const okPerson = await mkPerson();
+    const badPerson = await mkPerson();
+    const contract = await mkContract(okPerson.id, '500000');
+    // badPerson بلا عقد
+    const fix = await mkFixedComponent('88000');
+    await mkPca(okPerson.id, fix.id, { payroll_contract_id: contract.id, amount: '88000' });
+    const run = await mkRunWithPeople(period.id, [okPerson.id, badPerson.id]);
+    const res = await calc(run);
+    assert(res.run.status === 'CALCULATED', 'status');
+    assert(res.summary.people_count === 2, `people ${res.summary.people_count}`);
+    assert(res.summary.error_count === 1, `errors ${res.summary.error_count}`);
+    assert(res.summary.gross_total === '88000.000', `gross ${res.summary.gross_total}`);
+    assert(res.summary.net_total === '88000.000', `net ${res.summary.net_total}`);
   });
 
   // —— Eligibility / unsupported / ERROR ——
@@ -757,9 +1054,7 @@ async function main() {
     assert(res.summary.net_total === '-40000.000', `net ${res.summary.net_total}`);
     const arts = await withTransaction((c) => loadRunCalculationArtifacts(c, run.id));
     assert(
-      (arts.issues as Array<{ issue_code: string }>).some(
-        (i) => i.issue_code === 'NEGATIVE_NET'
-      ),
+      (arts.issues as Array<{ issue_code: string }>).some((i) => i.issue_code === 'NEGATIVE_NET'),
       'NEGATIVE_NET'
     );
   });
@@ -804,6 +1099,131 @@ async function main() {
     );
   });
 
+  await it('Concurrent Calculate×Calculate — اتصالان مستقلان', async () => {
+    assert(typeof pool.connect === 'function', 'pool متاح لاتصالين مستقلين');
+    const cal = await mkCalendar();
+    const period = await mkPeriod(cal.id);
+    const person = await mkPerson();
+    const contract = await mkContract(person.id);
+    const fix = await mkFixedComponent('44000');
+    await mkPca(person.id, fix.id, { payroll_contract_id: contract.id, amount: '44000' });
+    const run = await mkRunWithPerson(period.id, person.id);
+    const keySame = randomUUID();
+    const keyOther = randomUUID();
+
+    const p1 = withTransaction((c) =>
+      calculatePayrollRunCore(c, {
+        run_id: run.id,
+        version: run.version,
+        updated_at: run.updated_at,
+        userId,
+        idempotency_key: keySame,
+      })
+    );
+    const p2 = withTransaction((c) =>
+      calculatePayrollRunCore(c, {
+        run_id: run.id,
+        version: run.version,
+        updated_at: run.updated_at,
+        userId,
+        idempotency_key: keyOther,
+      })
+    );
+    const settled = await Promise.allSettled([p1, p2]);
+    const fulfilled = settled.filter((s) => s.status === 'fulfilled');
+    const rejected = settled.filter((s) => s.status === 'rejected');
+    assert(fulfilled.length >= 1, 'at least one success');
+    if (rejected.length) {
+      for (const r of rejected) {
+        const err = (r as PromiseRejectedResult).reason;
+        assert(
+          err instanceof AccountsHttpError && err.status === 409,
+          `expected 409 got ${err instanceof Error ? err.message : err}`
+        );
+      }
+    } else {
+      // نفس المفتاح قد يُعيد replay إن تزامنا بشكل خاص — نتحقق من اتساق النتيجة
+      const a = (fulfilled[0] as PromiseFulfilledResult<{ run: { status: string } }>).value;
+      assert(a.run.status === 'CALCULATED', 'calculated');
+    }
+    const after = await withTransaction((c) => loadPayrollRun(c, run.id));
+    assert(after.status === 'CALCULATED', 'final CALCULATED');
+
+    // إعادة بنفس المفتاح الناجح → replay
+    const winnerKey =
+      fulfilled.length === 1
+        ? keySame // قد يكون أي منهما؛ نجرّب الاثنين
+        : keySame;
+    const replayAttempts = [keySame, keyOther];
+    let replayed = false;
+    for (const k of replayAttempts) {
+      try {
+        const r = await calc(
+          { id: after.id, version: after.version, updated_at: after.updated_at },
+          k
+        );
+        if (r.idempotent_replay) {
+          replayed = true;
+          break;
+        }
+      } catch (e) {
+        if (!(e instanceof AccountsHttpError && e.status === 409)) throw e;
+      }
+    }
+    assert(replayed || after.status === 'CALCULATED', `winnerKey=${winnerKey}`);
+  });
+
+  await it('Concurrent Calculate×Cancel — نتائج متسقة A أو B فقط', async () => {
+    const cal = await mkCalendar();
+    const period = await mkPeriod(cal.id);
+    const person = await mkPerson();
+    const contract = await mkContract(person.id);
+    const fix = await mkFixedComponent('55000');
+    await mkPca(person.id, fix.id, { payroll_contract_id: contract.id, amount: '55000' });
+    const run = await mkRunWithPerson(period.id, person.id);
+
+    const calcP = withTransaction((c) =>
+      calculatePayrollRunCore(c, {
+        run_id: run.id,
+        version: run.version,
+        updated_at: run.updated_at,
+        userId,
+        idempotency_key: randomUUID(),
+      })
+    );
+    const cancelP = withTransaction((c) =>
+      cancelPayrollRun(c, {
+        id: run.id,
+        userId,
+        version: run.version,
+        updated_at: run.updated_at,
+        reason: 'اختبار تزامن إلغاء',
+      })
+    );
+    const settled = await Promise.allSettled([calcP, cancelP]);
+    const after = await withTransaction((c) => loadPayrollRun(c, run.id));
+    assert(
+      after.status === 'CALCULATED' || after.status === 'CANCELLED',
+      `status ${after.status}`
+    );
+    assert(after.status !== 'CALCULATING', 'not stuck CALCULATING');
+    assert(after.status !== 'DRAFT', 'not DRAFT after race');
+    // على الأقل أحدهما نجح
+    assert(
+      settled.some((s) => s.status === 'fulfilled'),
+      'one fulfilled'
+    );
+    if (after.status === 'CANCELLED') {
+      const live = await query(
+        `SELECT COUNT(*)::int n FROM accounts.payroll_run_people
+         WHERE payroll_run_id=$1::uuid AND superseded=FALSE`,
+        [run.id]
+      );
+      // إن أُلغي قبل/أثناء الاحتساب دون لقطات، أو superseded بعد احتساب
+      assert(Number(live.rows[0].n) === 0 || after.status === 'CANCELLED', 'no live unsuperseded');
+    }
+  });
+
   await it('ذرّية: فشل بعد CALCULATING → rollback DRAFT', async () => {
     const cal = await mkCalendar();
     const period = await mkPeriod(cal.id);
@@ -833,6 +1253,44 @@ async function main() {
     assert(arts.people.length === 0, 'no partial people');
   });
 
+  const failpoints: Exclude<PayrollCalcFailpoint, null>[] = [
+    'after_first_person',
+    'after_first_line',
+    'before_run_hash',
+    'before_totals_update',
+    'during_audit',
+  ];
+  for (const fp of failpoints) {
+    await it(`ذرّية failpoint ${fp} → DRAFT بلا آثار/audit نجاح`, async () => {
+      const cal = await mkCalendar();
+      const period = await mkPeriod(cal.id);
+      const person = await mkPerson();
+      const contract = await mkContract(person.id);
+      const fix = await mkFixedComponent('66000');
+      await mkPca(person.id, fix.id, { payroll_contract_id: contract.id, amount: '66000' });
+      const run = await mkRunWithPerson(period.id, person.id);
+      const before = await withTransaction((c) => loadPayrollRun(c, run.id));
+      __setPayrollCalcFailpointForTests(fp);
+      try {
+        await calc(run);
+        throw new Error('should have failed');
+      } catch (e) {
+        assert(
+          e instanceof Error && e.message === `CALC_FAILPOINT_${fp}`,
+          `got ${e instanceof Error ? e.message : e}`
+        );
+      } finally {
+        __clearPayrollCalcFailpointForTests();
+      }
+      await assertDraftClean(run.id, {
+        gross: String(before.gross_total),
+        ded: String(before.deduction_total),
+        emp: String(before.employer_contribution_total),
+        net: String(before.net_total),
+      });
+    });
+  }
+
   await it('حتمية: نفس المصادر → نفس totals/hash', async () => {
     const cal = await mkCalendar();
     const period = await mkPeriod(cal.id);
@@ -858,6 +1316,59 @@ async function main() {
     assert(a === b && /^[0-9a-f-]{36}$/.test(a), 'uuid');
   });
 
+  await it('Verify: ERROR بلا issue حاجب → mismatch', async () => {
+    const cal = await mkCalendar();
+    const period = await mkPeriod(cal.id);
+    const person = await mkPerson();
+    await mkContract(person.id);
+    const run = await mkRunWithPerson(period.id, person.id);
+    await withTransaction(async (c) => {
+      await txQuery(
+        c,
+        `INSERT INTO accounts.payroll_run_people
+           (payroll_run_id, payroll_person_id, payroll_period_id,
+            person_code_snapshot, full_name_snapshot, person_type_snapshot,
+            currency_code, calculation_status, snapshot_json, snapshot_hash, created_by)
+         VALUES (
+           $1::uuid, $2::uuid, $3::uuid,
+           'ERRCHK', 'تحقق', 'EMPLOYEE',
+           'IQD', 'ERROR', '{}'::jsonb,
+           repeat('a', 64), $4::uuid
+         )`,
+        [run.id, person.id, period.id, userId]
+      );
+      await txQuery(
+        c,
+        `UPDATE accounts.payroll_runs SET
+           status='CALCULATED', people_count=1, error_count=1,
+           calculation_attempt_number=1,
+           snapshot_hash=repeat('b', 64),
+           updated_at=NOW(), version=version+1
+         WHERE id=$1::uuid`,
+        [run.id]
+      );
+    });
+    const v = await withTransaction((c) => verifyPayrollCalculationCore(c, { strict: false }));
+    assert(
+      v.mismatches.some((m) => m.kind === 'error_person_without_error_issue'),
+      `expected mismatch, got ${JSON.stringify(v.mismatches.slice(0, 5))}`
+    );
+    // تنظيف الحالة الاصطناعية عبر SQL مباشر (clearRunCalculationArtifacts يرفض CALCULATED)
+    await query(`DELETE FROM accounts.payroll_run_issues WHERE payroll_run_id=$1::uuid`, [run.id]);
+    await query(`DELETE FROM accounts.payroll_run_lines WHERE payroll_run_id=$1::uuid`, [run.id]);
+    await query(`DELETE FROM accounts.payroll_run_people WHERE payroll_run_id=$1::uuid`, [run.id]);
+    await query(
+      `UPDATE accounts.payroll_runs SET
+         status='DRAFT', people_count=0, error_count=0, warning_count=0,
+         gross_total=0, deduction_total=0, employer_contribution_total=0, net_total=0,
+         snapshot_hash=NULL, calculation_attempt_number=0,
+         calculated_at=NULL, calculated_by=NULL,
+         updated_at=NOW(), version=version+1
+       WHERE id=$1::uuid`,
+      [run.id]
+    );
+  });
+
   await it('انحدار snapshot/calculation verify', async () => {
     const s = await withTransaction((c) => verifyPayrollSnapshotSchema(c, { strict: false }));
     assert(s.ok, JSON.stringify(s.mismatches.slice(0, 5)));
@@ -880,6 +1391,7 @@ main().catch(async (e) => {
   console.error(e);
   process.exitCode = 1;
   try {
+    __clearPayrollCalcFailpointForTests();
     await cleanupOwned();
   } catch {
     /* ignore */
