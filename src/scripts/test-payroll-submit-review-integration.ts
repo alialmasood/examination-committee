@@ -1344,7 +1344,7 @@ async function main() {
     });
 
     // —— Period closed ——
-    await it('48) إغلاق الفترة → submit 409؛ التشغيل يبقى CALCULATED', async () => {
+    await it('48) إغلاق الفترة → submit 422 PAYROLL_PERIOD_NOT_OPEN؛ التشغيل يبقى CALCULATED', async () => {
       const seeded = await seedCalculated('530000');
       await query(
         `UPDATE accounts.payroll_periods
