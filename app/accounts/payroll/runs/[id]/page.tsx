@@ -7,21 +7,53 @@ import PayrollNav from '../../PayrollNav';
 import {
   API,
   CAP,
+  COMPONENT_TYPE,
   RUN_STATUS,
   RUN_TYPE,
   SCOPE_TYPE,
+  PERSON_CALC_STATUS,
   StatusBadge,
   ConfirmDialog,
   can,
   errMsg,
   fetchJson,
-  iqd,
+  iqdWhole,
   label,
   runUrl,
   runCancelUrl,
+  runCalculateUrl,
+  runPeopleUrl,
+  runPersonDetailUrl,
   runScopeUrl,
   runScopeMemberUrl,
 } from '../../_lib';
+
+type PeopleFilter = 'ALL' | 'CALCULATED' | 'ERROR' | 'EXCLUDED';
+
+function newIdempotencyKey(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch { /* ignore */ }
+  return `calc-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function calcErrorMsg(r: any): string {
+  if (r?.__status === 409) {
+    return 'تم تعديل تشغيل الرواتب أو احتسابه بواسطة مستخدم آخر. يرجى تحديث الصفحة.';
+  }
+  if (r?.__status === 422) {
+    return 'تعذر بدء الاحتساب بسبب إعدادات تشغيل الرواتب.';
+  }
+  if (r?.__status === 403) {
+    return 'ليس لديك صلاحية احتساب الرواتب.';
+  }
+  if (r?.__status === 500) {
+    return 'حدث خطأ تقني أثناء احتساب الرواتب. لم يتم حفظ نتائج جزئية.';
+  }
+  return errMsg(r);
+}
 
 export default function RunDetailPage() {
   const params = useParams();
@@ -39,12 +71,43 @@ export default function RunDetailPage() {
   const [reason, setReason] = useState('');
   const [addPerson, setAddPerson] = useState('');
 
+  const [calcOpen, setCalcOpen] = useState(false);
+  const [calculating, setCalculating] = useState(false);
+  const [calcMsg, setCalcMsg] = useState('');
+  const [toast, setToast] = useState('');
+  const [people, setPeople] = useState<any[]>([]);
+  const [peopleFilter, setPeopleFilter] = useState<PeopleFilter>('ALL');
+  const [peopleSearch, setPeopleSearch] = useState('');
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detail, setDetail] = useState<any>(null);
+  const [detailBusy, setDetailBusy] = useState(false);
+  const [calcSummary, setCalcSummary] = useState<any>(null);
+
+  const loadPeople = async (status: PeopleFilter = peopleFilter, search: string = peopleSearch) => {
+    const qs = new URLSearchParams({ page: '1', page_size: '100' });
+    if (status !== 'ALL') qs.set('status', status);
+    if (search.trim()) qs.set('search', search.trim());
+    const r = await fetchJson(`${runPeopleUrl(id)}?${qs.toString()}`);
+    if (!r.success) {
+      setError(errMsg(r));
+      return;
+    }
+    setPeople(Array.isArray(r.data?.items) ? r.data.items : []);
+  };
+
   const load = async () => {
     const r = await fetchJson(runUrl(id));
     if (!r.success) return setError(errMsg(r));
     setError('');
-    setRun(r.data?.run ?? null);
+    const nextRun = r.data?.run ?? null;
+    setRun(nextRun);
     setMembers(Array.isArray(r.data?.scope_members) ? r.data.scope_members : []);
+    setCalcSummary(r.data?.calculation_summary ?? null);
+    if (nextRun?.status === 'CALCULATED') {
+      await loadPeople();
+    } else {
+      setPeople([]);
+    }
   };
 
   useEffect(() => {
@@ -58,8 +121,21 @@ export default function RunDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(''), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  useEffect(() => {
+    if (run?.status !== 'CALCULATED') return;
+    void loadPeople(peopleFilter, peopleSearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peopleFilter]);
+
   const create = can(caps, CAP.CREATE_RUNS);
   const cancelCap = can(caps, CAP.CANCEL_RUNS);
+  const canCalculate = can(caps, CAP.CALCULATE);
   const departments: any[] = options?.departments ?? [];
   const costCenters: any[] = options?.cost_centers ?? [];
   const activePeople: any[] = options?.active_people ?? [];
@@ -113,6 +189,40 @@ export default function RunDetailPage() {
     } finally { setBusy(false); }
   }
 
+  async function doCalculate() {
+    setCalculating(true);
+    setCalcMsg('');
+    try {
+      const r = await fetchJson(runCalculateUrl(id), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          version: run.version,
+          updated_at: run.updated_at,
+          idempotency_key: newIdempotencyKey(),
+          confirmation: true,
+        }),
+      });
+      if (!r.success) {
+        setCalcMsg(calcErrorMsg(r));
+        setError(calcErrorMsg(r));
+        setCalcOpen(false);
+        return;
+      }
+      setCalcOpen(false);
+      setCalcMsg('');
+      setError('');
+      setToast(
+        r.idempotent_replay
+          ? 'تم استرجاع نتيجة الاحتساب السابقة'
+          : 'تم احتساب الرواتب بنجاح'
+      );
+      await load();
+    } finally {
+      setCalculating(false);
+    }
+  }
+
   async function addMember() {
     if (!addPerson) return;
     setBusy(true);
@@ -137,25 +247,65 @@ export default function RunDetailPage() {
     } finally { setBusy(false); }
   }
 
+  async function openPersonDetail(runPersonId: string) {
+    setDetailBusy(true);
+    setDetail(null);
+    setDetailOpen(true);
+    try {
+      const r = await fetchJson(runPersonDetailUrl(id, runPersonId));
+      if (!r.success) {
+        setError(errMsg(r));
+        setDetailOpen(false);
+        return;
+      }
+      setDetail(r.data ?? null);
+    } finally {
+      setDetailBusy(false);
+    }
+  }
+
+  function applyPeopleSearch() {
+    void loadPeople(peopleFilter, peopleSearch);
+  }
+
   if (error && !run) return (
     <main dir="rtl" className="p-4 max-w-4xl mx-auto"><PayrollNav /><p className="text-red-600 text-sm">{error}</p></main>
   );
   if (!run) return <main dir="rtl" className="p-4 max-w-4xl mx-auto"><PayrollNav /><p className="text-gray-400 text-sm">جارٍ التحميل…</p></main>;
 
   const isDraft = run.status === 'DRAFT';
+  const isCalculated = run.status === 'CALCULATED';
   const canEdit = create && isDraft;
   const canScope = create && isDraft && run.scope_type === 'PERSON_LIST';
   const canCancel = cancelCap && (run.status === 'DRAFT' || run.status === 'CALCULATED');
+  const showCalculate = isDraft && canCalculate;
   const scopeRefName = run.scope_ref_id
     ? (run.scope_type === 'COST_CENTER'
         ? (costCenters.find((c) => c.id === run.scope_ref_id)?.name_ar ?? run.scope_ref_id)
         : (departments.find((d) => d.id === run.scope_ref_id)?.name_ar ?? run.scope_ref_id))
     : '—';
 
+  const summary = calcSummary ?? {};
+  const totalPeople = summary.total_people ?? run.people_count ?? 0;
+  const calculatedPeople = summary.calculated_people ?? 0;
+  const errorPeople = summary.error_people ?? run.error_count ?? 0;
+  const excludedPeople = summary.excluded_people ?? 0;
+  const hasCalcErrors = Number(run.error_count ?? errorPeople ?? 0) > 0;
+
+  const detailPerson = detail?.person;
+  const detailLines: any[] = Array.isArray(detail?.lines) ? detail.lines : [];
+  const detailIssues: any[] = Array.isArray(detail?.issues) ? detail.issues : [];
+  const linesByType = (t: string) => detailLines.filter((l) => l.component_type === t);
+
   return (
-    <main dir="rtl" className="p-4 max-w-4xl mx-auto">
+    <main dir="rtl" className="p-4 max-w-5xl mx-auto">
       <PayrollNav />
-      {error && <p className="text-red-600 mb-3 text-sm">{error}</p>}
+      {toast && (
+        <div className="bg-green-50 border border-green-200 text-green-800 rounded px-3 py-2 text-sm mb-3">
+          {toast}
+        </div>
+      )}
+      {(error || calcMsg) && <p className="text-red-600 mb-3 text-sm">{error || calcMsg}</p>}
       <div className="flex justify-between items-center mb-4">
         <div>
           <Link href="/accounts/payroll/runs" className="text-blue-600 text-sm">→ عودة للتشغيلات</Link>
@@ -175,22 +325,132 @@ export default function RunDetailPage() {
         {run.cancellation_reason && <div className="md:col-span-2"><span className="text-gray-500">سبب الإلغاء:</span> {run.cancellation_reason}</div>}
       </div>
 
-      <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-800 mb-4">
-        محرك الاحتساب سيُفعّل في المرحلة التالية — الإجماليات أدناه صفرية حالياً.
-      </div>
+      {isDraft && run.scope_type === 'PERSON_LIST' && members.length > 0 && (
+        <p className="text-sm text-gray-600 mb-4">
+          عدد الأشخاص المتوقع عند الاحتساب وفق قائمة النطاق: <span className="font-semibold">{members.length}</span>
+        </p>
+      )}
 
-      <div className="bg-white shadow rounded p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm mb-6">
-        <div><p className="text-gray-500 text-xs">عدد الأشخاص</p><p className="font-bold">{run.people_count ?? 0}</p></div>
-        <div><p className="text-gray-500 text-xs">إجمالي الاستحقاقات</p><p className="font-bold">{iqd(run.gross_total)}</p></div>
-        <div><p className="text-gray-500 text-xs">إجمالي الاستقطاعات</p><p className="font-bold">{iqd(run.deduction_total)}</p></div>
-        <div><p className="text-gray-500 text-xs">مساهمات جهة العمل</p><p className="font-bold">{iqd(run.employer_contribution_total)}</p></div>
-        <div><p className="text-gray-500 text-xs">الصافي</p><p className="font-bold">{iqd(run.net_total)}</p></div>
-      </div>
+      {isCalculated && hasCalcErrors && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-900 rounded p-3 text-sm mb-4">
+          اكتمل احتساب الرواتب مع وجود أخطاء تحتاج إلى معالجة. لن يسمح بالترحيل أو الدفع قبل معالجة جميع الأخطاء.
+        </div>
+      )}
+
+      {isCalculated ? (
+        <div className="bg-white shadow rounded p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-6">
+          <div><p className="text-gray-500 text-xs">عدد الأشخاص</p><p className="font-bold">{totalPeople}</p></div>
+          <div><p className="text-gray-500 text-xs">المحتسبون</p><p className="font-bold">{calculatedPeople}</p></div>
+          <div><p className="text-gray-500 text-xs">الأخطاء</p><p className="font-bold text-red-700">{errorPeople}</p></div>
+          <div><p className="text-gray-500 text-xs">المستبعدون</p><p className="font-bold">{excludedPeople}</p></div>
+          <div><p className="text-gray-500 text-xs">إجمالي الاستحقاقات</p><p className="font-bold">{iqdWhole(run.gross_total)}</p></div>
+          <div><p className="text-gray-500 text-xs">الاستقطاعات</p><p className="font-bold">{iqdWhole(run.deduction_total)}</p></div>
+          <div><p className="text-gray-500 text-xs">مساهمات جهة العمل</p><p className="font-bold">{iqdWhole(run.employer_contribution_total)}</p></div>
+          <div><p className="text-gray-500 text-xs">الصافي</p><p className="font-bold">{iqdWhole(run.net_total)}</p></div>
+          <div className="md:col-span-2">
+            <p className="text-gray-500 text-xs">وقت الاحتساب</p>
+            <p className="font-bold">{run.calculated_at ? new Date(run.calculated_at).toLocaleString('ar-IQ') : '—'}</p>
+          </div>
+          {run.snapshot_hash && (
+            <div className="md:col-span-2">
+              <p className="text-gray-500 text-xs">بصمة اللقطة</p>
+              <p className="font-mono text-xs">{String(run.snapshot_hash).slice(0, 12)}</p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="bg-white shadow rounded p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm mb-6">
+          <div><p className="text-gray-500 text-xs">عدد الأشخاص</p><p className="font-bold">{run.people_count ?? 0}</p></div>
+          <div><p className="text-gray-500 text-xs">إجمالي الاستحقاقات</p><p className="font-bold">{iqdWhole(run.gross_total)}</p></div>
+          <div><p className="text-gray-500 text-xs">إجمالي الاستقطاعات</p><p className="font-bold">{iqdWhole(run.deduction_total)}</p></div>
+          <div><p className="text-gray-500 text-xs">مساهمات جهة العمل</p><p className="font-bold">{iqdWhole(run.employer_contribution_total)}</p></div>
+          <div><p className="text-gray-500 text-xs">الصافي</p><p className="font-bold">{iqdWhole(run.net_total)}</p></div>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2 mb-6">
+        {showCalculate && (
+          <button
+            className="bg-red-800 text-white rounded px-3 py-1.5 text-sm disabled:opacity-50"
+            disabled={calculating}
+            onClick={() => { setCalcMsg(''); setCalcOpen(true); }}
+          >
+            احتساب الرواتب
+          </button>
+        )}
         {canEdit && <button className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm" onClick={openEdit}>تعديل</button>}
         {canCancel && <button className="bg-red-800 text-white rounded px-3 py-1.5 text-sm" onClick={() => { setReason(''); setCancelOpen(true); }}>إلغاء التشغيل</button>}
       </div>
+
+      {isCalculated && (
+        <section className="mb-6">
+          <h2 className="text-lg font-semibold mb-2">نتائج الأشخاص</h2>
+          <div className="flex flex-wrap gap-2 mb-3 text-sm items-center">
+            {([
+              ['ALL', 'الكل'],
+              ['CALCULATED', 'المحتسبون'],
+              ['ERROR', 'الأخطاء'],
+              ['EXCLUDED', 'المستبعدون'],
+            ] as [PeopleFilter, string][]).map(([k, v]) => (
+              <button
+                key={k}
+                type="button"
+                className={`rounded px-2.5 py-1 border text-sm ${peopleFilter === k ? 'bg-red-800 text-white border-red-800' : 'bg-white text-gray-700'}`}
+                onClick={() => setPeopleFilter(k)}
+              >
+                {v}
+              </button>
+            ))}
+            <input
+              className="border rounded p-1.5 flex-1 min-w-[10rem]"
+              placeholder="بحث بالرمز أو الاسم…"
+              value={peopleSearch}
+              onChange={(e) => setPeopleSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') applyPeopleSearch(); }}
+            />
+            <button className="border rounded px-3 py-1.5" type="button" onClick={applyPeopleSearch}>بحث</button>
+          </div>
+          <table className="w-full bg-white shadow rounded text-sm text-right">
+            <thead className="bg-gray-50 text-gray-500">
+              <tr>
+                <th className="p-2">الرمز</th>
+                <th>الاسم</th>
+                <th>الحالة</th>
+                <th>الأساسي</th>
+                <th>الإجمالي</th>
+                <th>الاستقطاعات</th>
+                <th>جهة العمل</th>
+                <th>الصافي</th>
+                <th>أخطاء/تحذيرات</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {people.map((p) => (
+                <tr key={p.id} className="border-t">
+                  <td className="p-2 font-mono">{p.person_code}</td>
+                  <td>{p.full_name}</td>
+                  <td><StatusBadge status={p.calculation_status} map={PERSON_CALC_STATUS} /></td>
+                  <td>{iqdWhole(p.basic_amount)}</td>
+                  <td>{iqdWhole(p.gross_amount)}</td>
+                  <td>{iqdWhole(p.deductions_amount)}</td>
+                  <td>{iqdWhole(p.employer_contributions_amount)}</td>
+                  <td className="font-semibold">{iqdWhole(p.net_amount)}</td>
+                  <td>{p.error_count ?? 0} / {p.warning_count ?? 0}</td>
+                  <td>
+                    <button className="text-blue-700" type="button" onClick={() => void openPersonDetail(p.id)}>
+                      تفاصيل
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!people.length && (
+                <tr><td colSpan={10} className="p-3 text-gray-400">لا نتائج</td></tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       {run.scope_type === 'PERSON_LIST' && (
         <section className="mb-6">
@@ -250,6 +510,97 @@ export default function RunDetailPage() {
           </div>
         </div>
       )}
+
+      {detailOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-2xl p-5 my-8" dir="rtl">
+            <div className="flex justify-between items-start mb-3">
+              <h3 className="text-lg font-semibold">تفاصيل نتيجة الشخص</h3>
+              <button className="border rounded px-2 py-1 text-sm" type="button" onClick={() => { setDetailOpen(false); setDetail(null); }}>إغلاق</button>
+            </div>
+            {detailBusy && <p className="text-sm text-gray-400">جارٍ التحميل…</p>}
+            {!detailBusy && detailPerson && (
+              <div className="space-y-4 text-sm">
+                <div className="grid md:grid-cols-2 gap-2 bg-gray-50 rounded p-3">
+                  <div><span className="text-gray-500">الشخص:</span> {detailPerson.person_code} — {detailPerson.full_name}</div>
+                  <div><span className="text-gray-500">العقد:</span> {detailPerson.payroll_contract_ref ?? '—'}</div>
+                  <div><span className="text-gray-500">الحالة:</span> <StatusBadge status={detailPerson.calculation_status} map={PERSON_CALC_STATUS} /></div>
+                  <div><span className="text-gray-500">الأساسي:</span> {iqdWhole(detailPerson.basic_amount)}</div>
+                  <div><span className="text-gray-500">الإجمالي:</span> {iqdWhole(detailPerson.gross_amount)}</div>
+                  <div><span className="text-gray-500">الاستقطاعات:</span> {iqdWhole(detailPerson.deductions_amount)}</div>
+                  <div><span className="text-gray-500">مساهمات جهة العمل:</span> {iqdWhole(detailPerson.employer_contributions_amount)}</div>
+                  <div><span className="text-gray-500">الصافي:</span> <span className="font-semibold">{iqdWhole(detailPerson.net_amount)}</span></div>
+                </div>
+
+                {(['EARNING', 'DEDUCTION', 'EMPLOYER_CONTRIBUTION'] as const).map((type) => {
+                  const rows = linesByType(type);
+                  return (
+                    <div key={type}>
+                      <h4 className="font-semibold mb-1">{label(COMPONENT_TYPE, type)}</h4>
+                      {rows.length === 0 ? (
+                        <p className="text-gray-400 text-xs mb-2">لا بنود</p>
+                      ) : (
+                        <table className="w-full border rounded mb-2">
+                          <thead className="bg-gray-50 text-gray-500 text-xs">
+                            <tr>
+                              <th className="p-1.5 text-right">الرمز</th>
+                              <th className="text-right">الاسم</th>
+                              <th className="text-right">المبلغ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((l) => (
+                              <tr key={l.id} className="border-t">
+                                <td className="p-1.5 font-mono text-xs">{l.component_code_snapshot}</td>
+                                <td>{l.component_name_snapshot}</td>
+                                <td>{iqdWhole(l.calculated_amount)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  );
+                })}
+
+                <div>
+                  <h4 className="font-semibold mb-1">الملاحظات والمشكلات</h4>
+                  {detailIssues.length === 0 ? (
+                    <p className="text-gray-400 text-xs">لا توجد مشكلات</p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {detailIssues.map((iss) => (
+                        <li key={iss.id} className="border rounded p-2">
+                          <div className="flex flex-wrap gap-2 items-center mb-1">
+                            <span className="font-mono text-xs">{iss.issue_code}</span>
+                            <span className="text-xs text-gray-500">{iss.severity}</span>
+                            {iss.blocking && (
+                              <span className="text-xs bg-red-100 text-red-800 rounded px-1.5 py-0.5">حاجب</span>
+                            )}
+                          </div>
+                          <p>{iss.message_ar}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={calcOpen}
+        title="تأكيد احتساب الرواتب"
+        message="سيقوم النظام بتجميد بيانات الأشخاص والعقود والمخصصات والاستقطاعات وفق تاريخ الاحتساب، ثم إنشاء نتائج الرواتب. لا يمكن تعديل النتائج بعد اكتمال الاحتساب دون مسار إعادة احتساب مستقل."
+        warning="الإصدار الحالي يدعم الدينار العراقي IQD فقط."
+        confirmLabel="بدء الاحتساب"
+        busyLabel="جارٍ احتساب الرواتب..."
+        busy={calculating}
+        onCancel={() => { if (!calculating) { setCalcOpen(false); setCalcMsg(''); } }}
+        onConfirm={() => void doCalculate()}
+      />
 
       <ConfirmDialog
         open={cancelOpen}

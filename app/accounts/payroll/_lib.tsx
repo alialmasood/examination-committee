@@ -20,6 +20,10 @@ export const periodActionUrl = (id: string, action: 'close' | 'reopen' | 'cancel
   `/api/accounts/payroll/periods/${id}/${action}`;
 export const runUrl = (id: string) => `/api/accounts/payroll/runs/${id}`;
 export const runCancelUrl = (id: string) => `/api/accounts/payroll/runs/${id}/cancel`;
+export const runCalculateUrl = (id: string) => `/api/accounts/payroll/runs/${id}/calculate`;
+export const runPeopleUrl = (id: string) => `/api/accounts/payroll/runs/${id}/people`;
+export const runPersonDetailUrl = (id: string, runPersonId: string) =>
+  `/api/accounts/payroll/runs/${id}/people/${runPersonId}`;
 export const runScopeUrl = (id: string) => `/api/accounts/payroll/runs/${id}/scope-members`;
 export const runScopeMemberUrl = (id: string, personId: string) =>
   `/api/accounts/payroll/runs/${id}/scope-members/${personId}`;
@@ -70,6 +74,20 @@ export function money(v: unknown): string {
 
 export function iqd(v: unknown): string {
   return `${money(v)} د.ع`;
+}
+
+/**
+ * تنسيق IQD للعرض بعد الاحتساب — بدون كسور عشرية، عبر تقسيم السلسلة (لا Number للمبالغ الكبيرة).
+ */
+export function iqdWhole(v: unknown): string {
+  const raw = String(v ?? '0').trim().replace(/,/g, '');
+  if (!raw || raw === '.') return '0 د.ع';
+  const neg = raw.startsWith('-');
+  const abs = neg ? raw.slice(1) : raw;
+  if (!/^\d+(\.\d+)?$/.test(abs)) return `${raw} د.ع`;
+  const intPart = abs.split('.')[0] || '0';
+  const withSep = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${neg ? '-' : ''}${withSep} د.ع`;
 }
 
 export const PERSON_TYPE: Record<string, string> = {
@@ -271,6 +289,10 @@ export function ConfirmDialog({
   reasonRequired,
   reason,
   onReasonChange,
+  confirmLabel,
+  cancelLabel,
+  warning,
+  busyLabel,
 }: {
   open: boolean;
   title: string;
@@ -281,6 +303,10 @@ export function ConfirmDialog({
   reasonRequired?: boolean;
   reason?: string;
   onReasonChange?: (v: string) => void;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  warning?: string;
+  busyLabel?: string;
 }) {
   if (!open) return null;
   const reasonEmpty = reasonRequired ? !(reason ?? '').trim() : false;
@@ -288,7 +314,12 @@ export function ConfirmDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" dir="rtl">
       <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-5">
         <h3 className="text-lg font-semibold mb-2">{title}</h3>
-        <p className="text-sm text-gray-600 mb-4">{message}</p>
+        <p className="text-sm text-gray-600 mb-3 whitespace-pre-line">{message}</p>
+        {warning && (
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-4">
+            {warning}
+          </p>
+        )}
         {reasonRequired && (
           <div className="mb-4">
             <label className="block text-sm text-gray-700 mb-1">السبب (إلزامي)</label>
@@ -305,16 +336,25 @@ export function ConfirmDialog({
           </div>
         )}
         <div className="flex justify-end gap-2">
-          <button className="border rounded px-3 py-2 text-sm" disabled={busy} onClick={onCancel}>إلغاء</button>
+          <button className="border rounded px-3 py-2 text-sm" disabled={busy} onClick={onCancel}>
+            {cancelLabel ?? 'إلغاء'}
+          </button>
           <button
             className="bg-red-800 text-white rounded px-3 py-2 text-sm disabled:opacity-50"
             disabled={busy || reasonEmpty}
             onClick={onConfirm}
           >
-            {busy ? 'جارٍ التنفيذ…' : 'تأكيد'}
+            {busy ? (busyLabel ?? 'جارٍ التنفيذ…') : (confirmLabel ?? 'تأكيد')}
           </button>
         </div>
       </div>
     </div>
   );
 }
+
+export const PERSON_CALC_STATUS: Record<string, string> = {
+  CALCULATED: 'تم الاحتساب',
+  ERROR: 'خطأ',
+  EXCLUDED: 'مستبعد',
+  PENDING: 'قيد الانتظار',
+};
