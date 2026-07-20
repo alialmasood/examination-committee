@@ -23,6 +23,7 @@ export const runCancelUrl = (id: string) => `/api/accounts/payroll/runs/${id}/ca
 export const runCalculateUrl = (id: string) => `/api/accounts/payroll/runs/${id}/calculate`;
 export const runRecalculateUrl = (id: string) => `/api/accounts/payroll/runs/${id}/recalculate`;
 export const runRecalculationsUrl = (id: string) => `/api/accounts/payroll/runs/${id}/recalculations`;
+export const runSubmitReviewUrl = (id: string) => `/api/accounts/payroll/runs/${id}/submit-review`;
 export const runPeopleUrl = (id: string) => `/api/accounts/payroll/runs/${id}/people`;
 export const runPersonDetailUrl = (id: string, runPersonId: string) =>
   `/api/accounts/payroll/runs/${id}/people/${runPersonId}`;
@@ -60,6 +61,7 @@ export const CAP = {
   CREATE_RUNS: 'payroll_create_runs',
   CALCULATE: 'payroll_calculate',
   RECALCULATE: 'payroll_recalculate',
+  SUBMIT_REVIEW: 'payroll_submit_review',
   CANCEL_RUNS: 'payroll_cancel_runs',
   ADMIN: 'payroll_admin',
 } as const;
@@ -207,11 +209,13 @@ export const RUN_TYPE: Record<string, string> = {
   MANUAL: 'يدوي',
 };
 
-/** حالات تشغيل الرواتب — 9.A.2.1 */
+/** حالات تشغيل الرواتب — 9.A.2.1 + 9.B */
 export const RUN_STATUS: Record<string, string> = {
   DRAFT: 'مسودة',
   CALCULATING: 'قيد الاحتساب',
   CALCULATED: 'محتسَب',
+  UNDER_REVIEW: 'قيد المراجعة',
+  APPROVED: 'معتمد',
   CANCELLED: 'ملغى',
 };
 
@@ -243,6 +247,8 @@ const STATUS_TONE: Record<string, string> = {
   CLOSED: 'bg-gray-200 text-gray-700',
   CALCULATING: 'bg-blue-100 text-blue-800',
   CALCULATED: 'bg-green-100 text-green-800',
+  UNDER_REVIEW: 'bg-amber-100 text-amber-900',
+  APPROVED: 'bg-emerald-100 text-emerald-900',
 };
 
 export function StatusBadge({ status, map }: { status: string; map: Record<string, string> }) {
@@ -281,7 +287,7 @@ export function StatCard({
   );
 }
 
-/** حوار تأكيد بسيط للأفعال الحساسة. يدعم سبباً إلزامياً (H2). */
+/** حوار تأكيد بسيط للأفعال الحساسة. يدعم سبباً إلزامياً أو تعليقاً اختيارياً. */
 export function ConfirmDialog({
   open,
   title,
@@ -301,6 +307,8 @@ export function ConfirmDialog({
   reasonHelper,
   reasonMinLength = 1,
   extraWarning,
+  commentOptional,
+  summaryLines,
 }: {
   open: boolean;
   title: string;
@@ -320,12 +328,18 @@ export function ConfirmDialog({
   reasonHelper?: string;
   reasonMinLength?: number;
   extraWarning?: string;
+  /** إظهار حقل تعليق اختياري (0–500) */
+  commentOptional?: boolean;
+  summaryLines?: Array<{ label: string; value: string }>;
 }) {
   if (!open) return null;
   const trimmed = (reason ?? '').trim();
+  const showReasonField = Boolean(reasonRequired || commentOptional);
   const reasonInvalid = reasonRequired
     ? trimmed.length < reasonMinLength || trimmed.length > 500
-    : false;
+    : commentOptional
+      ? trimmed.length > 500
+      : false;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" dir="rtl">
       <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-5">
@@ -341,10 +355,22 @@ export function ConfirmDialog({
             {extraWarning}
           </p>
         )}
-        {reasonRequired && (
+        {summaryLines && summaryLines.length > 0 && (
+          <dl className="mb-4 grid grid-cols-2 gap-2 text-sm border rounded px-3 py-2 bg-gray-50">
+            {summaryLines.map((line) => (
+              <div key={line.label} className="contents">
+                <dt className="text-gray-500">{line.label}</dt>
+                <dd className="font-medium text-gray-900 text-left" dir="ltr">
+                  {line.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        {showReasonField && (
           <div className="mb-4">
             <label className="block text-sm text-gray-700 mb-1">
-              {reasonLabel ?? 'السبب (إلزامي)'}
+              {reasonLabel ?? (reasonRequired ? 'السبب (إلزامي)' : 'تعليق (اختياري)')}
             </label>
             <textarea
               className="w-full border rounded px-3 py-2 text-sm"
@@ -360,7 +386,9 @@ export function ConfirmDialog({
             )}
             {reasonInvalid && (
               <p className="text-xs text-red-600 mt-1">
-                اكتب سبباً واضحاً بين {reasonMinLength} و 500 حرفاً.
+                {reasonRequired
+                  ? `اكتب سبباً واضحاً بين ${reasonMinLength} و 500 حرفاً.`
+                  : 'التعليق يجب ألا يتجاوز 500 حرفاً.'}
               </p>
             )}
           </div>

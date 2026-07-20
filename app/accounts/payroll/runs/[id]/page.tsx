@@ -24,6 +24,7 @@ import {
   runCalculateUrl,
   runRecalculateUrl,
   runRecalculationsUrl,
+  runSubmitReviewUrl,
   runPeopleUrl,
   runPersonDetailUrl,
   runScopeUrl,
@@ -31,6 +32,14 @@ import {
 } from '../../_lib';
 
 type PeopleFilter = 'ALL' | 'CALCULATED' | 'ERROR' | 'EXCLUDED';
+
+const READINESS_BLOCKER_LABEL: Record<string, string> = {
+  STATUS_NOT_CALCULATED: 'الحالة ليست محتسبة',
+  UNSUPPORTED_CURRENCY: 'العملة غير مدعومة (IQD فقط)',
+  HAS_ERRORS: 'توجد أخطاء احتساب يجب معالجتها',
+  HAS_BLOCKING_ISSUES: 'توجد مشكلات حاجبة',
+  MISSING_SNAPSHOT_HASH: 'بصمة اللقطة ناقصة أو غير صالحة',
+};
 
 function newIdempotencyKey(): string {
   try {
@@ -86,6 +95,57 @@ function recalcErrorMsg(r: any): string {
   return errMsg(r);
 }
 
+/** رسائل أخطاء إرسال للمراجعة — للاختبارات والواجهة. */
+export function submitReviewErrorMsg(r: any): string {
+  const code = r?.error?.code;
+  if (r?.__status === 400 || code === 'INVALID_COMMENT') {
+    return r?.error?.message || r?.message || 'تعذر قبول التعليق. يجب ألا يتجاوز 500 حرف.';
+  }
+  if (r?.__status === 403 || code === 'FORBIDDEN') {
+    return 'ليس لديك صلاحية إرسال تشغيل الرواتب للمراجعة.';
+  }
+  if (r?.__status === 404 || code === 'PAYROLL_RUN_NOT_FOUND') {
+    return 'تعذر العثور على تشغيل الرواتب أو لا تملك صلاحية الوصول إليه.';
+  }
+  if (code === 'IDEMPOTENCY_CONFLICT') {
+    return 'تم استخدام مفتاح العملية نفسه مع بيانات مختلفة.';
+  }
+  if (code === 'APPROVAL_INTEGRITY_CONFLICT') {
+    return 'تعذر التحقق من عملية إرسال سابقة. لم يتم تعديل تشغيل الرواتب.';
+  }
+  if (code === 'STALE_PAYROLL_RUN' || (r?.__status === 409 && !code)) {
+    return 'تم تعديل تشغيل الرواتب بواسطة مستخدم آخر. يرجى تحديث الصفحة.';
+  }
+  if (r?.__status === 409) {
+    return r?.error?.message || r?.message || 'لا يمكن إرسال تشغيل الرواتب للمراجعة في حالته الحالية.';
+  }
+  if (code === 'PAYROLL_HAS_ERRORS') {
+    return 'لا يمكن إرسال تشغيل الرواتب للمراجعة لوجود أخطاء يجب معالجتها أولًا.';
+  }
+  if (code === 'PAYROLL_HAS_BLOCKING_ISSUES') {
+    return 'لا يمكن إرسال تشغيل الرواتب للمراجعة لوجود مشكلات حاجبة.';
+  }
+  if (code === 'UNSUPPORTED_PAYROLL_CURRENCY') {
+    return 'الإصدار الحالي من الرواتب يدعم الدينار العراقي IQD فقط.';
+  }
+  if (r?.__status === 422) {
+    return r?.error?.message || r?.message || 'تعذر إرسال تشغيل الرواتب للمراجعة بسبب إعدادات التشغيل الحالية.';
+  }
+  if (r?.__status === 500 || code === 'TECHNICAL_FAILURE') {
+    return 'حدث خطأ تقني أثناء إرسال الرواتب للمراجعة. بقيت حالة التشغيل دون تغيير.';
+  }
+  return errMsg(r);
+}
+
+function formatReadinessBlockers(blockers: unknown): string {
+  if (!Array.isArray(blockers) || blockers.length === 0) {
+    return 'التشغيل غير جاهز للإرسال للمراجعة.';
+  }
+  return blockers
+    .map((b) => READINESS_BLOCKER_LABEL[String(b)] ?? String(b))
+    .join(' · ');
+}
+
 export default function RunDetailPage() {
   const params = useParams();
   const id = String(params?.id ?? '');
@@ -123,6 +183,14 @@ export default function RunDetailPage() {
   const [recalcIdempotencyKey, setRecalcIdempotencyKey] = useState<string | null>(null);
   const [recalcAttemptReason, setRecalcAttemptReason] = useState<string | null>(null);
 
+  const [approvalMeta, setApprovalMeta] = useState<any>(null);
+  const [submitOpen, setSubmitOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitComment, setSubmitComment] = useState('');
+  const [submitMsg, setSubmitMsg] = useState('');
+  const [submitIdempotencyKey, setSubmitIdempotencyKey] = useState<string | null>(null);
+  const [submitAttemptComment, setSubmitAttemptComment] = useState<string | null>(null);
+
   const loadPeople = async (status: PeopleFilter = peopleFilter, search: string = peopleSearch) => {
     const qs = new URLSearchParams({ page: '1', page_size: '100' });
     if (status !== 'ALL') qs.set('status', status);
@@ -150,9 +218,12 @@ export default function RunDetailPage() {
     setMembers(Array.isArray(r.data?.scope_members) ? r.data.scope_members : []);
     setCalcSummary(r.data?.calculation_summary ?? null);
     setRecalcMeta(r.data?.recalculation ?? null);
-    if (nextRun?.status === 'CALCULATED') {
+    setApprovalMeta(r.data?.approval ?? null);
+    const status = String(nextRun?.status ?? '');
+    if (status === 'CALCULATED' || status === 'UNDER_REVIEW' || status === 'APPROVED') {
       await loadPeople();
-      await loadRecalcHistory();
+      if (status === 'CALCULATED') await loadRecalcHistory();
+      else setRecalcHistory([]);
     } else {
       setPeople([]);
       setRecalcHistory([]);
@@ -177,7 +248,8 @@ export default function RunDetailPage() {
   }, [toast]);
 
   useEffect(() => {
-    if (run?.status !== 'CALCULATED') return;
+    const st = run?.status;
+    if (st !== 'CALCULATED' && st !== 'UNDER_REVIEW' && st !== 'APPROVED') return;
     void loadPeople(peopleFilter, peopleSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peopleFilter]);
@@ -186,6 +258,7 @@ export default function RunDetailPage() {
   const cancelCap = can(caps, CAP.CANCEL_RUNS);
   const canCalculate = can(caps, CAP.CALCULATE);
   const canRecalculateCap = can(caps, CAP.RECALCULATE);
+  const canSubmitCap = can(caps, CAP.SUBMIT_REVIEW);
   const departments: any[] = options?.departments ?? [];
   const costCenters: any[] = options?.cost_centers ?? [];
   const activePeople: any[] = options?.active_people ?? [];
@@ -335,6 +408,64 @@ export default function RunDetailPage() {
     }
   }
 
+  function openSubmitDialog() {
+    setSubmitMsg('');
+    setSubmitComment('');
+    setSubmitIdempotencyKey(newIdempotencyKey());
+    setSubmitAttemptComment(null);
+    setSubmitOpen(true);
+  }
+
+  async function doSubmitReview() {
+    const trimmed = submitComment.trim();
+    if (trimmed.length > 500) {
+      setSubmitMsg('التعليق يجب ألا يتجاوز 500 حرفاً.');
+      return;
+    }
+    if (submitting) return;
+    let key = submitIdempotencyKey;
+    if (!key || (submitAttemptComment != null && submitAttemptComment !== trimmed)) {
+      key = newIdempotencyKey();
+      setSubmitIdempotencyKey(key);
+    }
+    setSubmitAttemptComment(trimmed);
+    setSubmitting(true);
+    setSubmitMsg('');
+    try {
+      const r = await fetchJson(runSubmitReviewUrl(id), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          version: run.version,
+          updated_at: run.updated_at,
+          idempotency_key: key,
+          comment: trimmed || null,
+          confirmation: true,
+        }),
+      });
+      if (!r.success) {
+        const msg = submitReviewErrorMsg(r);
+        setSubmitMsg(msg);
+        setError(msg);
+        return;
+      }
+      setSubmitOpen(false);
+      setSubmitComment('');
+      setSubmitMsg('');
+      setError('');
+      setSubmitIdempotencyKey(null);
+      setSubmitAttemptComment(null);
+      setToast(
+        r.idempotent_replay
+          ? 'تم تأكيد إرسال الرواتب للمراجعة السابق دون إنشاء عملية جديدة.'
+          : 'تم إرسال تشغيل الرواتب للمراجعة بنجاح.'
+      );
+      await load();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function addMember() {
     if (!addPerson) return;
     setBusy(true);
@@ -387,16 +518,31 @@ export default function RunDetailPage() {
 
   const isDraft = run.status === 'DRAFT';
   const isCalculated = run.status === 'CALCULATED';
+  const isUnderReview = run.status === 'UNDER_REVIEW';
+  const isApproved = run.status === 'APPROVED';
+  const showResults = isCalculated || isUnderReview || isApproved;
   const canEdit = create && isDraft;
   const canScope = create && isDraft && run.scope_type === 'PERSON_LIST';
   const canCancel = cancelCap && (run.status === 'DRAFT' || run.status === 'CALCULATED');
   const showCalculate = isDraft && canCalculate;
   const showRecalculate =
     isCalculated &&
+    !isUnderReview &&
     canRecalculateCap &&
     run.currency_code === 'IQD' &&
     recalcMeta?.can_recalculate !== false &&
     !recalculating;
+  const showSubmitEnabled =
+    canSubmitCap &&
+    isCalculated &&
+    run.currency_code === 'IQD' &&
+    approvalMeta?.can_submit_for_review !== false &&
+    !submitting;
+  const showSubmitDisabled =
+    canSubmitCap &&
+    isCalculated &&
+    approvalMeta?.can_submit_for_review === false;
+  // if !canSubmitCap: hide entirely (neither enabled nor disabled)
   const scopeRefName = run.scope_ref_id
     ? (run.scope_type === 'COST_CENTER'
         ? (costCenters.find((c) => c.id === run.scope_ref_id)?.name_ar ?? run.scope_ref_id)
@@ -423,8 +569,8 @@ export default function RunDetailPage() {
           {toast}
         </div>
       )}
-      {(error || calcMsg || recalcMsg) && (
-        <p className="text-red-600 mb-3 text-sm">{error || calcMsg || recalcMsg}</p>
+      {(error || calcMsg || recalcMsg || submitMsg) && (
+        <p className="text-red-600 mb-3 text-sm">{error || calcMsg || recalcMsg || submitMsg}</p>
       )}
       <div className="flex justify-between items-center mb-4">
         <div>
@@ -457,7 +603,28 @@ export default function RunDetailPage() {
         </div>
       )}
 
-      {isCalculated ? (
+      {isUnderReview && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-950 rounded p-3 text-sm mb-4 space-y-1">
+          <p className="font-semibold">التشغيل قيد المراجعة — النتائج مقفلة.</p>
+          <p>لا يمكن إعادة الاحتساب أو التعديل أو الإلغاء أثناء المراجعة.</p>
+          <p>
+            المُرسل: {approvalMeta?.submitted_for_review_by?.display_name || '—'}
+            {' · '}
+            الوقت: {approvalMeta?.submitted_for_review_at
+              ? new Date(approvalMeta.submitted_for_review_at).toLocaleString('ar-IQ')
+              : '—'}
+            {' · '}
+            الدورة: {approvalMeta?.approval_cycle ?? '—'}
+          </p>
+          {approvalMeta?.submit_comment && (
+            <p>تعليق الإرسال: {approvalMeta.submit_comment}</p>
+          )}
+          <p className="text-amber-800">بانتظار قرار المراجع المخول.</p>
+          <p className="text-xs text-amber-700">سيظهر قرار المراجع هنا بعد اكتمال مرحلة الاعتماد.</p>
+        </div>
+      )}
+
+      {showResults ? (
         <div className="bg-white shadow rounded p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-6">
           <div><p className="text-gray-500 text-xs">عدد الأشخاص</p><p className="font-bold">{totalPeople}</p></div>
           <div><p className="text-gray-500 text-xs">المحتسبون</p><p className="font-bold">{calculatedPeople}</p></div>
@@ -507,6 +674,20 @@ export default function RunDetailPage() {
             إعادة احتساب الرواتب
           </button>
         )}
+        {showSubmitEnabled && (
+          <button className="bg-emerald-800 text-white rounded px-3 py-1.5 text-sm disabled:opacity-50"
+            disabled={submitting} onClick={openSubmitDialog}>
+            إرسال للمراجعة
+          </button>
+        )}
+        {showSubmitDisabled && (
+          <div className="flex flex-col gap-1 max-w-md">
+            <button className="bg-gray-300 text-gray-600 rounded px-3 py-1.5 text-sm cursor-not-allowed" disabled>
+              إرسال للمراجعة
+            </button>
+            <p className="text-xs text-amber-800">{formatReadinessBlockers(approvalMeta?.readiness_blockers)}</p>
+          </div>
+        )}
         {canEdit && <button className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm" onClick={openEdit}>تعديل</button>}
         {canCancel && <button className="bg-red-800 text-white rounded px-3 py-1.5 text-sm" onClick={() => { setReason(''); setCancelOpen(true); }}>إلغاء التشغيل</button>}
       </div>
@@ -554,7 +735,7 @@ export default function RunDetailPage() {
         </section>
       )}
 
-      {isCalculated && (
+      {showResults && (
         <section className="mb-6">
           <h2 className="text-lg font-semibold mb-2">نتائج الأشخاص</h2>
           <div className="flex flex-wrap gap-2 mb-3 text-sm items-center">
@@ -799,6 +980,40 @@ export default function RunDetailPage() {
           }
         }}
         onConfirm={() => void doRecalculate()}
+      />
+
+      <ConfirmDialog
+        open={submitOpen}
+        title="إرسال تشغيل الرواتب للمراجعة"
+        message="سيتم قفل نتائج التشغيل وإرسالها للمراجعة. لن يمكن إعادة الاحتساب أو التعديل أو الإلغاء إلى أن يُتخذ قرار من المراجع المخول."
+        warning="لن يُسمح بالإرسال عند وجود أخطاء احتساب أو مشكلات حاجبة."
+        commentOptional
+        reason={submitComment}
+        onReasonChange={setSubmitComment}
+        reasonLabel="تعليق (اختياري)"
+        reasonPlaceholder="ملاحظة للمراجع إن لزم…"
+        reasonHelper="التعليق اختياري وبحد أقصى 500 حرف."
+        summaryLines={[
+          { label: 'الأشخاص', value: String(totalPeople) },
+          { label: 'الاستحقاقات', value: iqdWhole(run.gross_total) },
+          { label: 'الاستقطاعات', value: iqdWhole(run.deduction_total) },
+          { label: 'الصافي', value: iqdWhole(run.net_total) },
+          { label: 'تحذيرات', value: String(run.warning_count ?? approvalMeta?.warning_count ?? 0) },
+          ...(run.snapshot_hash
+            ? [{ label: 'بصمة', value: String(run.snapshot_hash).slice(0, 12) }]
+            : []),
+        ]}
+        confirmLabel="إرسال للمراجعة"
+        busyLabel="جارٍ إرسال الرواتب للمراجعة..."
+        busy={submitting}
+        onCancel={() => {
+          if (!submitting) {
+            setSubmitOpen(false);
+            setSubmitMsg('');
+            setSubmitComment('');
+          }
+        }}
+        onConfirm={() => void doSubmitReview()}
       />
 
       <ConfirmDialog
