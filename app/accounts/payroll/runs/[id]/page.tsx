@@ -16,6 +16,8 @@ import {
   ConfirmDialog,
   can,
   errMsg,
+  approveDecisionErrorMsg,
+  rejectDecisionErrorMsg,
   fetchJson,
   iqdWhole,
   label,
@@ -25,11 +27,16 @@ import {
   runRecalculateUrl,
   runRecalculationsUrl,
   runSubmitReviewUrl,
+  runApproveUrl,
+  runRejectUrl,
   runPeopleUrl,
   runPersonDetailUrl,
   runScopeUrl,
   runScopeMemberUrl,
 } from '../../_lib';
+
+// إعادة تصدير لرسائل القرار — متاحة للاختبارات من مسار الصفحة أيضاً
+export { approveDecisionErrorMsg, rejectDecisionErrorMsg };
 
 type PeopleFilter = 'ALL' | 'CALCULATED' | 'ERROR' | 'EXCLUDED';
 
@@ -39,6 +46,15 @@ const READINESS_BLOCKER_LABEL: Record<string, string> = {
   HAS_ERRORS: 'توجد أخطاء احتساب يجب معالجتها',
   HAS_BLOCKING_ISSUES: 'توجد مشكلات حاجبة',
   MISSING_SNAPSHOT_HASH: 'بصمة اللقطة ناقصة أو غير صالحة',
+};
+
+const APPROVAL_BLOCKER_LABEL: Record<string, string> = {
+  STATUS_NOT_UNDER_REVIEW: 'التشغيل ليس قيد المراجعة',
+  HAS_ERRORS: 'توجد أخطاء احتساب يجب معالجتها',
+  HAS_BLOCKING_ISSUES: 'توجد مشكلات حاجبة',
+  SNAPSHOT_DRIFT: 'تغيرت بصمة اللقطة بعد الإرسال للمراجعة',
+  MISSING_REVIEW_HASH: 'بصمة قفل المراجعة ناقصة أو غير صالحة',
+  SOD_SUBMITTER: 'لا يجوز لمرسل المراجعة اعتماد أو رفض نفس التشغيل',
 };
 
 function newIdempotencyKey(): string {
@@ -146,6 +162,15 @@ function formatReadinessBlockers(blockers: unknown): string {
     .join(' · ');
 }
 
+function formatApprovalBlockers(blockers: unknown): string {
+  if (!Array.isArray(blockers) || blockers.length === 0) {
+    return 'التشغيل غير جاهز للاعتماد.';
+  }
+  return blockers
+    .map((b) => APPROVAL_BLOCKER_LABEL[String(b)] ?? String(b))
+    .join(' · ');
+}
+
 export default function RunDetailPage() {
   const params = useParams();
   const id = String(params?.id ?? '');
@@ -190,6 +215,20 @@ export default function RunDetailPage() {
   const [submitMsg, setSubmitMsg] = useState('');
   const [submitIdempotencyKey, setSubmitIdempotencyKey] = useState<string | null>(null);
   const [submitAttemptComment, setSubmitAttemptComment] = useState<string | null>(null);
+
+  const [approveOpen, setApproveOpen] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [approveComment, setApproveComment] = useState('');
+  const [approveMsg, setApproveMsg] = useState('');
+  const [approveIdempotencyKey, setApproveIdempotencyKey] = useState<string | null>(null);
+  const [approveAttemptComment, setApproveAttemptComment] = useState<string | null>(null);
+
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectMsg, setRejectMsg] = useState('');
+  const [rejectIdempotencyKey, setRejectIdempotencyKey] = useState<string | null>(null);
+  const [rejectAttemptReason, setRejectAttemptReason] = useState<string | null>(null);
 
   const loadPeople = async (status: PeopleFilter = peopleFilter, search: string = peopleSearch) => {
     const qs = new URLSearchParams({ page: '1', page_size: '100' });
@@ -259,6 +298,9 @@ export default function RunDetailPage() {
   const canCalculate = can(caps, CAP.CALCULATE);
   const canRecalculateCap = can(caps, CAP.RECALCULATE);
   const canSubmitCap = can(caps, CAP.SUBMIT_REVIEW);
+  const canApproveCap = can(caps, CAP.APPROVE);
+  const canRejectCap = can(caps, CAP.REJECT);
+  const decisionBusy = approving || rejecting;
   const departments: any[] = options?.departments ?? [];
   const costCenters: any[] = options?.cost_centers ?? [];
   const activePeople: any[] = options?.active_people ?? [];
@@ -422,7 +464,7 @@ export default function RunDetailPage() {
       setSubmitMsg('التعليق يجب ألا يتجاوز 500 حرفاً.');
       return;
     }
-    if (submitting) return;
+    if (submitting || decisionBusy) return;
     let key = submitIdempotencyKey;
     if (!key || (submitAttemptComment != null && submitAttemptComment !== trimmed)) {
       key = newIdempotencyKey();
@@ -463,6 +505,122 @@ export default function RunDetailPage() {
       await load();
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function openApproveDialog() {
+    setApproveMsg('');
+    setApproveComment('');
+    setApproveIdempotencyKey(newIdempotencyKey());
+    setApproveAttemptComment(null);
+    setApproveOpen(true);
+  }
+
+  async function doApprove() {
+    const trimmed = approveComment.trim();
+    if (trimmed.length > 500) {
+      setApproveMsg('التعليق يجب ألا يتجاوز 500 حرفاً.');
+      return;
+    }
+    if (approving || rejecting || submitting) return;
+    let key = approveIdempotencyKey;
+    if (!key || (approveAttemptComment != null && approveAttemptComment !== trimmed)) {
+      key = newIdempotencyKey();
+      setApproveIdempotencyKey(key);
+    }
+    setApproveAttemptComment(trimmed);
+    setApproving(true);
+    setApproveMsg('');
+    try {
+      const r = await fetchJson(runApproveUrl(id), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          version: run.version,
+          updated_at: run.updated_at,
+          idempotency_key: key,
+          comment: trimmed || null,
+          confirmation: true,
+        }),
+      });
+      if (!r.success) {
+        const msg = approveDecisionErrorMsg(r);
+        setApproveMsg(msg);
+        setError(msg);
+        return;
+      }
+      setApproveOpen(false);
+      setApproveComment('');
+      setApproveMsg('');
+      setError('');
+      setApproveIdempotencyKey(null);
+      setApproveAttemptComment(null);
+      setToast(
+        r.idempotent_replay
+          ? 'تم تأكيد اعتماد الرواتب السابق دون إنشاء عملية جديدة.'
+          : 'تم اعتماد تشغيل الرواتب بنجاح.'
+      );
+      await load();
+    } finally {
+      setApproving(false);
+    }
+  }
+
+  function openRejectDialog() {
+    setRejectMsg('');
+    setRejectReason('');
+    setRejectIdempotencyKey(newIdempotencyKey());
+    setRejectAttemptReason(null);
+    setRejectOpen(true);
+  }
+
+  async function doReject() {
+    const trimmed = rejectReason.trim();
+    if (trimmed.length < 10 || trimmed.length > 500) {
+      setRejectMsg('يجب إدخال سبب واضح للرفض يتراوح بين 10 و500 حرف.');
+      return;
+    }
+    if (rejecting || approving || submitting) return;
+    let key = rejectIdempotencyKey;
+    if (!key || (rejectAttemptReason != null && rejectAttemptReason !== trimmed)) {
+      key = newIdempotencyKey();
+      setRejectIdempotencyKey(key);
+    }
+    setRejectAttemptReason(trimmed);
+    setRejecting(true);
+    setRejectMsg('');
+    try {
+      const r = await fetchJson(runRejectUrl(id), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          version: run.version,
+          updated_at: run.updated_at,
+          idempotency_key: key,
+          reason: trimmed,
+          confirmation: true,
+        }),
+      });
+      if (!r.success) {
+        const msg = rejectDecisionErrorMsg(r);
+        setRejectMsg(msg);
+        setError(msg);
+        return;
+      }
+      setRejectOpen(false);
+      setRejectReason('');
+      setRejectMsg('');
+      setError('');
+      setRejectIdempotencyKey(null);
+      setRejectAttemptReason(null);
+      setToast(
+        r.idempotent_replay
+          ? 'تم تأكيد رفض المراجعة السابق دون إنشاء عملية جديدة.'
+          : 'تم رفض المراجعة وإعادة التشغيل للتصحيح.'
+      );
+      await load();
+    } finally {
+      setRejecting(false);
     }
   }
 
@@ -521,27 +679,61 @@ export default function RunDetailPage() {
   const isUnderReview = run.status === 'UNDER_REVIEW';
   const isApproved = run.status === 'APPROVED';
   const showResults = isCalculated || isUnderReview || isApproved;
-  const canEdit = create && isDraft;
-  const canScope = create && isDraft && run.scope_type === 'PERSON_LIST';
-  const canCancel = cancelCap && (run.status === 'DRAFT' || run.status === 'CALCULATED');
-  const showCalculate = isDraft && canCalculate;
+  const canEdit = create && isDraft && !isApproved;
+  const canScope = create && isDraft && run.scope_type === 'PERSON_LIST' && !isApproved;
+  const canCancel =
+    cancelCap &&
+    !isApproved &&
+    !isUnderReview &&
+    (run.status === 'DRAFT' || run.status === 'CALCULATED');
+  const showCalculate = isDraft && canCalculate && !isApproved;
   const showRecalculate =
     isCalculated &&
     !isUnderReview &&
+    !isApproved &&
     canRecalculateCap &&
     run.currency_code === 'IQD' &&
     recalcMeta?.can_recalculate !== false &&
-    !recalculating;
+    !recalculating &&
+    !decisionBusy;
   const showSubmitEnabled =
     canSubmitCap &&
     isCalculated &&
+    !isApproved &&
     run.currency_code === 'IQD' &&
     approvalMeta?.can_submit_for_review !== false &&
-    !submitting;
+    !submitting &&
+    !decisionBusy;
   const showSubmitDisabled =
     canSubmitCap &&
     isCalculated &&
+    !isApproved &&
     approvalMeta?.can_submit_for_review === false;
+  const isCurrentUserSubmitter = approvalMeta?.is_current_user_submitter === true;
+  const showApproveEnabled =
+    canApproveCap &&
+    isUnderReview &&
+    !isCurrentUserSubmitter &&
+    approvalMeta?.can_approve !== false &&
+    !decisionBusy &&
+    !submitting;
+  const showApproveDisabled =
+    canApproveCap &&
+    isUnderReview &&
+    !isCurrentUserSubmitter &&
+    approvalMeta?.can_approve === false;
+  const showRejectEnabled =
+    canRejectCap &&
+    isUnderReview &&
+    !isCurrentUserSubmitter &&
+    approvalMeta?.can_reject !== false &&
+    !decisionBusy &&
+    !submitting;
+  const showRejectDisabled =
+    canRejectCap &&
+    isUnderReview &&
+    !isCurrentUserSubmitter &&
+    approvalMeta?.can_reject === false;
   // if !canSubmitCap: hide entirely (neither enabled nor disabled)
   const scopeRefName = run.scope_ref_id
     ? (run.scope_type === 'COST_CENTER'
@@ -555,6 +747,7 @@ export default function RunDetailPage() {
   const errorPeople = summary.error_people ?? run.error_count ?? 0;
   const excludedPeople = summary.excluded_people ?? 0;
   const hasCalcErrors = Number(run.error_count ?? errorPeople ?? 0) > 0;
+  const lastRejection = approvalMeta?.last_rejection ?? null;
 
   const detailPerson = detail?.person;
   const detailLines: any[] = Array.isArray(detail?.lines) ? detail.lines : [];
@@ -569,8 +762,8 @@ export default function RunDetailPage() {
           {toast}
         </div>
       )}
-      {(error || calcMsg || recalcMsg || submitMsg) && (
-        <p className="text-red-600 mb-3 text-sm">{error || calcMsg || recalcMsg || submitMsg}</p>
+      {(error || calcMsg || recalcMsg || submitMsg || approveMsg || rejectMsg) && (
+        <p className="text-red-600 mb-3 text-sm">{error || calcMsg || recalcMsg || submitMsg || approveMsg || rejectMsg}</p>
       )}
       <div className="flex justify-between items-center mb-4">
         <div>
@@ -619,8 +812,49 @@ export default function RunDetailPage() {
           {approvalMeta?.submit_comment && (
             <p>تعليق الإرسال: {approvalMeta.submit_comment}</p>
           )}
-          <p className="text-amber-800">بانتظار قرار المراجع المخول.</p>
-          <p className="text-xs text-amber-700">سيظهر قرار المراجع هنا بعد اكتمال مرحلة الاعتماد.</p>
+          {isCurrentUserSubmitter ? (
+            <p className="text-amber-900 font-medium">
+              أنت مرسل هذه المراجعة. لا يمكنك اعتماد أو رفض نفس التشغيل (فصل الواجبات). بانتظار قرار مراجع آخر مخول.
+            </p>
+          ) : (
+            <>
+              <p className="text-amber-800">بانتظار قرار المراجع المخول.</p>
+              <p className="text-xs text-amber-700">سيظهر قرار المراجع هنا بعد اكتمال مرحلة الاعتماد.</p>
+            </>
+          )}
+        </div>
+      )}
+
+      {isApproved && (
+        <div className="bg-emerald-50 border border-emerald-300 text-emerald-950 rounded p-3 text-sm mb-4 space-y-1">
+          <p className="font-semibold">تم اعتماد تشغيل الرواتب.</p>
+          <p>
+            المعتمد: {approvalMeta?.approved_by?.display_name || '—'}
+            {' · '}
+            الوقت: {approvalMeta?.approved_at
+              ? new Date(approvalMeta.approved_at).toLocaleString('ar-IQ')
+              : '—'}
+            {' · '}
+            الدورة: {approvalMeta?.approval_cycle ?? '—'}
+          </p>
+          <p className="text-emerald-800">التشغيل جاهز لمرحلة الترحيل لاحقاً. لا يوجد ترحيل في هذه المرحلة.</p>
+        </div>
+      )}
+
+      {isCalculated && lastRejection && (
+        <div className="bg-orange-50 border border-orange-300 text-orange-950 rounded p-3 text-sm mb-4 space-y-1">
+          <p className="font-semibold">أُعيد التشغيل للتصحيح بعد رفض المراجعة.</p>
+          <p>سبب الرفض: {lastRejection.reason}</p>
+          <p>
+            الرافض: {lastRejection.rejected_by?.display_name || '—'}
+            {' · '}
+            الوقت: {lastRejection.rejected_at
+              ? new Date(lastRejection.rejected_at).toLocaleString('ar-IQ')
+              : '—'}
+            {' · '}
+            الدورة: {lastRejection.approval_cycle ?? '—'}
+          </p>
+          <p className="text-orange-800">يمكن إعادة الاحتساب أو التصحيح ثم الإرسال للمراجعة مجدداً.</p>
         </div>
       )}
 
@@ -676,7 +910,7 @@ export default function RunDetailPage() {
         )}
         {showSubmitEnabled && (
           <button className="bg-emerald-800 text-white rounded px-3 py-1.5 text-sm disabled:opacity-50"
-            disabled={submitting} onClick={openSubmitDialog}>
+            disabled={submitting || decisionBusy} onClick={openSubmitDialog}>
             إرسال للمراجعة
           </button>
         )}
@@ -686,6 +920,40 @@ export default function RunDetailPage() {
               إرسال للمراجعة
             </button>
             <p className="text-xs text-amber-800">{formatReadinessBlockers(approvalMeta?.readiness_blockers)}</p>
+          </div>
+        )}
+        {showApproveEnabled && (
+          <button
+            className="bg-teal-800 text-white rounded px-3 py-1.5 text-sm disabled:opacity-50"
+            disabled={decisionBusy || submitting}
+            onClick={openApproveDialog}
+          >
+            اعتماد الرواتب
+          </button>
+        )}
+        {showApproveDisabled && (
+          <div className="flex flex-col gap-1 max-w-md">
+            <button className="bg-gray-300 text-gray-600 rounded px-3 py-1.5 text-sm cursor-not-allowed" disabled>
+              اعتماد الرواتب
+            </button>
+            <p className="text-xs text-amber-800">{formatApprovalBlockers(approvalMeta?.approval_blockers)}</p>
+          </div>
+        )}
+        {showRejectEnabled && (
+          <button
+            className="bg-rose-800 text-white rounded px-3 py-1.5 text-sm disabled:opacity-50"
+            disabled={decisionBusy || submitting}
+            onClick={openRejectDialog}
+          >
+            رفض وإعادة للتصحيح
+          </button>
+        )}
+        {showRejectDisabled && (
+          <div className="flex flex-col gap-1 max-w-md">
+            <button className="bg-gray-300 text-gray-600 rounded px-3 py-1.5 text-sm cursor-not-allowed" disabled>
+              رفض وإعادة للتصحيح
+            </button>
+            <p className="text-xs text-amber-800">{formatApprovalBlockers(approvalMeta?.approval_blockers)}</p>
           </div>
         )}
         {canEdit && <button className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm" onClick={openEdit}>تعديل</button>}
@@ -1014,6 +1282,72 @@ export default function RunDetailPage() {
           }
         }}
         onConfirm={() => void doSubmitReview()}
+      />
+
+      <ConfirmDialog
+        open={approveOpen}
+        title="اعتماد تشغيل الرواتب"
+        message="سيُعتمد التشغيل وتُثبَّت نتائج المراجعة. لن يمكن إعادة الاحتساب أو التعديل بعد الاعتماد في هذه المرحلة."
+        warning="التحقق من سلامة النتائج إلزامي قبل الاعتماد. لا يوجد ترحيل محاسبي في هذه المرحلة."
+        commentOptional
+        reason={approveComment}
+        onReasonChange={setApproveComment}
+        reasonLabel="تعليق الاعتماد (اختياري)"
+        reasonPlaceholder="ملاحظة عند الاعتماد إن لزم…"
+        reasonHelper="التعليق اختياري وبحد أقصى 500 حرف."
+        summaryLines={[
+          { label: 'الأشخاص', value: String(totalPeople) },
+          { label: 'الاستحقاقات', value: iqdWhole(run.gross_total) },
+          { label: 'الاستقطاعات', value: iqdWhole(run.deduction_total) },
+          { label: 'الصافي', value: iqdWhole(run.net_total) },
+          { label: 'الدورة', value: String(approvalMeta?.approval_cycle ?? '—') },
+          ...(approvalMeta?.review_snapshot_hash_short
+            ? [{ label: 'بصمة المراجعة', value: String(approvalMeta.review_snapshot_hash_short) }]
+            : run.snapshot_hash
+              ? [{ label: 'بصمة', value: String(run.snapshot_hash).slice(0, 12) }]
+              : []),
+        ]}
+        confirmLabel="اعتماد الرواتب"
+        busyLabel="جارٍ اعتماد الرواتب..."
+        busy={approving}
+        onCancel={() => {
+          if (!approving) {
+            setApproveOpen(false);
+            setApproveMsg('');
+            setApproveComment('');
+          }
+        }}
+        onConfirm={() => void doApprove()}
+      />
+
+      <ConfirmDialog
+        open={rejectOpen}
+        title="رفض مراجعة الرواتب"
+        message="سيُعاد التشغيل إلى حالة محتسب للتصحيح. يمكن بعد ذلك إعادة الاحتساب أو الإرسال للمراجعة من جديد."
+        warning="سبب الرفض إلزامي وواضح للمُرسل."
+        reasonRequired
+        reason={rejectReason}
+        onReasonChange={setRejectReason}
+        reasonLabel="سبب الرفض"
+        reasonPlaceholder="مثال: تصحيح راتب موظف أو معالجة أخطاء ظاهرة في النتائج"
+        reasonHelper="اكتب سبباً واضحاً لا يقل عن 10 أحرف."
+        reasonMinLength={10}
+        summaryLines={[
+          { label: 'الأشخاص', value: String(totalPeople) },
+          { label: 'الصافي', value: iqdWhole(run.net_total) },
+          { label: 'الدورة', value: String(approvalMeta?.approval_cycle ?? '—') },
+        ]}
+        confirmLabel="رفض وإعادة للتصحيح"
+        busyLabel="جارٍ رفض المراجعة..."
+        busy={rejecting}
+        onCancel={() => {
+          if (!rejecting) {
+            setRejectOpen(false);
+            setRejectMsg('');
+            setRejectReason('');
+          }
+        }}
+        onConfirm={() => void doReject()}
       />
 
       <ConfirmDialog

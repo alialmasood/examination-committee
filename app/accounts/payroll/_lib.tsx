@@ -24,6 +24,8 @@ export const runCalculateUrl = (id: string) => `/api/accounts/payroll/runs/${id}
 export const runRecalculateUrl = (id: string) => `/api/accounts/payroll/runs/${id}/recalculate`;
 export const runRecalculationsUrl = (id: string) => `/api/accounts/payroll/runs/${id}/recalculations`;
 export const runSubmitReviewUrl = (id: string) => `/api/accounts/payroll/runs/${id}/submit-review`;
+export const runApproveUrl = (id: string) => `/api/accounts/payroll/runs/${id}/approve`;
+export const runRejectUrl = (id: string) => `/api/accounts/payroll/runs/${id}/reject`;
 export const runPeopleUrl = (id: string) => `/api/accounts/payroll/runs/${id}/people`;
 export const runPersonDetailUrl = (id: string, runPersonId: string) =>
   `/api/accounts/payroll/runs/${id}/people/${runPersonId}`;
@@ -48,6 +50,96 @@ export function errMsg(r: any): string {
   return r?.message || r?.error || 'تعذّر تنفيذ العملية';
 }
 
+/** رسائل أخطاء اعتماد الرواتب — للاختبارات والواجهة 9.B.3 */
+export function approveDecisionErrorMsg(r: any): string {
+  const code = r?.error?.code;
+  if (r?.__status === 400 || code === 'INVALID_APPROVAL_COMMENT') {
+    return r?.error?.message || r?.message || 'تعذر قبول تعليق الاعتماد. يجب ألا يتجاوز 500 حرف.';
+  }
+  if (code === 'PAYROLL_SELF_APPROVAL_FORBIDDEN') {
+    return 'لا يجوز للمستخدم الذي أرسل تشغيل الرواتب للمراجعة أن يعتمد التشغيل نفسه.';
+  }
+  if (r?.__status === 403 || code === 'FORBIDDEN') {
+    return 'ليس لديك صلاحية اعتماد تشغيل الرواتب.';
+  }
+  if (r?.__status === 404 || code === 'PAYROLL_RUN_NOT_FOUND') {
+    return 'تعذر العثور على تشغيل الرواتب أو لا تملك صلاحية الوصول إليه.';
+  }
+  if (code === 'IDEMPOTENCY_CONFLICT') {
+    return 'تم استخدام مفتاح العملية نفسه مع بيانات مختلفة.';
+  }
+  if (code === 'APPROVAL_INTEGRITY_CONFLICT') {
+    return 'تعذر التحقق من عملية اعتماد سابقة. لم يتم تعديل تشغيل الرواتب.';
+  }
+  if (code === 'APPROVAL_ALREADY_DECIDED') {
+    return 'تم اتخاذ قرار سابق بشأن دورة المراجعة الحالية.';
+  }
+  if (code === 'PAYROLL_REVIEW_SNAPSHOT_CHANGED') {
+    return 'تغيرت نتائج تشغيل الرواتب بعد إرسالها للمراجعة، لذلك لم يتم اعتمادها.';
+  }
+  if (code === 'STALE_PAYROLL_RUN' || (r?.__status === 409 && !code)) {
+    return 'تم تعديل تشغيل الرواتب بواسطة مستخدم آخر. يرجى تحديث الصفحة.';
+  }
+  if (r?.__status === 409) {
+    return r?.error?.message || r?.message || 'لا يمكن اعتماد تشغيل الرواتب في حالته الحالية.';
+  }
+  if (code === 'PAYROLL_HAS_ERRORS') {
+    return 'لا يمكن اعتماد التشغيل قبل معالجة أخطاء الرواتب.';
+  }
+  if (code === 'PAYROLL_HAS_BLOCKING_ISSUES') {
+    return 'لا يمكن اعتماد التشغيل لوجود مشكلات حاجبة.';
+  }
+  if (code === 'UNSUPPORTED_PAYROLL_CURRENCY') {
+    return 'الإصدار الحالي من الرواتب يدعم الدينار العراقي IQD فقط.';
+  }
+  if (r?.__status === 422) {
+    return r?.error?.message || r?.message || 'تعذر اعتماد تشغيل الرواتب بسبب إعدادات التشغيل الحالية.';
+  }
+  if (r?.__status === 500 || code === 'TECHNICAL_FAILURE') {
+    return 'حدث خطأ تقني أثناء اعتماد الرواتب. بقيت حالة التشغيل دون تغيير.';
+  }
+  return errMsg(r);
+}
+
+/** رسائل أخطاء رفض مراجعة الرواتب — للاختبارات والواجهة 9.B.3 */
+export function rejectDecisionErrorMsg(r: any): string {
+  const code = r?.error?.code;
+  if (r?.__status === 400 || code === 'INVALID_REJECTION_REASON') {
+    return r?.error?.message || r?.message || 'يجب إدخال سبب واضح للرفض يتراوح بين 10 و500 حرف.';
+  }
+  if (code === 'PAYROLL_SELF_REJECTION_FORBIDDEN') {
+    return 'لا يجوز للمستخدم الذي أرسل تشغيل الرواتب للمراجعة أن يصدر قرار الرفض لنفس التشغيل.';
+  }
+  if (r?.__status === 403 || code === 'FORBIDDEN') {
+    return 'ليس لديك صلاحية رفض مراجعة تشغيل الرواتب.';
+  }
+  if (r?.__status === 404 || code === 'PAYROLL_RUN_NOT_FOUND') {
+    return 'تعذر العثور على تشغيل الرواتب أو لا تملك صلاحية الوصول إليه.';
+  }
+  if (code === 'IDEMPOTENCY_CONFLICT') {
+    return 'تم استخدام مفتاح العملية نفسه مع بيانات مختلفة.';
+  }
+  if (code === 'APPROVAL_INTEGRITY_CONFLICT') {
+    return 'تعذر التحقق من عملية رفض سابقة. لم يتم تعديل تشغيل الرواتب.';
+  }
+  if (code === 'APPROVAL_ALREADY_DECIDED') {
+    return 'تم اتخاذ قرار سابق بشأن دورة المراجعة الحالية.';
+  }
+  if (code === 'STALE_PAYROLL_RUN' || (r?.__status === 409 && !code)) {
+    return 'تم تعديل تشغيل الرواتب بواسطة مستخدم آخر. يرجى تحديث الصفحة.';
+  }
+  if (r?.__status === 409) {
+    return r?.error?.message || r?.message || 'لا يمكن رفض مراجعة تشغيل الرواتب في حالته الحالية.';
+  }
+  if (r?.__status === 422) {
+    return r?.error?.message || r?.message || 'تعذر رفض مراجعة الرواتب بسبب إعدادات التشغيل الحالية.';
+  }
+  if (r?.__status === 500 || code === 'TECHNICAL_FAILURE') {
+    return 'حدث خطأ تقني أثناء رفض مراجعة الرواتب. بقيت حالة التشغيل دون تغيير.';
+  }
+  return errMsg(r);
+}
+
 /** صلاحيات الرواتب (يجب أن تطابق PAYROLL_CAPABILITIES في الخادم). */
 export const CAP = {
   VIEW: 'payroll_view',
@@ -62,6 +154,8 @@ export const CAP = {
   CALCULATE: 'payroll_calculate',
   RECALCULATE: 'payroll_recalculate',
   SUBMIT_REVIEW: 'payroll_submit_review',
+  APPROVE: 'payroll_approve',
+  REJECT: 'payroll_reject',
   CANCEL_RUNS: 'payroll_cancel_runs',
   ADMIN: 'payroll_admin',
 } as const;
