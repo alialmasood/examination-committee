@@ -37,6 +37,16 @@ export async function GET(request: NextRequest, context: Ctx) {
         auth.user.id,
         PAYROLL_CAPABILITIES.SUBMIT_REVIEW
       );
+      const canApproveCap = await hasPayrollCapability(
+        client,
+        auth.user.id,
+        PAYROLL_CAPABILITIES.APPROVE
+      );
+      const canRejectCap = await hasPayrollCapability(
+        client,
+        auth.user.id,
+        PAYROLL_CAPABILITIES.REJECT
+      );
 
       const blockingIssues = await txQuery<{ n: number }>(
         client,
@@ -58,6 +68,31 @@ export async function GET(request: NextRequest, context: Ctx) {
       }
       const readiness_for_review = readiness_blockers.length === 0;
 
+      const is_current_user_submitter =
+        row.status === 'UNDER_REVIEW' &&
+        row.submitted_for_review_by != null &&
+        String(row.submitted_for_review_by) === String(auth.user.id);
+      const segregation_of_duties_blocked = is_current_user_submitter;
+
+      const approval_blockers: string[] = [];
+      if (row.status !== 'UNDER_REVIEW') approval_blockers.push('STATUS_NOT_UNDER_REVIEW');
+      if (Number(row.error_count) > 0) approval_blockers.push('HAS_ERRORS');
+      if (blocking_issues_count > 0) approval_blockers.push('HAS_BLOCKING_ISSUES');
+      if (
+        isPayrollSnapshotHash(row.review_snapshot_hash) &&
+        isPayrollSnapshotHash(row.snapshot_hash) &&
+        String(row.review_snapshot_hash) !== String(row.snapshot_hash)
+      ) {
+        approval_blockers.push('SNAPSHOT_DRIFT');
+      }
+      if (!isPayrollSnapshotHash(row.review_snapshot_hash)) {
+        approval_blockers.push('MISSING_REVIEW_HASH');
+      }
+      if (segregation_of_duties_blocked) approval_blockers.push('SOD_SUBMITTER');
+      const readiness_for_approval =
+        row.status === 'UNDER_REVIEW' &&
+        approval_blockers.filter((b) => b !== 'SOD_SUBMITTER').length === 0;
+
       const can_recalculate =
         canRecalcCap &&
         row.status === 'CALCULATED' &&
@@ -68,8 +103,27 @@ export async function GET(request: NextRequest, context: Ctx) {
         row.status === 'CALCULATED' &&
         readiness_for_review;
 
+      const can_approve =
+        canApproveCap &&
+        row.status === 'UNDER_REVIEW' &&
+        !is_current_user_submitter &&
+        readiness_for_approval;
+
+      const can_reject =
+        canRejectCap &&
+        row.status === 'UNDER_REVIEW' &&
+        !is_current_user_submitter;
+
       let submitted_by: { id: string; display_name: string } | null = null;
       let submit_comment: string | null = null;
+      let approved_by: { id: string; display_name: string } | null = null;
+      let last_rejection: {
+        reason: string;
+        rejected_at: string;
+        rejected_by: { id: string; display_name: string } | null;
+        approval_cycle: number;
+      } | null = null;
+
       if (row.submitted_for_review_by) {
         const u = await txQuery<{ name: string | null }>(
           client,
@@ -78,6 +132,17 @@ export async function GET(request: NextRequest, context: Ctx) {
         );
         submitted_by = {
           id: String(row.submitted_for_review_by),
+          display_name: u.rows[0]?.name ? String(u.rows[0].name) : '',
+        };
+      }
+      if (row.approved_by) {
+        const u = await txQuery<{ name: string | null }>(
+          client,
+          `SELECT COALESCE(full_name, username) AS name FROM student_affairs.users WHERE id=$1::uuid`,
+          [row.approved_by]
+        );
+        approved_by = {
+          id: String(row.approved_by),
           display_name: u.rows[0]?.name ? String(u.rows[0].name) : '',
         };
       }
@@ -91,6 +156,41 @@ export async function GET(request: NextRequest, context: Ctx) {
           [id, row.approval_cycle]
         );
         submit_comment = act.rows[0]?.comment ?? null;
+      }
+
+      // آخر رفض تاريخي (حتى بعد العودة لـ CALCULATED)
+      const lastRej = await txQuery<{
+        reason: string | null;
+        created_at: Date | string;
+        actor_id: string | null;
+        actor_display_name_snapshot: string | null;
+        approval_cycle: number;
+      }>(
+        client,
+        `SELECT reason, created_at, actor_id::text, actor_display_name_snapshot, approval_cycle
+         FROM accounts.payroll_run_approval_actions
+         WHERE payroll_run_id=$1::uuid AND action='REJECTED'
+         ORDER BY created_at DESC LIMIT 1`,
+        [id]
+      );
+      if (lastRej.rows[0]?.reason) {
+        const rj = lastRej.rows[0];
+        last_rejection = {
+          reason: String(rj.reason),
+          rejected_at:
+            rj.created_at instanceof Date
+              ? rj.created_at.toISOString()
+              : String(rj.created_at),
+          rejected_by: rj.actor_id
+            ? {
+                id: String(rj.actor_id),
+                display_name: rj.actor_display_name_snapshot
+                  ? String(rj.actor_display_name_snapshot)
+                  : '',
+              }
+            : null,
+          approval_cycle: Number(rj.approval_cycle),
+        };
       }
 
       const review_state =
@@ -137,6 +237,8 @@ export async function GET(request: NextRequest, context: Ctx) {
         },
         approval: {
           can_submit_for_review,
+          can_approve,
+          can_reject,
           can_recalculate,
           review_state,
           approval_cycle: Number(row.approval_cycle ?? 0),
@@ -146,13 +248,26 @@ export async function GET(request: NextRequest, context: Ctx) {
               : String(row.submitted_for_review_at)
             : null,
           submitted_for_review_by: submitted_by,
+          approved_at: row.approved_at
+            ? row.approved_at instanceof Date
+              ? row.approved_at.toISOString()
+              : String(row.approved_at)
+            : null,
+          approved_by,
           review_snapshot_hash_short: shortHash(row.review_snapshot_hash),
+          approved_snapshot_hash_short: shortHash(row.approved_snapshot_hash),
           submit_comment,
+          last_rejection_reason: last_rejection?.reason ?? null,
+          last_rejection,
           error_count: Number(row.error_count),
           blocking_issues_count,
           warning_count: Number(row.warning_count),
           readiness_for_review,
           readiness_blockers,
+          readiness_for_approval,
+          approval_blockers,
+          is_current_user_submitter,
+          segregation_of_duties_blocked,
         },
       };
     });
