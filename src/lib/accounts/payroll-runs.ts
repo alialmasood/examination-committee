@@ -108,14 +108,22 @@ async function resolveScope(
       [ref]
     );
     if (!cc.rows[0]) throw new AccountsHttpError('مركز الكلفة المرجعي غير موجود', 404);
+  } else if (scope === 'COLLEGE') {
+    // نطاق COLLEGE = كلية حقيقية (ليس قسماً)
+    const col = await txQuery<{ id: string }>(
+      client,
+      `SELECT id FROM student_affairs.colleges WHERE id=$1::uuid`,
+      [ref]
+    );
+    if (!col.rows[0]) throw new AccountsHttpError('الكلية المرجعية غير موجودة', 404);
   } else {
-    // COLLEGE / DEPARTMENT → قسم في شجرة الأقسام
+    // DEPARTMENT
     const dep = await txQuery<{ id: string }>(
       client,
       `SELECT id FROM student_affairs.departments WHERE id=$1::uuid`,
       [ref]
     );
-    if (!dep.rows[0]) throw new AccountsHttpError('القسم/الكلية المرجعي غير موجود', 404);
+    if (!dep.rows[0]) throw new AccountsHttpError('القسم المرجعي غير موجود', 404);
   }
   return { scope_type: scope, scope_ref_id: ref };
 }
