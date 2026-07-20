@@ -1,8 +1,8 @@
 /**
- * حارس جاهزية التشغيل للترحيل/الاعتماد/الدفع (9.A.2.3.2).
+ * حارس جاهزية التشغيل للترحيل (محدّث 9.B.1).
  *
- * Posting / Approval / Payment يجب أن يستدعوا assertPayrollRunReadyForPosting لاحقاً.
- * لا endpoint ترحيل في هذه المرحلة — هذا الملف للتحقق المسبق فقط.
+ * الترحيل الفعلي خارج هذه المرحلة — يشترط APPROVED + تطابق بصمة الاعتماد.
+ * لا endpoint ترحيل هنا.
  */
 import { AccountsHttpError } from './auth';
 import { isPayrollSnapshotHash } from './payroll-snapshot-hash';
@@ -11,6 +11,7 @@ export type PayrollRunPostingCheck = {
   status: string;
   error_count: number | string;
   snapshot_hash?: string | null;
+  approved_snapshot_hash?: string | null;
 };
 
 export type PostingGuardOptions = {
@@ -18,14 +19,14 @@ export type PostingGuardOptions = {
   blocking_issues_count?: number;
 };
 
-/** يتحقق أن التشغيل جاهز للترحيل/الاعتماد/الدفع — يرمي 409 عربي عند الفشل. */
+/** يتحقق أن التشغيل جاهز للترحيل — يرمي 409 عربي عند الفشل. */
 export function assertPayrollRunReadyForPosting(
   run: PayrollRunPostingCheck,
   options: PostingGuardOptions = {}
 ): void {
-  if (run.status !== 'CALCULATED') {
+  if (run.status !== 'APPROVED') {
     throw new AccountsHttpError(
-      'لا يمكن ترحيل أو اعتماد تشغيل رواتب غير محتسب',
+      'لا يمكن ترحيل تشغيل رواتب غير معتمد',
       409
     );
   }
@@ -38,6 +39,18 @@ export function assertPayrollRunReadyForPosting(
   if (!isPayrollSnapshotHash(run.snapshot_hash)) {
     throw new AccountsHttpError(
       'لا يمكن ترحيل تشغيل بلا بصمة لقطة صالحة',
+      409
+    );
+  }
+  if (!isPayrollSnapshotHash(run.approved_snapshot_hash)) {
+    throw new AccountsHttpError(
+      'لا يمكن ترحيل تشغيل بلا بصمة اعتماد صالحة',
+      409
+    );
+  }
+  if (String(run.approved_snapshot_hash) !== String(run.snapshot_hash)) {
+    throw new AccountsHttpError(
+      'بصمة الاعتماد لا تطابق لقطة التشغيل الحالية — رُفض الترحيل',
       409
     );
   }

@@ -41,7 +41,6 @@ import {
 import { addScopeMember } from '../lib/accounts/payroll-run-scope';
 import { loadRunCalculationArtifacts } from '../lib/accounts/payroll-run-snapshots';
 import {
-  assertPayrollRunReadyForPosting,
   isPayrollRunReadyForPosting,
 } from '../lib/accounts/payroll-posting-guard';
 import { PAYROLL_CAPABILITIES, hasPayrollCapability } from '../lib/accounts/payroll-access';
@@ -626,11 +625,15 @@ async function main() {
     assert(result.previous_summary.gross_total === beforeGross, 'previous gross');
     assert((await auditCount(seeded.run.id, 'payroll_run.recalculated')) === 1, 'audit once');
     assert((await memberCount(seeded.run.id)) === membersBefore, 'members unchanged');
-    assertPayrollRunReadyForPosting({
-      status: result.run.status,
-      error_count: result.run.error_count,
-      snapshot_hash: result.run.snapshot_hash,
-    });
+    // 9.B.1: CALCULATED ليس جاهزاً للترحيل دون اعتماد
+    assert(
+      !isPayrollRunReadyForPosting({
+        status: result.run.status,
+        error_count: result.run.error_count,
+        snapshot_hash: result.run.snapshot_hash,
+      }),
+      'calculated not ready for posting'
+    );
   });
 
   await it('نفس المصادر → نفس hash بعد Recalculate', async () => {
@@ -1585,18 +1588,18 @@ async function main() {
   });
 
   // —— Posting guard ——
-  await it('حارس الترحيل بعد Recalculate نظيف', async () => {
+  await it('حارس الترحيل يرفض CALCULATED بعد Recalculate (يتطلب APPROVED)', async () => {
     const seeded = await seedCalculated('93000');
     const result = await recalc(seeded.run, {
       reason: 'إعادة احتساب للتحقق من جاهزية الترحيل',
     });
     assert(
-      isPayrollRunReadyForPosting({
+      !isPayrollRunReadyForPosting({
         status: result.run.status,
         error_count: result.run.error_count,
         snapshot_hash: result.run.snapshot_hash,
       }),
-      'ready'
+      'not ready without APPROVED'
     );
   });
 

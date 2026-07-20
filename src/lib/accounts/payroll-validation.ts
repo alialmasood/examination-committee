@@ -430,6 +430,13 @@ export const PAYROLL_ENUMS = {
   // 9.A.2.1 — الفترات والتشغيلات والنطاق
   PERIOD_STATUS: ['OPEN', 'PROCESSING', 'CLOSED', 'CANCELLED'] as const,
   RUN_TYPE: ['REGULAR', 'CORRECTION', 'SUPPLEMENTAL', 'TERMINATION', 'MANUAL'] as const,
-  RUN_STATUS: ['DRAFT', 'CALCULATING', 'CALCULATED', 'CANCELLED'] as const,
+  RUN_STATUS: [
+    'DRAFT',
+    'CALCULATING',
+    'CALCULATED',
+    'UNDER_REVIEW',
+    'APPROVED',
+    'CANCELLED',
+  ] as const,
   SCOPE_TYPE: ['ALL', 'COLLEGE', 'DEPARTMENT', 'COST_CENTER', 'PERSON_LIST'] as const,
 } as const;

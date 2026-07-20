@@ -55,6 +55,14 @@ export type PayrollRunRow = {
   cancelled_at: Date | string | null;
   cancelled_by: string | null;
   cancellation_reason: string | null;
+  /** 9.B.1 — دورة المراجعة (يزيد عند كل Submit) */
+  approval_cycle: number;
+  review_snapshot_hash: string | null;
+  submitted_for_review_at: Date | string | null;
+  submitted_for_review_by: string | null;
+  approved_snapshot_hash: string | null;
+  approved_at: Date | string | null;
+  approved_by: string | null;
   version: number;
   created_by: string;
   updated_by: string | null;
@@ -68,6 +76,9 @@ export function serializePayrollRun(row: PayrollRunRow) {
     calculation_date: dateStr(row.calculation_date)!,
     calculated_at: iso(row.calculated_at),
     cancelled_at: iso(row.cancelled_at),
+    submitted_for_review_at: iso(row.submitted_for_review_at),
+    approved_at: iso(row.approved_at),
+    approval_cycle: Number(row.approval_cycle ?? 0),
     created_at: iso(row.created_at)!,
     updated_at: iso(row.updated_at)!,
   };
@@ -128,7 +139,13 @@ async function resolveScope(
   return { scope_type: scope, scope_ref_id: ref };
 }
 
-const ACTIVE_RUN_STATUSES = ['DRAFT', 'CALCULATING', 'CALCULATED'];
+const ACTIVE_RUN_STATUSES = [
+  'DRAFT',
+  'CALCULATING',
+  'CALCULATED',
+  'UNDER_REVIEW',
+  'APPROVED',
+];
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 
 /**
@@ -207,26 +224,37 @@ export async function createPayrollRun(
 
   const number = await nextPayrollNumber(client, 'PAYROLL_RUN', 'PYR');
 
-  const r = await txQuery<PayrollRunRow>(
-    client,
-    `INSERT INTO accounts.payroll_runs
-       (run_number, payroll_period_id, payroll_calendar_id, run_type, scope_type, scope_ref_id,
-        status, currency_code, calculation_date, revision_number, created_by, updated_by)
-     VALUES ($1,$2::uuid,$3::uuid,$4,$5,$6::uuid,'DRAFT',$7,$8::date,1,$9::uuid,$9::uuid)
-     RETURNING *`,
-    [
-      number,
-      periodId,
-      period.payroll_calendar_id,
-      runType,
-      scope.scope_type,
-      scope.scope_ref_id,
-      period.currency_code,
-      dateStr(period.calculation_date)!,
-      input.created_by,
-    ]
-  );
-  return r.rows[0];
+  try {
+    const r = await txQuery<PayrollRunRow>(
+      client,
+      `INSERT INTO accounts.payroll_runs
+         (run_number, payroll_period_id, payroll_calendar_id, run_type, scope_type, scope_ref_id,
+          status, currency_code, calculation_date, revision_number, created_by, updated_by)
+       VALUES ($1,$2::uuid,$3::uuid,$4,$5,$6::uuid,'DRAFT',$7,$8::date,1,$9::uuid,$9::uuid)
+       RETURNING *`,
+      [
+        number,
+        periodId,
+        period.payroll_calendar_id,
+        runType,
+        scope.scope_type,
+        scope.scope_ref_id,
+        period.currency_code,
+        dateStr(period.calculation_date)!,
+        input.created_by,
+      ]
+    );
+    return r.rows[0];
+  } catch (e) {
+    const err = e as { code?: string; constraint?: string };
+    if (err?.code === '23505' && String(err.constraint ?? '').includes('uq_payroll_runs_one_live')) {
+      throw new AccountsHttpError(
+        'يوجد تشغيل حيّ مكافئ لنفس الفترة والنوع والنطاق',
+        409
+      );
+    }
+    throw e;
+  }
 }
 
 async function countScopeMembers(client: TxClient, runId: string): Promise<number> {
@@ -309,6 +337,12 @@ export async function cancelPayrollRun(
   }
   if (row.status === 'CALCULATING') {
     throw new AccountsHttpError('لا يمكن الإلغاء أثناء الاحتساب', 409);
+  }
+  if (row.status === 'UNDER_REVIEW') {
+    throw new AccountsHttpError('لا يمكن إلغاء تشغيل قيد المراجعة', 409);
+  }
+  if (row.status === 'APPROVED') {
+    throw new AccountsHttpError('لا يمكن إلغاء تشغيل معتمد', 409);
   }
   if (row.status !== 'DRAFT' && row.status !== 'CALCULATED') {
     throw new AccountsHttpError('لا يمكن إلغاء التشغيل في حالته الحالية', 409);

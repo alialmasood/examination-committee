@@ -888,22 +888,35 @@ async function main() {
     });
 
     // —— 18) Posting guard ——
-    await it('18) حارس الترحيل: يرفض ERROR ويقبل CALCULATED نظيف', async () => {
+    await it('18) حارس الترحيل: يرفض CALCULATED ويقبل APPROVED نظيف', async () => {
       const hash = 'a'.repeat(64);
       try {
         assertPayrollRunReadyForPosting({
           status: 'CALCULATED',
+          error_count: 0,
+          snapshot_hash: hash,
+          approved_snapshot_hash: hash,
+        });
+        throw new Error('should reject CALCULATED');
+      } catch (e) {
+        assert(e instanceof AccountsHttpError && e.status === 409, 'reject calculated');
+      }
+      try {
+        assertPayrollRunReadyForPosting({
+          status: 'APPROVED',
           error_count: 1,
           snapshot_hash: hash,
+          approved_snapshot_hash: hash,
         });
         throw new Error('should reject ERROR count');
       } catch (e) {
         assert(e instanceof AccountsHttpError && e.status === 409, 'reject errors');
       }
       assertPayrollRunReadyForPosting({
-        status: 'CALCULATED',
+        status: 'APPROVED',
         error_count: 0,
         snapshot_hash: hash,
+        approved_snapshot_hash: hash,
       });
     });
 

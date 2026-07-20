@@ -114,16 +114,27 @@ export async function verifyPayrollCalculationIntegration(
         status: run.status,
         error_count: run.error_count,
         snapshot_hash: run.snapshot_hash,
+        approved_snapshot_hash: (run as { approved_snapshot_hash?: string | null })
+          .approved_snapshot_hash,
       },
       { blocking_issues_count: blockingN }
     );
+    // 9.B.1: CALCULATED نظيف ليس جاهزاً للترحيل — يشترط APPROVED
+    if (run.status === 'CALCULATED' && readyForPosting) {
+      fail(
+        'integration_posting_guard_calculated',
+        'حارس الترحيل يقبل CALCULATED دون اعتماد',
+        run.id
+      );
+    }
     if (
+      run.status === 'APPROVED' &&
       Number(run.error_count) === 0 &&
       isPayrollSnapshotHash(run.snapshot_hash) &&
       blockingN === 0 &&
       !readyForPosting
     ) {
-      fail('integration_posting_guard', 'حارس الترحيل يرفض تشغيلاً يبدو جاهزاً', run.id);
+      fail('integration_posting_guard', 'حارس الترحيل يرفض تشغيلاً معتمداً يبدو جاهزاً', run.id);
     }
     if (Number(run.error_count) > 0 && readyForPosting) {
       fail('integration_posting_guard_errors', 'حارس الترحيل يقبل تشغيلاً فيه أخطاء', run.id);
