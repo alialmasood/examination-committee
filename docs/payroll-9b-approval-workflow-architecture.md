@@ -1,9 +1,9 @@
 # 9.B — Payroll Approval Workflow Architecture
 
-> **الحالة:** Architecture **ACCEPTED WITH FINAL DECISIONS**  
-> **Baseline المعتمد:** `6101feb` (9.A.2.4.2 ACCEPTED)  
-> **المراحل المجمدة:** 9.A.1 · 9.A.2.1 · 9.A.2.2 · 9.A.2.3.1 · 9.A.2.3.2 · 9.A.2.4.1 · 9.A.2.4.2  
-> **Migrations Frozen:** 094 · 095 · 096  
+> **الحالة:** Architecture **ACCEPTED WITH FINAL DECISIONS**
+> **Baseline المعتمد:** `6101feb` (9.A.2.4.2 ACCEPTED)
+> **المراحل المجمدة:** 9.A.1 · 9.A.2.1 · 9.A.2.2 · 9.A.2.3.1 · 9.A.2.3.2 · 9.A.2.4.1 · 9.A.2.4.2
+> **Migrations Frozen:** 094 · 095 · 096
 > **Migration 097:** مطلوبة للتنفيذ في **9.B.1** (لا تُنشأ في مرحلة الاعتماد المعماري)
 
 ---
@@ -102,7 +102,7 @@ DRAFT | CALCULATING | CALCULATED | CANCELLED
 
 **النموذج B — مرحلتان:**
 
-1. **Submit for Review**  
+1. **Submit for Review**
 2. **Approve** أو **Reject**
 
 ```
@@ -277,10 +277,10 @@ CANCELLED
 
 ### قواعد صلبة
 
-1. `payroll_submit_review` · `payroll_approve` · `payroll_reject` قدرات **منفصلة**.  
-2. عند Approve: إن `actor.id === submitted_for_review_by` → **409** `SEGREGATION_OF_DUTIES`.  
-3. عند Reject: نفس القاعدة — Submitter لا يرفض طلبه.  
-4. يمكن لنفس الشخص امتلاك approve و reject، لكن ليس Submitter لنفس الدورة عند التنفيذ.  
+1. `payroll_submit_review` · `payroll_approve` · `payroll_reject` قدرات **منفصلة**.
+2. عند Approve: إن `actor.id === submitted_for_review_by` → **409** `SEGREGATION_OF_DUTIES`.
+3. عند Reject: نفس القاعدة — Submitter لا يرفض طلبه.
+4. يمكن لنفس الشخص امتلاك approve و reject، لكن ليس Submitter لنفس الدورة عند التنفيذ.
 5. لا مسار «admin force approve/reject».
 
 ---
@@ -416,11 +416,11 @@ CANCELLED
 
 ### محتوى 097 المتوقع (تصميم فقط)
 
-1. إسقاط/إعادة قيد CHECK للحالات: إضافة `UNDER_REVIEW`, `APPROVED`.  
-2. توسيع `uq_payroll_runs_one_live_regular` ليشمل الحالات الحية الجديدة.  
-3. أعمدة القفل على `payroll_runs` (§9.2).  
-4. جدول `payroll_run_approval_actions` + فهارس + FKs.  
-5. **لا** تعديل 094/095/096 محتوىً تاريخيًا — فقط 097 لاحقة.  
+1. إسقاط/إعادة قيد CHECK للحالات: إضافة `UNDER_REVIEW`, `APPROVED`.
+2. توسيع `uq_payroll_runs_one_live_regular` ليشمل الحالات الحية الجديدة.
+3. أعمدة القفل على `payroll_runs` (§9.2).
+4. جدول `payroll_run_approval_actions` + فهارس + FKs.
+5. **لا** تعديل 094/095/096 محتوىً تاريخيًا — فقط 097 لاحقة.
 6. **لا** جداول Posting/Payment.
 
 ---
@@ -532,8 +532,8 @@ GET  /api/accounts/payroll/runs/[id]/approval-history
 
 ### 15.2 أجسام الطلب (ملخص)
 
-**Submit:** `{ version, updated_at, idempotency_key, confirmation: true, comment? }`  
-**Approve:** `{ version, updated_at, idempotency_key, confirmation: true, comment? }`  
+**Submit:** `{ version, updated_at, idempotency_key, confirmation: true, comment? }`
+**Approve:** `{ version, updated_at, idempotency_key, confirmation: true, comment? }`
 **Reject:** `{ version, updated_at, idempotency_key, confirmation: true, reason }`
 
 ### 15.3 استجابة النجاح
@@ -692,59 +692,59 @@ lock → validate → transition → insert action → audit success → version
 ## 23. قائمة اختبارات القبول (تصميم)
 
 ### Submit
-1. CALCULATED نظيف → UNDER_REVIEW  
-2. error_count > 0 مرفوض  
-3. blocking issue مرفوض  
-4. warning فقط مسموح  
-5. hash ناقص مرفوض  
-6. stale version  
-7. stale updated_at  
-8. بلا capability  
-9. IDOR  
-10. same key replay  
-11. same key payload conflict  
-12. concurrent submit  
-13. Submit × Recalculate  
-14. Submit × Cancel  
+1. CALCULATED نظيف → UNDER_REVIEW
+2. error_count > 0 مرفوض
+3. blocking issue مرفوض
+4. warning فقط مسموح
+5. hash ناقص مرفوض
+6. stale version
+7. stale updated_at
+8. بلا capability
+9. IDOR
+10. same key replay
+11. same key payload conflict
+12. concurrent submit
+13. Submit × Recalculate
+14. Submit × Cancel
 
 ### Approve
-15. UNDER_REVIEW → APPROVED  
-16. من CALCULATED مرفوض  
-17. Submitter لا يعتمد  
-18. Approver مختلف ينجح  
-19. hash تغيّر مرفوض  
-20. artifacts تغيّرت مرفوضة  
-21. خطأ مُدخل مرفوض  
-22. stale version  
-23. بلا capability  
-24. IDOR  
-25. replay  
-26. key conflict  
-27. Approve × Approve  
-28. Approve × Reject  
-29. حارس Posting مستقبلي يرفض غير APPROVED  
+15. UNDER_REVIEW → APPROVED
+16. من CALCULATED مرفوض
+17. Submitter لا يعتمد
+18. Approver مختلف ينجح
+19. hash تغيّر مرفوض
+20. artifacts تغيّرت مرفوضة
+21. خطأ مُدخل مرفوض
+22. stale version
+23. بلا capability
+24. IDOR
+25. replay
+26. key conflict
+27. Approve × Approve
+28. Approve × Reject
+29. حارس Posting مستقبلي يرفض غير APPROVED
 
 ### Reject
-30. UNDER_REVIEW → CALCULATED  
-31. reason إلزامي  
-32. سبب قصير مرفوض  
-33. بلا capability  
-34. replay  
-35. conflict  
-36. Reject × Approve  
-37. history محفوظ  
-38. Recalculate بعد الرفض مسموح  
+30. UNDER_REVIEW → CALCULATED
+31. reason إلزامي
+32. سبب قصير مرفوض
+33. بلا capability
+34. replay
+35. conflict
+36. Reject × Approve
+37. history محفوظ
+38. Recalculate بعد الرفض مسموح
 
 ### Integrity
-39. history غير قابل للتعديل من API  
-40. status/history متسقان  
-41. snapshot lock  
-42. posting guard لاحقًا APPROVED فقط  
-43. audit نجاح مرة  
-44. لا raw key  
-45. failpoint rollback  
-46. cleanup صفر  
-47. verify normal/strict  
+39. history غير قابل للتعديل من API
+40. status/history متسقان
+41. snapshot lock
+42. posting guard لاحقًا APPROVED فقط
+43. audit نجاح مرة
+44. لا raw key
+45. failpoint rollback
+46. cleanup صفر
+47. verify normal/strict
 
 ---
 
@@ -763,16 +763,16 @@ lock → validate → transition → insert action → audit success → version
 
 ## 25. المؤجّل خارج 9.B
 
-- GL Posting · Journal Entries  
-- Payroll Payments · Bank files  
-- Payslips نهائية مقفلة  
-- Multi-level approvals المتقدمة  
-- Emergency override  
-- Full snapshot archive  
-- Digital signatures  
-- إشعارات بريد (إلا إن بسيطة بلا أثر على Core)  
-- حالة Run اسمها REJECTED  
-- Unapprove بعد APPROVED  
+- GL Posting · Journal Entries
+- Payroll Payments · Bank files
+- Payslips نهائية مقفلة
+- Multi-level approvals المتقدمة
+- Emergency override
+- Full snapshot archive
+- Digital signatures
+- إشعارات بريد (إلا إن بسيطة بلا أثر على Core)
+- حالة Run اسمها REJECTED
+- Unapprove بعد APPROVED
 
 ---
 
@@ -791,11 +791,11 @@ lock → validate → transition → insert action → audit success → version
 
 ## 27. قرارات مفتوحة (للمراجعة)
 
-1. هل تُضاف `POSTED` إلى CHECK في 097؟ **مُغلق: لا.**  
-2. هل `payroll_reject` منفصلة؟ **مُغلق: نعم.**  
-3. هل Cancel من UNDER_REVIEW؟ **مُغلق: ممنوع.**  
-4. هل Submitter يستطيع Reject؟ **مُغلق: لا.**  
-5. هل Submit comment إلزامي؟ **مُغلق: اختياري.**  
+1. هل تُضاف `POSTED` إلى CHECK في 097؟ **مُغلق: لا.**
+2. هل `payroll_reject` منفصلة؟ **مُغلق: نعم.**
+3. هل Cancel من UNDER_REVIEW؟ **مُغلق: ممنوع.**
+4. هل Submitter يستطيع Reject؟ **مُغلق: لا.**
+5. هل Submit comment إلزامي؟ **مُغلق: اختياري.**
 6. هل clerk يُمنح Submit؟ **مفتوح للتنفيذ في mapping — التوصية نعم.**
 
 ---
