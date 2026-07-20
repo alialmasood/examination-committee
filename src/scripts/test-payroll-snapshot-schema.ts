@@ -14,7 +14,7 @@ import { createPayrollContract, transitionPayrollContract } from '../lib/account
 import { createPayrollAssignment } from '../lib/accounts/payroll-assignments';
 import { createPayrollComponent } from '../lib/accounts/payroll-components';
 import { createPayrollPeriod } from '../lib/accounts/payroll-periods';
-import { createPayrollRun } from '../lib/accounts/payroll-runs';
+import { cancelPayrollRun, createPayrollRun } from '../lib/accounts/payroll-runs';
 import {
   clearRunCalculationArtifacts,
   insertRunIssue,
@@ -22,6 +22,7 @@ import {
   insertRunPersonSnapshot,
   loadRunCalculationArtifacts,
 } from '../lib/accounts/payroll-run-snapshots';
+import { txQuery } from '../lib/accounts/with-transaction';
 import {
   canonicalizeDecimal,
   canonicalizePayrollSnapshot,
@@ -582,7 +583,7 @@ async function main() {
     });
 
     // ── Verify ───────────────────────────────────────────────
-    await it('23) Verify يكشف مصدر كمية محجوز عبر SQL مباشر + rollback', async () => {
+    await it('23) Verify يكشف مصدر كمية محجوز عبر SQL مباشر + rollback؛ Service يرفضه', async () => {
       const { run } = await mkPeriodRun();
       const person = await mkPerson();
       const comp = await mkComponent();
@@ -591,16 +592,18 @@ async function main() {
         person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
         person_type_snapshot: person.person_type, snapshot_json: baseSnap(), created_by: userId,
       }));
+      await throwsHttp(() => withTransaction((c) => insertRunLine(c, {
+        payroll_run_id: run.id, payroll_run_person_id: rp.id, payroll_component_id: comp.id,
+        component_code_snapshot: comp.component_code, component_name_snapshot: comp.name_ar,
+        component_type: 'EARNING', calculation_method: 'FIXED_AMOUNT',
+        quantity_source: 'ATTENDANCE', source_effective_from: '2025-01-01',
+        calculated_amount: '1', created_by: userId,
+      })), 400, 'محجوز');
+
       class Rb extends Error {}
       let kinds: string[] = [];
       try {
         await withTransaction(async (c) => {
-          await query(
-            // استخدام client الخاص بالمعاملة عبر tx — هنا نحقن عبر raw على نفس الاتصال؟
-            // withTransaction يعطي client؛ لكن query العام خارج المعاملة. نستخدم insert ثم update quantity_source
-            `SELECT 1`
-          );
-          // حقن عبر SQL على نفس pool خارج tx لن يُرى داخل tx — لذا نستخدم update بعد insert داخل tx عبر خدمة ثم raw
           const line = await insertRunLine(c, {
             payroll_run_id: run.id, payroll_run_person_id: rp.id, payroll_component_id: comp.id,
             component_code_snapshot: comp.component_code, component_name_snapshot: comp.name_ar,
@@ -608,8 +611,6 @@ async function main() {
             quantity_source: 'MANUAL', source_effective_from: '2025-01-01',
             calculated_amount: '1', created_by: userId,
           });
-          // تحديث إلى محجوز عبر txQuery داخل نفس المعاملة
-          const { txQuery } = await import('../lib/accounts/with-transaction');
           await txQuery(c, `UPDATE accounts.payroll_run_lines SET quantity_source='ATTENDANCE' WHERE id=$1::uuid`, [line.id]);
           const r = await verifyPayrollSnapshotSchema(c, { strict: false });
           kinds = r.mismatches.map((m) => m.kind);
@@ -633,7 +634,197 @@ async function main() {
       assert(blocked, 'DB يمنع ERROR غير blocking');
     });
 
-    await it('25) Verify normal أثناء Fixtures: mismatches=0 (تحذيرات DRAFT مسموحة)', async () => {
+    await it('25) Hardening: CALCULATED بلا عقد مرفوض؛ ERROR بلا عقد مسموح', async () => {
+      const { run } = await mkPeriodRun();
+      const person = await mkPerson();
+      await throwsHttp(() => withTransaction((c) => insertRunPersonSnapshot(c, {
+        payroll_run_id: run.id, payroll_person_id: person.id,
+        person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type,
+        calculation_status: 'CALCULATED',
+        snapshot_json: baseSnap(), created_by: userId,
+      })), 400, 'CALCULATED');
+      const errRow = await withTransaction((c) => insertRunPersonSnapshot(c, {
+        payroll_run_id: run.id, payroll_person_id: person.id,
+        person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type,
+        calculation_status: 'ERROR',
+        snapshot_json: baseSnap(), created_by: userId,
+      }));
+      assert(!!errRow.id, 'ERROR بلا عقد مسموح');
+    });
+
+    await it('26) Hardening: Hash mismatch / dummy مرفوض؛ ترتيب المفاتيح وDecimal متطابقان', async () => {
+      const { run } = await mkPeriodRun();
+      const person = await mkPerson();
+      const snap = baseSnap({ person: { ...baseSnap().person, id: person.id } });
+      const good = hashPayrollSnapshot(snap);
+      assert(isPayrollSnapshotHash(good), 'hash صالح');
+      await throwsHttp(() => withTransaction((c) => insertRunPersonSnapshot(c, {
+        payroll_run_id: run.id, payroll_person_id: person.id,
+        person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type, snapshot_json: snap,
+        snapshot_hash: 'a'.repeat(64), created_by: userId,
+      })), 400, 'لا تطابق');
+      const a = hashPayrollSnapshot({ b: 1, amount: '100', a: 'x' });
+      const b = hashPayrollSnapshot({ a: 'x', amount: '100.000', b: 1 });
+      assert(a === b, 'ترتيب+decimal');
+      const row = await withTransaction((c) => insertRunPersonSnapshot(c, {
+        payroll_run_id: run.id, payroll_person_id: person.id,
+        person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type, snapshot_json: snap,
+        snapshot_hash: good, created_by: userId,
+      }));
+      assert(!!row.id, 'hash صحيح مقبول');
+    });
+
+    await it('27) Hardening: Verify يكتشف stale hash + CALCULATED بلا عقد (SQL+rollback)', async () => {
+      const { run } = await mkPeriodRun();
+      const person = await mkPerson();
+      class Rb extends Error {}
+      let kinds: string[] = [];
+      try {
+        await withTransaction(async (c) => {
+          const snap = baseSnap();
+          const row = await insertRunPersonSnapshot(c, {
+            payroll_run_id: run.id, payroll_person_id: person.id,
+            person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+            person_type_snapshot: person.person_type, snapshot_json: snap, created_by: userId,
+          });
+          await txQuery(c,
+            `UPDATE accounts.payroll_run_people SET snapshot_hash=$2 WHERE id=$1::uuid`,
+            [row.id, 'b'.repeat(64)]
+          );
+          const r1 = await verifyPayrollSnapshotSchema(c, { strict: false });
+          assert(r1.mismatches.some((m) => m.kind === 'run_person_stale_hash'), 'stale');
+          await txQuery(c,
+            `UPDATE accounts.payroll_run_people
+             SET snapshot_hash=$2, calculation_status='CALCULATED', payroll_contract_id=NULL,
+                 snapshot_json=$3::jsonb
+             WHERE id=$1::uuid`,
+            [row.id, hashPayrollSnapshot(snap), JSON.stringify(snap)]
+          );
+          const r2 = await verifyPayrollSnapshotSchema(c, { strict: false });
+          kinds = r2.mismatches.map((m) => m.kind);
+          throw new Rb();
+        });
+      } catch (e) { if (!(e instanceof Rb)) throw e; }
+      assert(kinds.includes('run_person_calculated_no_contract'), `kinds=${kinds.join(',')}`);
+    });
+
+    await it('28) Hardening: Cancel يحرر Live Person لنفس الفترة', async () => {
+      const cal = await mkCalendar();
+      const period = await withTransaction((c) => createPayrollPeriod(c, {
+        payroll_calendar_id: cal.id, name_ar: 'فترة حارس',
+        start_date: '2025-02-01', end_date: '2025-02-28',
+        fiscal_year_id: fiscalYearId, created_by: userId,
+      }));
+      owned.periodIds.push(period.id);
+      const runA = await withTransaction((c) => createPayrollRun(c, {
+        payroll_period_id: period.id, run_type: 'REGULAR', scope_type: 'ALL', created_by: userId,
+      }));
+      owned.runIds.push(runA.id);
+      const person = await mkPerson();
+      await withTransaction((c) => insertRunPersonSnapshot(c, {
+        payroll_run_id: runA.id, payroll_person_id: person.id,
+        person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type, snapshot_json: baseSnap(), created_by: userId,
+      }));
+      // بدون Cancel: لا يُنشأ Run REGULAR حيّ ثانٍ لنفس الفترة/النطاق
+      let blockedCreate = false;
+      try {
+        await withTransaction((c) => createPayrollRun(c, {
+          payroll_period_id: period.id, run_type: 'REGULAR', scope_type: 'ALL', created_by: userId,
+        }));
+      } catch { blockedCreate = true; }
+      assert(blockedCreate, 'بدون Cancel يبقى إنشاء Run B مرفوضًا');
+
+      const freshA = await query(`SELECT version, updated_at FROM accounts.payroll_runs WHERE id=$1::uuid`, [runA.id]);
+      await withTransaction((c) => cancelPayrollRun(c, {
+        id: runA.id, userId,
+        version: freshA.rows[0].version,
+        updated_at: freshA.rows[0].updated_at,
+        reason: 'تحرير حارس الشخص لاختبار',
+      }));
+      const freed = await query(
+        `SELECT superseded FROM accounts.payroll_run_people WHERE payroll_run_id=$1::uuid`,
+        [runA.id]
+      );
+      assert(freed.rows[0]?.superseded === true, 'superseded بعد Cancel');
+
+      const runB = await withTransaction((c) => createPayrollRun(c, {
+        payroll_period_id: period.id, run_type: 'REGULAR', scope_type: 'ALL', created_by: userId,
+      }));
+      owned.runIds.push(runB.id);
+      const okB = await withTransaction((c) => insertRunPersonSnapshot(c, {
+        payroll_run_id: runB.id, payroll_person_id: person.id,
+        person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type, snapshot_json: baseSnap(), created_by: userId,
+      }));
+      assert(!!okB.id, 'بعد Cancel ينجح Run B + شخص');
+    });
+
+    await it('29) Hardening: رفض insert على CALCULATED/CANCELLED؛ clear على CALCULATED مرفوض', async () => {
+      const { run } = await mkPeriodRun();
+      const person = await mkPerson();
+      await withTransaction((c) => insertRunPersonSnapshot(c, {
+        payroll_run_id: run.id, payroll_person_id: person.id,
+        person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type, snapshot_json: baseSnap(), created_by: userId,
+      }));
+      await query(
+        `UPDATE accounts.payroll_runs SET status='CALCULATED', calculated_at=NOW(), version=version+1 WHERE id=$1::uuid`,
+        [run.id]
+      );
+      await throwsHttp(() => withTransaction((c) => insertRunIssue(c, {
+        payroll_run_id: run.id, severity: 'WARNING', issue_code: 'X', message_ar: 'لا', created_by: userId,
+      })), 409);
+      await throwsHttp(() => withTransaction((c) => clearRunCalculationArtifacts(c, run.id)), 409);
+      await query(
+        `UPDATE accounts.payroll_runs SET status='CANCELLED', cancellation_reason='t',
+         cancelled_at=NOW(), cancelled_by=$2::uuid, version=version+1 WHERE id=$1::uuid`,
+        [run.id, userId]
+      );
+      await throwsHttp(() => withTransaction((c) => insertRunPersonSnapshot(c, {
+        payroll_run_id: run.id, payroll_person_id: person.id,
+        person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type, snapshot_json: baseSnap(), created_by: userId,
+      })), 409);
+    });
+
+    await it('30) Hardening: مفاتيح حسّاسة مرفوضة في Service؛ Verify يكشف Raw', async () => {
+      const { run } = await mkPeriodRun();
+      const person = await mkPerson();
+      await throwsHttp(() => withTransaction((c) => insertRunPersonSnapshot(c, {
+        payroll_run_id: run.id, payroll_person_id: person.id,
+        person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+        person_type_snapshot: person.person_type,
+        snapshot_json: { ...baseSnap(), nested: { iban: 'IQ00' } },
+        created_by: userId,
+      })), 400, 'حسّاسة');
+      class Rb extends Error {}
+      let kinds: string[] = [];
+      try {
+        await withTransaction(async (c) => {
+          const row = await insertRunPersonSnapshot(c, {
+            payroll_run_id: run.id, payroll_person_id: person.id,
+            person_code_snapshot: person.person_code, full_name_snapshot: person.full_name_ar,
+            person_type_snapshot: person.person_type, snapshot_json: baseSnap(), created_by: userId,
+          });
+          const poisoned = { ...baseSnap(), bank_account: 'HIDDEN' };
+          await txQuery(c,
+            `UPDATE accounts.payroll_run_people SET snapshot_json=$2::jsonb, snapshot_hash=$3 WHERE id=$1::uuid`,
+            [row.id, JSON.stringify(poisoned), hashPayrollSnapshot(poisoned)]
+          );
+          const r = await verifyPayrollSnapshotSchema(c, { strict: false });
+          kinds = r.mismatches.map((m) => m.kind);
+          throw new Rb();
+        });
+      } catch (e) { if (!(e instanceof Rb)) throw e; }
+      assert(kinds.includes('snapshot_sensitive_keys'), `kinds=${kinds.join(',')}`);
+    });
+
+    await it('31) Verify normal أثناء Fixtures: mismatches=0 (تحذيرات DRAFT مسموحة)', async () => {
       const r = await withTransaction((c) => verifyPayrollSnapshotSchema(c, { strict: false }));
       assert(r.mismatches.length === 0, `mismatches=${r.mismatches.length}`);
     });
@@ -642,36 +833,25 @@ async function main() {
     try {
       await cleanupOwned();
       const left = await countOwned();
-      if (left === 0) ok('26) لا سجلات اختبار متبقية');
-      else failed('26) سجلات متبقية', String(left));
-    } catch (e) { failed('26) cleanup', e); }
+      if (left === 0) ok('32) لا سجلات اختبار متبقية');
+      else failed('32) سجلات متبقية', String(left));
+    } catch (e) { failed('32) cleanup', e); }
   }
 
-  await it('27) بعد cleanup: verify snapshot normal/strict', async () => {
+  await it('33) بعد cleanup: verify snapshot normal/strict', async () => {
     const n = await withTransaction((c) => verifyPayrollSnapshotSchema(c, { strict: false }));
     const s = await withTransaction((c) => verifyPayrollSnapshotSchema(c, { strict: true }));
     assert(n.ok && n.mismatches.length === 0, `normal ok=${n.ok}`);
-    // قد توجد تحذيرات draft_has_snapshot من DEMO إن وُجدت — لا نزرع DEMO snapshot
     assert(s.mismatches.length === 0, 'strict بلا mismatches');
-    if (!s.ok) {
-      // مقبول فقط إن كانت تحذيرات غير مملوكة لنا من بيانات أخرى؛ نفشل إن كانت لدينا
-      console.log('  strict warnings:', s.warnings.map((w) => w.kind));
-    }
-    assert(s.ok === true || s.warnings.every((w) => w.kind === 'draft_has_snapshot_artifacts'), 'strict');
-    // إن وُجدت تحذيرات draft من غيرنا ننظف؟ لا — لا نلمس غير owned. نجعل الاختبار يمر إن ok أو فقط تلك التحذيرات من بيانات خارجية.
-    if (!s.ok && s.warnings.some((w) => w.kind !== 'draft_has_snapshot_artifacts')) {
-      throw new Error('strict فشل بتحذيرات غير متوقعة');
-    }
-    // أعد تعريف: نطلب ok=true بعد cleanup لأننا لا نزرع snapshot DEMO
     assert(s.ok === true, `strict يجب أن يمر (warnings=${s.warnings.length})`);
   });
 
-  await it('28) انحدار 9.A.2.1 verify periods/runs', async () => {
+  await it('34) انحدار 9.A.2.1 verify periods/runs', async () => {
     const r = await withTransaction((c) => verifyPayrollPeriodsRuns(c, { strict: false }));
     assert(r.mismatches.length === 0, 'periods mismatches=0');
   });
 
-  await it('29) انحدار 9.A.1 foundation', async () => {
+  await it('35) انحدار 9.A.1 foundation', async () => {
     const r = await withTransaction((c) => verifyPayrollFoundation(c, { strict: false }));
     assert(r.mismatches.length === 0, 'foundation ok');
   });

@@ -1,8 +1,8 @@
 # Payroll 9.A.2.2 — Calculation Snapshot Schema
 
-**الحالة:** جاهز لـ Acceptance Review  
-**Baseline السابق:** `7673aed` (9.A.2.1 Accepted)  
-**المرجع الملزم:** `docs/payroll-9a2-architecture-plan.md`  
+**الحالة:** جاهز لـ Acceptance Review
+**Baseline السابق:** `7673aed` (9.A.2.1 Accepted)
+**المرجع الملزم:** `docs/payroll-9a2-architecture-plan.md`
 **النطاق:** مخطط بيانات لقطة الاحتساب فقط — **بلا محرك Calculate/Recalculate**.
 
 ---
@@ -91,7 +91,7 @@ UNIQUE (
 | `ERROR` | يجب `TRUE` |
 | `WARNING` | يجب `FALSE` |
 
-`issue_code`: uppercase مُطبَّع `^[A-Z][A-Z0-9_]{1,59}$`.  
+`issue_code`: uppercase مُطبَّع `^[A-Z][A-Z0-9_]{1,59}$`.
 لا تخزين Stack/SQL/Request Body. لا Audit لكل Issue في هذه المرحلة.
 
 ---
@@ -168,7 +168,7 @@ npm run accounts:verify-payroll-snapshot-schema
 npm run accounts:verify-payroll-snapshot-schema:strict
 ```
 
-**Normal:** mismatches فقط تفشل.  
+**Normal:** mismatches فقط تفشل.
 **Strict:** يرقّي warnings + unexplained أيضًا.
 
 أمثلة الكشف:
@@ -224,8 +224,8 @@ npm run test:payroll-snapshot-schema
 ## 12. Known limitations
 
 - لا محرك احتساب؛ صفوف DRAFT ذات لقطة = Fixtures/اختبار فقط.
-- `quantity_source` المحجوز يُخزَّن في CHECK لكن Verify يرفضه كـ mismatch.
-- لا Enforcement Immutable كامل قبل 9.A.2.3.
+- `quantity_source` المحجوز: Service يرفضه؛ DB CHECK يسمح للمستقبل؛ Verify يكشف Raw SQL.
+- Mutation على Run `CALCULATED`/`CANCELLED` مرفوضة في خدمات اللقطة (Recalculate في 9.A.2.3).
 - لا UI ولا mutation endpoints عامة للقطة.
 - حقول `college_id_snapshot` مضافة لدعم النطاق الجامعي دون ربط محرك.
 
@@ -238,3 +238,13 @@ npm run test:payroll-snapshot-schema
 - حارس الشخص عبر الفترة (`superseded`)
 - منع `CUSTOM_FORMULA` في الأسطر
 - ERROR ⇒ blocking؛ WARNING ⇒ non-blocking
+
+## 14. Hardening 9A22
+
+- **H1**: `CALCULATED` requires contract.
+- **H2**: Hash recompute on relevant changes.
+- **H4**: Cancel sets `superseded`.
+- **H5**: Reserved qty rejected in service.
+- **H7**: No mutate `CALCULATED` / `CANCELLED`.
+- **H6**: Sensitive keys rejected.
+- No change to migration `096`.

@@ -1,6 +1,8 @@
 /**
  * خدمات داخلية للقطة الاحتساب 9.A.2.2 — Persist/Validate فقط.
  * لا Calculate · لا Scope Resolution · لا تغيير حالة Run · لا Public APIs.
+ *
+ * Hardening 9A22: H1/H2/H3/H5/H6/H7
  */
 import { AccountsHttpError } from './auth';
 import { payrollRunLock } from './accounting-locks';
@@ -14,6 +16,11 @@ import {
   PAYROLL_SNAPSHOT_ENUMS,
   type PayrollPersonSnapshotJson,
 } from './payroll-snapshot-types';
+import {
+  assertCalculatedSnapshotShape,
+  assertNoSensitiveJson,
+  assertSnapshotJsonObject,
+} from './payroll-snapshot-validate';
 import {
   oneOf,
   optionalPayrollUuid,
@@ -44,13 +51,40 @@ function moneySigned(v: unknown, label: string, fallback = '0'): string {
   }
 }
 
-async function assertRunWritable(client: TxClient, runId: string) {
+/** H7: الكتابة/المسح مسموحة فقط قبل الاحتساب النهائي. */
+async function assertRunMutableForArtifacts(client: TxClient, runId: string) {
   await acquirePayrollLocks(client, [payrollRunLock(runId)]);
   const run = await loadPayrollRun(client, runId, true);
   if (run.status === 'CANCELLED') {
-    throw new AccountsHttpError('لا يمكن كتابة لقطة احتساب لتشغيل ملغى', 409);
+    throw new AccountsHttpError('لا يمكن كتابة/مسح لقطة احتساب لتشغيل ملغى', 409);
+  }
+  if (run.status === 'CALCULATED') {
+    throw new AccountsHttpError(
+      'لا يمكن تعديل لقطة احتساب بعد اكتمال الاحتساب؛ استخدم Recalculate لاحقًا',
+      409
+    );
+  }
+  if (run.status !== 'DRAFT' && run.status !== 'CALCULATING') {
+    throw new AccountsHttpError(
+      `لا يمكن كتابة لقطة احتساب لتشغيل في حالة ${run.status}`,
+      409
+    );
   }
   return run;
+}
+
+function resolveSnapshotHash(snap: Record<string, unknown>, provided: unknown): string {
+  const computed = hashPayrollSnapshot(snap);
+  if (provided != null && String(provided).trim() !== '') {
+    const incoming = String(provided).trim();
+    if (!isPayrollSnapshotHash(incoming)) {
+      throw new AccountsHttpError('بصمة اللقطة غير صالحة (SHA-256 hex بطول 64)', 400);
+    }
+    if (incoming !== computed) {
+      throw new AccountsHttpError('بصمة اللقطة لا تطابق محتوى snapshot_json', 400);
+    }
+  }
+  return computed;
 }
 
 export type InsertRunPersonInput = {
@@ -82,7 +116,7 @@ export async function insertRunPersonSnapshot(
   client: TxClient,
   input: InsertRunPersonInput
 ): Promise<{ id: string }> {
-  const run = await assertRunWritable(client, input.payroll_run_id);
+  const run = await assertRunMutableForArtifacts(client, input.payroll_run_id);
   const personId = requirePayrollUuid(input.payroll_person_id, 'معرّف الشخص');
   const contractId = optionalPayrollUuid(input.payroll_contract_id, 'معرّف العقد');
 
@@ -109,23 +143,29 @@ export async function insertRunPersonSnapshot(
     ? 'PENDING'
     : oneOf(input.calculation_status, PAYROLL_SNAPSHOT_ENUMS.CALCULATION_STATUS, 'حالة احتساب الشخص');
 
+  // H1: CALCULATED يتطلب عقدًا
+  if (status === 'CALCULATED' && !contractId) {
+    throw new AccountsHttpError(
+      'لا يمكن وضع شخص بحالة CALCULATED بدون عقد مرتبط',
+      400
+    );
+  }
+
   const currency = String(input.currency_code ?? run.currency_code).trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) throw new AccountsHttpError('عملة اللقطة غير صالحة', 400);
   if (currency !== run.currency_code) {
     throw new AccountsHttpError('عملة لقطة الشخص يجب أن تطابق عملة التشغيل', 400);
   }
 
-  const snap = input.snapshot_json;
-  if (snap == null || typeof snap !== 'object' || Array.isArray(snap)) {
-    throw new AccountsHttpError('snapshot_json مطلوب ويجب أن يكون كائنًا', 400);
+  assertSnapshotJsonObject(input.snapshot_json);
+  const snap = input.snapshot_json as Record<string, unknown>;
+  assertNoSensitiveJson(snap, 'snapshot_json');
+
+  if (status === 'CALCULATED') {
+    assertCalculatedSnapshotShape(snap);
   }
-  const hash =
-    input.snapshot_hash == null || String(input.snapshot_hash).trim() === ''
-      ? hashPayrollSnapshot(snap)
-      : String(input.snapshot_hash).trim();
-  if (!isPayrollSnapshotHash(hash)) {
-    throw new AccountsHttpError('بصمة اللقطة غير صالحة (SHA-256 hex بطول 64)', 400);
-  }
+
+  const hash = resolveSnapshotHash(snap, input.snapshot_hash);
 
   const warn = Number(input.warning_count ?? 0);
   const err = Number(input.error_count ?? 0);
@@ -205,7 +245,7 @@ export async function insertRunLine(
   client: TxClient,
   input: InsertRunLineInput
 ): Promise<{ id: string }> {
-  const run = await assertRunWritable(client, input.payroll_run_id);
+  const run = await assertRunMutableForArtifacts(client, input.payroll_run_id);
   const runPersonId = requirePayrollUuid(input.payroll_run_person_id, 'معرّف شخص التشغيل');
   const componentId = requirePayrollUuid(input.payroll_component_id, 'معرّف المكوّن');
 
@@ -226,7 +266,18 @@ export async function insertRunLine(
 
   let qtySource: string | null = null;
   if (input.quantity_source != null && String(input.quantity_source).trim() !== '') {
-    qtySource = oneOf(input.quantity_source, PAYROLL_SNAPSHOT_ENUMS.QUANTITY_SOURCE, 'مصدر الكمية');
+    qtySource = oneOf(
+      input.quantity_source,
+      PAYROLL_SNAPSHOT_ENUMS.QUANTITY_SOURCE,
+      'مصدر الكمية'
+    );
+    // H5: المنفّذ حاليًا فقط
+    if (!(PAYROLL_SNAPSHOT_ENUMS.QUANTITY_SOURCE_IMPLEMENTED as readonly string[]).includes(qtySource)) {
+      throw new AccountsHttpError(
+        `مصدر الكمية (${qtySource}) محجوز وغير مسموح في هذه المرحلة؛ استخدم MANUAL أو ASSIGNMENT فقط`,
+        400
+      );
+    }
   }
 
   const lineSource = input.line_source == null || String(input.line_source).trim() === ''
@@ -246,6 +297,10 @@ export async function insertRunLine(
 
   const seq = input.sequence == null || input.sequence === '' ? 1 : Number(input.sequence);
   if (!Number.isInteger(seq) || seq < 1) throw new AccountsHttpError('تسلسل السطر غير صالح', 400);
+
+  if (input.calculation_details_json != null) {
+    assertNoSensitiveJson(input.calculation_details_json, 'calculation_details_json');
+  }
 
   const optMoney = (v: unknown, label: string): string | null => {
     if (v == null || v === '') return null;
@@ -315,7 +370,7 @@ export async function insertRunIssue(
   client: TxClient,
   input: InsertRunIssueInput
 ): Promise<{ id: string }> {
-  const run = await assertRunWritable(client, input.payroll_run_id);
+  const run = await assertRunMutableForArtifacts(client, input.payroll_run_id);
   const severity = oneOf(input.severity, PAYROLL_SNAPSHOT_ENUMS.ISSUE_SEVERITY, 'شدة المشكلة');
   const isBlocking = severity === 'ERROR';
   const code = requiredText(input.issue_code, 60, 'رمز المشكلة').toUpperCase();
@@ -334,6 +389,10 @@ export async function insertRunIssue(
     if (rp.rows[0].payroll_run_id !== run.id) {
       throw new AccountsHttpError('شخص التشغيل لا يعود لنفس التشغيل', 400);
     }
+  }
+
+  if (input.details_json != null) {
+    assertNoSensitiveJson(input.details_json, 'details_json');
   }
 
   const r = await txQuery<{ id: string }>(
@@ -364,12 +423,12 @@ export async function insertRunIssue(
   return r.rows[0];
 }
 
-/** يحذف كل آثار اللقطة لتشغيل داخل Transaction (للاختبارات / Recalculate لاحقًا). لا يغيّر حالة Run. */
+/** يحذف آثار اللقطة لتشغيل DRAFT/CALCULATING فقط. لا يغيّر حالة Run. */
 export async function clearRunCalculationArtifacts(
   client: TxClient,
   runId: string
 ): Promise<void> {
-  const run = await assertRunWritable(client, runId);
+  const run = await assertRunMutableForArtifacts(client, runId);
   await txQuery(client, `DELETE FROM accounts.payroll_run_issues WHERE payroll_run_id=$1::uuid`, [run.id]);
   await txQuery(client, `DELETE FROM accounts.payroll_run_lines WHERE payroll_run_id=$1::uuid`, [run.id]);
   await txQuery(client, `DELETE FROM accounts.payroll_run_people WHERE payroll_run_id=$1::uuid`, [run.id]);

@@ -305,6 +305,14 @@ export async function cancelPayrollRun(
   if (row.status !== 'DRAFT' && row.status !== 'CALCULATED') {
     throw new AccountsHttpError('لا يمكن إلغاء التشغيل في حالته الحالية', 409);
   }
+  // H4: تحرير حارس الشخص الحيّ قبل إلغاء التشغيل — لا حذف للقطات
+  await txQuery(
+    client,
+    `UPDATE accounts.payroll_run_people
+     SET superseded = TRUE, updated_by = $2::uuid, updated_at = NOW(), version = version + 1
+     WHERE payroll_run_id = $1::uuid AND superseded = FALSE`,
+    [row.id, p.userId]
+  );
   const r = await txQuery<PayrollRunRow>(
     client,
     `UPDATE accounts.payroll_runs SET status='CANCELLED', cancelled_at=NOW(), cancelled_by=$2::uuid,

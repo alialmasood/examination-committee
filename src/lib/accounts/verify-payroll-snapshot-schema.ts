@@ -1,8 +1,10 @@
 /**
  * تحقق مخطط لقطة الاحتساب 9.A.2.2 — سلامة الجداول بلا محرك.
+ * Hardening 9A22: H1/H2/H6
  */
-import { isPayrollSnapshotHash } from './payroll-snapshot-hash';
+import { hashPayrollSnapshot, isPayrollSnapshotHash } from './payroll-snapshot-hash';
 import { PAYROLL_SNAPSHOT_ENUMS } from './payroll-snapshot-types';
+import { findSensitiveJsonKeys } from './payroll-snapshot-validate';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
 
@@ -38,8 +40,6 @@ export async function verifyPayrollSnapshotSchema(
     mismatches.push({ kind, detail, entity_id });
   const warn = (kind: string, detail: string, entity_id?: string) =>
     warnings.push({ kind, detail, entity_id });
-  const unexp = (kind: string, detail: string, entity_id?: string) =>
-    unexplained.push({ kind, detail, entity_id });
 
   const runs = await txQuery<{
     id: string; status: string; currency_code: string; payroll_period_id: string;
@@ -112,23 +112,56 @@ export async function verifyPayrollSnapshotSchema(
         fail('run_person_contract_mismatch', 'العقد لا يعود لنفس الشخص', p.id);
       }
     }
+    // H1
+    if (p.calculation_status === 'CALCULATED' && !p.payroll_contract_id) {
+      fail('run_person_calculated_no_contract', 'CALCULATED بلا عقد', p.id);
+    }
     if (Number(p.gross_amount) < 0 || Number(p.deductions_amount) < 0 || Number(p.basic_amount) < 0) {
       fail('run_person_negative_non_net', 'مبلغ غير صافٍ سالب', p.id);
     }
-    if (p.calculation_status === 'CALCULATED' && !p.snapshot_hash) {
-      fail('run_person_calculated_no_hash', 'CALCULATED بلا بصمة', p.id);
-    }
-    // مفاتيح حساسة محظورة في JSON
+
     const json = typeof p.snapshot_json === 'string' ? safeParse(p.snapshot_json) : p.snapshot_json;
-    if (json && typeof json === 'object') {
-      const sensitive = findSensitiveKeys(json as Record<string, unknown>);
+    if (json == null || typeof json !== 'object' || Array.isArray(json)) {
+      fail('run_person_snapshot_not_object', 'snapshot_json ليس كائنًا', p.id);
+    } else {
+      const obj = json as Record<string, unknown>;
+      // H2: إعادة حساب البصمة
+      try {
+        const expected = hashPayrollSnapshot(obj);
+        if (p.snapshot_hash !== expected) {
+          fail('run_person_stale_hash', 'بصمة اللقطة لا تطابق المحتوى', p.id);
+        }
+      } catch {
+        fail('run_person_hash_recompute_failed', 'تعذّر إعادة حساب بصمة اللقطة', p.id);
+      }
+      if (p.calculation_status === 'CALCULATED') {
+        if (Object.keys(obj).length === 0) {
+          fail('run_person_calculated_empty_json', 'CALCULATED بلقطة فارغة', p.id);
+        }
+        for (const k of [
+          'schema_version', 'calculation_date', 'currency_code', 'person', 'contract', 'assignments', 'scope',
+        ]) {
+          if (!(k in obj)) fail('run_person_calculated_missing_field', `حقل ناقص: ${k}`, p.id);
+        }
+        if (!('component_assignment_ids' in obj) && !('component_assignments' in obj)) {
+          fail('run_person_calculated_missing_field', 'حقل ناقص: component_assignment_ids', p.id);
+        }
+        if (obj.contract == null) {
+          fail('run_person_calculated_null_contract_json', 'CALCULATED بلا عقد في JSON', p.id);
+        }
+      }
+      // H6: حساسية = mismatch في normal
+      const sensitive = findSensitiveJsonKeys(obj);
       if (sensitive.length) {
-        unexp('snapshot_sensitive_keys', `مفاتيح حسّاسة في اللقطة: ${sensitive.join(',')}`, p.id);
+        fail(
+          'snapshot_sensitive_keys',
+          `مفاتيح حسّاسة في اللقطة: ${sensitive.slice(0, 8).join(',')}`,
+          p.id
+        );
       }
     }
   }
 
-  // تكرار شخص في نفس التشغيل (يجب أن يمنعه DB؛ كشف دفاعي)
   const dupPerson = await txQuery<{ payroll_run_id: string; payroll_person_id: string; n: number }>(
     client,
     `SELECT payroll_run_id, payroll_person_id, COUNT(*)::int n
@@ -139,7 +172,6 @@ export async function verifyPayrollSnapshotSchema(
     fail('run_person_duplicate', `شخص مكرر في التشغيل (${row.n})`, row.payroll_run_id);
   }
 
-  // حارس الفترة الحيّ
   const liveDup = await txQuery<{ payroll_period_id: string; payroll_person_id: string; n: number }>(
     client,
     `SELECT payroll_period_id, payroll_person_id, COUNT(*)::int n
@@ -150,14 +182,12 @@ export async function verifyPayrollSnapshotSchema(
     fail('run_person_live_period_dup', `شخص حيّ مكرر لنفس الفترة (${row.n})`, row.payroll_period_id);
   }
 
-  // CALCULATED run بلا أشخاص
   for (const run of runs.rows) {
     if (run.status === 'CALCULATED' && !(peopleByRun.get(run.id)?.length)) {
       fail('calculated_run_no_people', 'تشغيل CALCULATED بلا أشخاص لقطة', run.id);
     }
   }
 
-  // ── Lines ──────────────────────────────────────────────────
   const lines = await txQuery<{
     id: string; payroll_run_id: string; payroll_run_person_id: string; payroll_component_id: string;
     payroll_assignment_id: string | null; payroll_component_assignment_id: string | null;
@@ -220,7 +250,6 @@ export async function verifyPayrollSnapshotSchema(
     );
   }
 
-  // تكرار هوية المصدر
   const dupLines = await txQuery<{ n: number }>(
     client,
     `SELECT COUNT(*)::int n FROM (
@@ -235,29 +264,27 @@ export async function verifyPayrollSnapshotSchema(
     fail('run_line_source_dup', `هويات مصدر مكررة (${dupLines.rows[0].n})`);
   }
 
-  // تطابق مجاميع الأسطر مع إجماليات الشخص (عند وجود أسطر)
   for (const [personId, sum] of lineTotalsByPerson) {
     const rp = peopleRowById.get(personId);
     if (!rp) continue;
     const personGross = Number(rp.gross_amount);
-    // لا نفرض تطابقًا صارمًا بين gross والأسطر في Fixtures (قد تكون استقطاعات منفصلة)
-    // لكن إن كان هناك أسطر وصافي/إجمالي صفر والشخص CALCULATED — تحذير
     if (rp.calculation_status === 'CALCULATED' && Math.abs(personGross - sum) > 0.001 && personGross !== 0) {
       warn(
         'run_person_line_total_drift',
-        `مجموع الأسطر (${sum}) لا يطابق إجمالي_amount (${personGross}) — راجع Fixtures/محرك`,
+        `مجموع الأسطر (${sum}) لا يطابق الإجمالي_amount (${personGross}) — راجع Fixtures/محرك`,
         personId
       );
     }
   }
 
-  // ── Issues ─────────────────────────────────────────────────
   const issues = await txQuery<{
     id: string; payroll_run_id: string; payroll_run_person_id: string | null;
     severity: string; issue_code: string; is_blocking: boolean; message_ar: string;
+    details_json: unknown;
   }>(
     client,
-    `SELECT id, payroll_run_id, payroll_run_person_id, severity, issue_code, is_blocking, message_ar
+    `SELECT id, payroll_run_id, payroll_run_person_id, severity, issue_code, is_blocking, message_ar,
+            details_json
      FROM accounts.payroll_run_issues`
   );
   for (const iss of issues.rows) {
@@ -277,6 +304,13 @@ export async function verifyPayrollSnapshotSchema(
       if (!rp) fail('run_issue_person_orphan', 'شخص يتيم', iss.id);
       else if (rp.payroll_run_id !== iss.payroll_run_id) {
         fail('run_issue_run_mismatch', 'شخص المشكلة لا يعود لنفس التشغيل', iss.id);
+      }
+    }
+    if (iss.details_json != null) {
+      const details = typeof iss.details_json === 'string' ? safeParse(iss.details_json) : iss.details_json;
+      const sens = findSensitiveJsonKeys(details);
+      if (sens.length) {
+        fail('run_issue_sensitive_keys', `مفاتيح حسّاسة في details_json: ${sens.slice(0, 8).join(',')}`, iss.id);
       }
     }
   }
@@ -299,17 +333,4 @@ function safeParse(s: string): unknown {
   } catch {
     return null;
   }
-}
-
-function findSensitiveKeys(obj: Record<string, unknown>, path = ''): string[] {
-  const hit: string[] = [];
-  const banned = /bank|iban|account_number|password|secret|ssn|national_id|card_number/i;
-  for (const [k, v] of Object.entries(obj)) {
-    const p = path ? `${path}.${k}` : k;
-    if (banned.test(k)) hit.push(p);
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      hit.push(...findSensitiveKeys(v as Record<string, unknown>, p));
-    }
-  }
-  return hit;
 }
