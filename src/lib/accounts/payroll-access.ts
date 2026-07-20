@@ -11,7 +11,7 @@
  *   accounts_admin    → جميع الصلاحيات (بما فيها payroll_calculate و payroll_cancel_runs)
  *
  * قواعد 9.A.2.1:
- *   - payroll_calculate محجوزة كقدرة (لا endpoint احتساب فعلي بعد) — admin فقط.
+ *   - payroll_calculate — admin فقط (POST .../runs/[id]/calculate).
  *   - payroll_cancel_runs (إلغاء التشغيل) — admin فقط.
  *   - clerk لا يملك calculate ولا cancel.
  *   - العضوية المجرّدة → VIEW_ONLY فقط (عرض السجل + عرض التشغيلات).

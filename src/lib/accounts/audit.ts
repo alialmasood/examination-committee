@@ -179,7 +179,11 @@ export type AuditAction =
   | 'payroll_run.cancelled'
   | 'payroll_run.scope_member_added'
   | 'payroll_run.scope_member_removed'
-  | 'payroll_run.scope_members_replaced';
+  | 'payroll_run.scope_members_replaced'
+  | 'payroll_run.calculation_started'
+  | 'payroll_run.calculated'
+  | 'payroll_run.calculation_blocked'
+  | 'payroll_run.calculation_failed';
 
 export async function writeFinancialAudit(
   client: TxClient,

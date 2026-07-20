@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { AccountsHttpError, isAuthFailure, jsonError, jsonSuccess, mapPgError, requireAccountsAccess } from '@/src/lib/accounts/auth';
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
 import { PAYROLL_CAPABILITIES, assertPayrollCapability } from '@/src/lib/accounts/payroll-access';
+import { buildRunCalculationSummary } from '@/src/lib/accounts/payroll-calculation-results';
 import { loadPayrollRun, serializePayrollRun, updatePayrollRun } from '@/src/lib/accounts/payroll-runs';
 import { listScopeMembers, serializeScopeMember } from '@/src/lib/accounts/payroll-run-scope';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
@@ -16,7 +17,12 @@ export async function GET(request: NextRequest, context: Ctx) {
     const data = await withTransaction(async (client) => {
       const row = await loadPayrollRun(client, id);
       const members = row.scope_type === 'PERSON_LIST' ? await listScopeMembers(client, id) : [];
-      return { run: serializePayrollRun(row), scope_members: members.map(serializeScopeMember) };
+      const calculation_summary = await buildRunCalculationSummary(client, id);
+      return {
+        run: serializePayrollRun(row),
+        scope_members: members.map(serializeScopeMember),
+        calculation_summary,
+      };
     });
     return jsonSuccess({ data });
   } catch (error) { return error instanceof AccountsHttpError ? jsonError(error.message, error.status) : mapPgError(error); }

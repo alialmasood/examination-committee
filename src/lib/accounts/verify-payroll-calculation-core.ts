@@ -43,8 +43,6 @@ export async function verifyPayrollCalculationCore(
   const warnings: CalcVerifyIssue[] = [];
   const fail = (kind: string, detail: string, entity_id?: string) =>
     mismatches.push({ kind, detail, entity_id });
-  const warn = (kind: string, detail: string, entity_id?: string) =>
-    warnings.push({ kind, detail, entity_id });
 
   try {
     await probeTransactionRollback(client);
@@ -99,11 +97,15 @@ export async function verifyPayrollCalculationCore(
     net_total: string;
     snapshot_hash: string | null;
     calculation_attempt_number: number;
+    calculated_at: Date | string | null;
+    calculation_request_id: string | null;
+    last_calculation_request_id: string | null;
   }>(
     client,
     `SELECT id, status, currency_code, people_count, warning_count, error_count,
             gross_total::text, deduction_total::text, employer_contribution_total::text, net_total::text,
-            snapshot_hash, calculation_attempt_number
+            snapshot_hash, calculation_attempt_number, calculated_at,
+            calculation_request_id, last_calculation_request_id
      FROM accounts.payroll_runs
      WHERE status = 'CALCULATED'`
   );
@@ -121,6 +123,23 @@ export async function verifyPayrollCalculationCore(
     }
     if (run.calculation_attempt_number < 1) {
       fail('calc_attempt', 'calculation_attempt_number < 1 بعد CALCULATED', run.id);
+    }
+    if (run.calculated_at == null) {
+      fail('calculated_at_missing', 'تشغيل CALCULATED بلا calculated_at', run.id);
+    }
+    if (run.last_calculation_request_id != null && run.calculation_request_id != null) {
+      if (
+        String(run.last_calculation_request_id).toLowerCase() !==
+        String(run.calculation_request_id).toLowerCase()
+      ) {
+        fail(
+          'calc_request_id_mismatch',
+          'last_calculation_request_id لا يطابق calculation_request_id',
+          run.id
+        );
+      }
+    } else if (run.last_calculation_request_id == null) {
+      fail('last_calc_request_missing', 'CALCULATED بلا last_calculation_request_id', run.id);
     }
     if (run.snapshot_hash && !isPayrollSnapshotHash(run.snapshot_hash)) {
       fail('run_snapshot_hash', 'بصمة تشغيل غير صالحة', run.id);
@@ -280,14 +299,11 @@ export async function verifyPayrollCalculationCore(
     }
 
     if (errorPeople !== Number(run.error_count)) {
-      // error_count قد يعدّ Issues لا أشخاص — نقارن بعدد أشخاص ERROR كتحذير إن اختلف
-      if (errorPeople !== Number(run.error_count)) {
-        warn(
-          'error_count_vs_people',
-          `error_count=${run.error_count} vs ERROR people=${errorPeople}`,
-          run.id
-        );
-      }
+      fail(
+        'error_count_vs_people',
+        `error_count=${run.error_count} vs ERROR people=${errorPeople}`,
+        run.id
+      );
     }
 
     const expectGross = sumMoney(grossParts);
