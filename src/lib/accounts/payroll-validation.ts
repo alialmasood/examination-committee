@@ -436,6 +436,7 @@ export const PAYROLL_ENUMS = {
     'CALCULATED',
     'UNDER_REVIEW',
     'APPROVED',
+    'POSTED',
     'CANCELLED',
   ] as const,
   SCOPE_TYPE: ['ALL', 'COLLEGE', 'DEPARTMENT', 'COST_CENTER', 'PERSON_LIST'] as const,

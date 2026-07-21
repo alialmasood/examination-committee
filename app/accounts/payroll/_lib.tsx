@@ -339,6 +339,7 @@ export const RUN_STATUS: Record<string, string> = {
   CALCULATED: 'محتسَب',
   UNDER_REVIEW: 'قيد المراجعة',
   APPROVED: 'معتمد',
+  POSTED: 'مرحّل',
   CANCELLED: 'ملغى',
 };
 

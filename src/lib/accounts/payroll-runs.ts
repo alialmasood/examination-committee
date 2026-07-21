@@ -63,6 +63,11 @@ export type PayrollRunRow = {
   approved_snapshot_hash: string | null;
   approved_at: Date | string | null;
   approved_by: string | null;
+  /** 9.C.1 — ترحيل */
+  posted_at: Date | string | null;
+  posted_by: string | null;
+  posting_journal_entry_id: string | null;
+  posted_snapshot_hash: string | null;
   version: number;
   created_by: string;
   updated_by: string | null;

@@ -55,6 +55,8 @@ export const PAYROLL_CAPABILITIES = {
   APPROVE: 'payroll_approve',
   REJECT: 'payroll_reject',
   VIEW_APPROVAL_HISTORY: 'payroll_view_approval_history',
+  /** 9.C.1 — ترحيل تشغيل معتمد إلى الأستاذ العام */
+  POST: 'payroll_post',
   ADMIN: 'payroll_admin',
 } as const;
 
@@ -93,6 +95,7 @@ const ADMIN_CAPS = new Set<string>([
   PAYROLL_CAPABILITIES.APPROVE,
   PAYROLL_CAPABILITIES.REJECT,
   PAYROLL_CAPABILITIES.VIEW_APPROVAL_HISTORY,
+  PAYROLL_CAPABILITIES.POST,
   PAYROLL_CAPABILITIES.ADMIN,
 ]);
 
