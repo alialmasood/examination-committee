@@ -37,7 +37,7 @@ export function assertPayrollRunReadyForPosting(
   if (Number(run.error_count) > 0) {
     throw new AccountsHttpError(
       'لا يمكن ترحيل تشغيل يحتوي على أخطاء احتساب — راجع المشكلات أولاً',
-      409
+      422
     );
   }
   if (!isPayrollSnapshotHash(run.snapshot_hash)) {
@@ -74,7 +74,7 @@ export function assertPayrollRunReadyForPosting(
   if (blocking != null && blocking > 0) {
     throw new AccountsHttpError(
       'لا يمكن ترحيل تشغيل يحتوي على مشكلات حاجبة',
-      409
+      422
     );
   }
 }

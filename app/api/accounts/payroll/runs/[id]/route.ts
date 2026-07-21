@@ -4,6 +4,7 @@ import { writeFinancialAudit } from '@/src/lib/accounts/audit';
 import { PAYROLL_CAPABILITIES, assertPayrollCapability, hasPayrollCapability } from '@/src/lib/accounts/payroll-access';
 import { buildRunCalculationSummary } from '@/src/lib/accounts/payroll-calculation-results';
 import { isSupportedPayrollCurrency } from '@/src/lib/accounts/payroll-calculation-formulas';
+import { buildPayrollPostingSection } from '@/src/lib/accounts/payroll-posting-preview';
 import { loadLatestRecalculationSummary } from '@/src/lib/accounts/payroll-recalculate-history';
 import { loadPayrollRun, serializePayrollRun, updatePayrollRun } from '@/src/lib/accounts/payroll-runs';
 import { listScopeMembers, serializeScopeMember } from '@/src/lib/accounts/payroll-run-scope';
@@ -52,6 +53,11 @@ export async function GET(request: NextRequest, context: Ctx) {
         auth.user.id,
         PAYROLL_CAPABILITIES.VIEW_APPROVAL_HISTORY
       );
+      const canPostCap = await hasPayrollCapability(
+        client,
+        auth.user.id,
+        PAYROLL_CAPABILITIES.POST
+      );
 
       const blockingIssues = await txQuery<{ n: number }>(
         client,
@@ -98,26 +104,33 @@ export async function GET(request: NextRequest, context: Ctx) {
         row.status === 'UNDER_REVIEW' &&
         approval_blockers.filter((b) => b !== 'SOD_SUBMITTER').length === 0;
 
+      const isPosted = row.status === 'POSTED';
       const can_recalculate =
+        !isPosted &&
         canRecalcCap &&
         row.status === 'CALCULATED' &&
         isSupportedPayrollCurrency(row.currency_code);
 
       const can_submit_for_review =
+        !isPosted &&
         canSubmitCap &&
         row.status === 'CALCULATED' &&
         readiness_for_review;
 
       const can_approve =
+        !isPosted &&
         canApproveCap &&
         row.status === 'UNDER_REVIEW' &&
         !is_current_user_submitter &&
         readiness_for_approval;
 
       const can_reject =
+        !isPosted &&
         canRejectCap &&
         row.status === 'UNDER_REVIEW' &&
         !is_current_user_submitter;
+
+      const posting = await buildPayrollPostingSection(client, row, { canPostCap });
 
       let submitted_by: { id: string; display_name: string } | null = null;
       let submit_comment: string | null = null;
@@ -275,6 +288,7 @@ export async function GET(request: NextRequest, context: Ctx) {
           is_current_user_submitter,
           segregation_of_duties_blocked,
         },
+        posting,
       };
     });
     return jsonSuccess({ data });

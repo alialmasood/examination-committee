@@ -234,3 +234,97 @@ export async function verifyPayrollPosting(
     },
   };
 }
+
+/**
+ * فحوصات DTO العامة لترحيل الرواتب (استجابة POST/GET) — اختيارية ومتوافقة مع الخلف.
+ * لا تستبدل verifyPayrollPosting؛ تُستدعى من اختبارات التكامل عند توفر DTO.
+ */
+export type PayrollPostingPublicDtoCheckInput = {
+  /** جسم نجاح POST …/post أو كتلة data.posting من GET */
+  dto: Record<string, unknown>;
+  /** صف التشغيل من DB بعد الترحيل */
+  run?: {
+    id: string;
+    status: string;
+    version: number;
+    posting_journal_entry_id?: string | null;
+    posted_snapshot_hash?: string | null;
+  };
+  /** هل هذا GET معاينة بعد POSTED؟ */
+  expect_posted_section?: boolean;
+  /** هل هذا نجاح ترحيل جديد أم replay؟ */
+  expect_replay?: boolean;
+};
+
+export function verifyPayrollPostingPublicDto(
+  input: PayrollPostingPublicDtoCheckInput
+): PayrollPostingVerifyIssue[] {
+  const issues: PayrollPostingVerifyIssue[] = [];
+  const fail = (kind: string, detail: string) => issues.push({ kind, detail });
+  const dto = input.dto ?? {};
+  const blob = JSON.stringify(dto);
+
+  if (/request_key_hash|request_payload_hash|idempotency_key[^_]/i.test(blob)) {
+    fail('dto_leaks_request_hashes', 'DTO يعرض hashes طلب أو مفتاح خام');
+  }
+  if (/snapshot_json/i.test(blob)) {
+    fail('dto_leaks_snapshot_json', 'DTO يعرض snapshot_json');
+  }
+
+  if (input.expect_posted_section) {
+    if (dto.can_post !== false && dto.is_posted !== true) {
+      // GET بعد POSTED: can_post=false و is_posted=true
+      if (dto.is_posted === true && dto.can_post !== false) {
+        fail('posted_can_post_true', 'بعد POSTED يجب can_post=false');
+      }
+    }
+    if (dto.is_posted === true) {
+      if (dto.can_post !== false) fail('posted_can_post_true', 'بعد POSTED يجب can_post=false');
+      const je = dto.journal_entry as Record<string, unknown> | null | undefined;
+      if (!je?.id) fail('posted_missing_journal_dto', 'قسم الترحيل بلا journal_entry.id');
+      if (je && !String(je.display_url ?? '').includes('/accounts/entries')) {
+        fail('posted_bad_journal_url', 'display_url غير صالح');
+      }
+    }
+  }
+
+  if (input.expect_replay === true) {
+    if (dto.idempotent_replay !== true && (dto as { replayed?: boolean }).replayed !== true) {
+      const nested = dto.data as Record<string, unknown> | undefined;
+      const posting = nested?.posting as Record<string, unknown> | undefined;
+      if (posting?.replayed !== true && dto.idempotent_replay !== true) {
+        fail('replay_flag_missing', 'توقّع idempotent_replay/replayed');
+      }
+    }
+  }
+
+  if (input.run && input.run.status === 'POSTED') {
+    const runDto = (dto.run ?? dto) as Record<string, unknown>;
+    if (runDto.status != null && String(runDto.status) !== 'POSTED') {
+      fail('dto_status_mismatch', `DTO.status=${runDto.status} ≠ POSTED`);
+    }
+    if (
+      runDto.version != null &&
+      Number(runDto.version) !== Number(input.run.version)
+    ) {
+      fail('dto_version_mismatch', 'version في DTO ≠ DB');
+    }
+    const posting = (dto.posting ??
+      (dto.data as Record<string, unknown> | undefined)?.posting) as
+      | Record<string, unknown>
+      | undefined;
+    const je =
+      (posting?.journal_entry as Record<string, unknown> | undefined) ??
+      posting;
+    const jeId = je?.id ?? posting?.journal_entry_id;
+    if (
+      input.run.posting_journal_entry_id &&
+      jeId != null &&
+      String(jeId) !== String(input.run.posting_journal_entry_id)
+    ) {
+      fail('dto_journal_mismatch', 'journal id في DTO ≠ DB');
+    }
+  }
+
+  return issues;
+}

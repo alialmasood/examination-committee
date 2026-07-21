@@ -83,6 +83,7 @@ export function serializePayrollRun(row: PayrollRunRow) {
     cancelled_at: iso(row.cancelled_at),
     submitted_for_review_at: iso(row.submitted_for_review_at),
     approved_at: iso(row.approved_at),
+    posted_at: iso(row.posted_at),
     approval_cycle: Number(row.approval_cycle ?? 0),
     created_at: iso(row.created_at)!,
     updated_at: iso(row.updated_at)!,
@@ -348,6 +349,9 @@ export async function cancelPayrollRun(
   }
   if (row.status === 'APPROVED') {
     throw new AccountsHttpError('لا يمكن إلغاء تشغيل معتمد', 409);
+  }
+  if (row.status === 'POSTED') {
+    throw new AccountsHttpError('لا يمكن إلغاء تشغيل مرحّل محاسبياً', 409);
   }
   if (row.status !== 'DRAFT' && row.status !== 'CALCULATED') {
     throw new AccountsHttpError('لا يمكن إلغاء التشغيل في حالته الحالية', 409);
