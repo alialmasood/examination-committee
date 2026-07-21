@@ -1,16 +1,16 @@
-import bcrypt from 'bcrypt';
+﻿import bcrypt from 'bcrypt';
 import { query } from './db';
 
-// دالة لإنشاء مستخدم إداري أولي
+// ط¯ط§ظ„ط© ظ„ط¥ظ†ط´ط§ط، ظ…ط³طھط®ط¯ظ… ط¥ط¯ط§ط±ظٹ ط£ظˆظ„ظٹ
 export async function seedAdmin(): Promise<void> {
   try {
-    console.log('بدء إنشاء المستخدم الإداري...');
+    console.log('ط¨ط¯ط، ط¥ظ†ط´ط§ط، ط§ظ„ظ…ط³طھط®ط¯ظ… ط§ظ„ط¥ط¯ط§ط±ظٹ...');
 
-    // تشفير كلمة المرور
+    // طھط´ظپظٹط± ظƒظ„ظ…ط© ط§ظ„ظ…ط±ظˆط±
     const password = 'admin123';
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // إنشاء المستخدم الإداري
+    // ط¥ظ†ط´ط§ط، ط§ظ„ظ…ط³طھط®ط¯ظ… ط§ظ„ط¥ط¯ط§ط±ظٹ
     const userResult = await query(
       `INSERT INTO student_affairs.users 
        (id, username, password_hash, full_name, email, is_active, created_at)
@@ -21,43 +21,43 @@ export async function seedAdmin(): Promise<void> {
        email = EXCLUDED.email,
        is_active = EXCLUDED.is_active
        RETURNING id`,
-      ['admin', hashedPassword, 'المدير العام', 'admin@college.edu', true]
+      ['admin', hashedPassword, 'ط§ظ„ظ…ط¯ظٹط± ط§ظ„ط¹ط§ظ…', 'admin@college.edu', true]
     );
 
     const userId = userResult.rows[0].id;
-    console.log(`تم إنشاء/تحديث المستخدم الإداري (ID: ${userId})`);
+    console.log(`طھظ… ط¥ظ†ط´ط§ط،/طھط­ط¯ظٹط« ط§ظ„ظ…ط³طھط®ط¯ظ… ط§ظ„ط¥ط¯ط§ط±ظٹ (ID: ${userId})`);
 
-    // ربط المستخدم بالأنظمة
+    // ط±ط¨ط· ط§ظ„ظ…ط³طھط®ط¯ظ… ط¨ط§ظ„ط£ظ†ط¸ظ…ط©
     const systems = ['STUDENT_AFFAIRS', 'EXAM_COMMITTEE'];
     
     for (const systemCode of systems) {
-      // الحصول على system_id
+      // ط§ظ„ط­طµظˆظ„ ط¹ظ„ظ‰ system_id
       const systemResult = await query(
         'SELECT id FROM platform.systems WHERE code = $1',
         [systemCode]
       );
 
       if (systemResult.rows.length === 0) {
-        console.log(`تحذير: النظام ${systemCode} غير موجود`);
+        console.log(`طھط­ط°ظٹط±: ط§ظ„ظ†ط¸ط§ظ… ${systemCode} ط؛ظٹط± ظ…ظˆط¬ظˆط¯`);
         continue;
       }
 
       const systemId = systemResult.rows[0].id;
 
-      // الحصول على role_id (admin)
+      // ط§ظ„ط­طµظˆظ„ ط¹ظ„ظ‰ role_id (admin)
       const roleResult = await query(
         'SELECT id FROM student_affairs.roles WHERE code = $1',
         ['admin']
       );
 
       if (roleResult.rows.length === 0) {
-        console.log(`تحذير: الدور admin غير موجود`);
+        console.log(`طھط­ط°ظٹط±: ط§ظ„ط¯ظˆط± admin ط؛ظٹط± ظ…ظˆط¬ظˆط¯`);
         continue;
       }
 
       const roleId = roleResult.rows[0].id;
 
-      // ربط المستخدم بالنظام
+      // ط±ط¨ط· ط§ظ„ظ…ط³طھط®ط¯ظ… ط¨ط§ظ„ظ†ط¸ط§ظ…
       await query(
         `INSERT INTO platform.user_system_roles (user_id, system_id, role_id)
          VALUES ($1, $2, $3)
@@ -65,43 +65,43 @@ export async function seedAdmin(): Promise<void> {
         [userId, systemId, roleId]
       );
 
-      console.log(`تم ربط المستخدم بالنظام ${systemCode}`);
+      console.log(`طھظ… ط±ط¨ط· ط§ظ„ظ…ط³طھط®ط¯ظ… ط¨ط§ظ„ظ†ط¸ط§ظ… ${systemCode}`);
     }
 
-    console.log('تم إنشاء المستخدم الإداري بنجاح!');
-    console.log('بيانات تسجيل الدخول:');
-    console.log('اسم المستخدم: admin');
-    console.log('كلمة المرور: admin123');
+    console.log('طھظ… ط¥ظ†ط´ط§ط، ط§ظ„ظ…ط³طھط®ط¯ظ… ط§ظ„ط¥ط¯ط§ط±ظٹ ط¨ظ†ط¬ط§ط­!');
+    console.log('ط¨ظٹط§ظ†ط§طھ طھط³ط¬ظٹظ„ ط§ظ„ط¯ط®ظˆظ„:');
+    console.log('ط§ط³ظ… ط§ظ„ظ…ط³طھط®ط¯ظ…: admin');
+    console.log('ظƒظ„ظ…ط© ط§ظ„ظ…ط±ظˆط±: admin123');
 
   } catch (error) {
-    console.error('خطأ في إنشاء المستخدم الإداري:', error);
+    console.error('ط®ط·ط£ ظپظٹ ط¥ظ†ط´ط§ط، ط§ظ„ظ…ط³طھط®ط¯ظ… ط§ظ„ط¥ط¯ط§ط±ظٹ:', error);
     throw error;
   }
 }
 
-// دالة لإنشاء الأنظمة الأساسية
+// ط¯ط§ظ„ط© ظ„ط¥ظ†ط´ط§ط، ط§ظ„ط£ظ†ط¸ظ…ط© ط§ظ„ط£ط³ط§ط³ظٹط©
 export async function seedSystems(): Promise<void> {
   try {
-    console.log('بدء إنشاء الأنظمة الأساسية...');
+    console.log('ط¨ط¯ط، ط¥ظ†ط´ط§ط، ط§ظ„ط£ظ†ط¸ظ…ط© ط§ظ„ط£ط³ط§ط³ظٹط©...');
 
     const systems = [
       {
         code: 'STUDENT_AFFAIRS',
-        name_ar: 'شؤون الطلبة والتسجيل',
+        name_ar: 'ط´ط¤ظˆظ† ط§ظ„ط·ظ„ط¨ط© ظˆط§ظ„طھط³ط¬ظٹظ„',
         base_path: '/student-affairs',
-        description: 'نظام إدارة شؤون الطلبة والتسجيل'
+        description: 'ظ†ط¸ط§ظ… ط¥ط¯ط§ط±ط© ط´ط¤ظˆظ† ط§ظ„ط·ظ„ط¨ط© ظˆط§ظ„طھط³ط¬ظٹظ„'
       },
       {
         code: 'EXAM_COMMITTEE',
-        name_ar: 'اللجنة الامتحانية',
+        name_ar: 'ط§ظ„ظ„ط¬ظ†ط© ط§ظ„ط§ظ…طھط­ط§ظ†ظٹط©',
         base_path: '/exam-committee',
-        description: 'نظام إدارة اللجنة الامتحانية'
+        description: 'ظ†ط¸ط§ظ… ط¥ط¯ط§ط±ط© ط§ظ„ظ„ط¬ظ†ط© ط§ظ„ط§ظ…طھط­ط§ظ†ظٹط©'
       },
       {
         code: 'ACCOUNTING',
-        name_ar: 'نظام الحسابات',
-        base_path: '/accounting',
-        description: 'نظام إدارة الحسابات المالية'
+        name_ar: 'ظ†ط¸ط§ظ… ط§ظ„ط­ط³ط§ط¨ط§طھ',
+        base_path: '/accounts',
+        description: 'ظ†ط¸ط§ظ… ط¥ط¯ط§ط±ط© ط§ظ„ط­ط³ط§ط¨ط§طھ ط§ظ„ظ…ط§ظ„ظٹط©'
       }
     ];
 
@@ -118,32 +118,32 @@ export async function seedSystems(): Promise<void> {
         [system.code, system.name_ar, system.base_path, system.description, true]
       );
 
-      console.log(`تم إنشاء/تحديث النظام ${system.code}`);
+      console.log(`طھظ… ط¥ظ†ط´ط§ط،/طھط­ط¯ظٹط« ط§ظ„ظ†ط¸ط§ظ… ${system.code}`);
     }
 
-    console.log('تم إنشاء الأنظمة الأساسية بنجاح!');
+    console.log('طھظ… ط¥ظ†ط´ط§ط، ط§ظ„ط£ظ†ط¸ظ…ط© ط§ظ„ط£ط³ط§ط³ظٹط© ط¨ظ†ط¬ط§ط­!');
 
   } catch (error) {
-    console.error('خطأ في إنشاء الأنظمة الأساسية:', error);
+    console.error('ط®ط·ط£ ظپظٹ ط¥ظ†ط´ط§ط، ط§ظ„ط£ظ†ط¸ظ…ط© ط§ظ„ط£ط³ط§ط³ظٹط©:', error);
     throw error;
   }
 }
 
-// دالة لإنشاء الأدوار الأساسية
+// ط¯ط§ظ„ط© ظ„ط¥ظ†ط´ط§ط، ط§ظ„ط£ط¯ظˆط§ط± ط§ظ„ط£ط³ط§ط³ظٹط©
 export async function seedRoles(): Promise<void> {
   try {
-    console.log('بدء إنشاء الأدوار الأساسية...');
+    console.log('ط¨ط¯ط، ط¥ظ†ط´ط§ط، ط§ظ„ط£ط¯ظˆط§ط± ط§ظ„ط£ط³ط§ط³ظٹط©...');
 
     const roles = [
       {
         code: 'admin',
-        name_ar: 'مدير',
-        description: 'مدير النظام'
+        name_ar: 'ظ…ط¯ظٹط±',
+        description: 'ظ…ط¯ظٹط± ط§ظ„ظ†ط¸ط§ظ…'
       },
       {
         code: 'user',
-        name_ar: 'مستخدم',
-        description: 'مستخدم عادي'
+        name_ar: 'ظ…ط³طھط®ط¯ظ…',
+        description: 'ظ…ط³طھط®ط¯ظ… ط¹ط§ط¯ظٹ'
       }
     ];
 
@@ -156,13 +156,14 @@ export async function seedRoles(): Promise<void> {
         [role.code, role.name_ar]
       );
 
-      console.log(`تم إنشاء/تحديث الدور ${role.code}`);
+      console.log(`طھظ… ط¥ظ†ط´ط§ط،/طھط­ط¯ظٹط« ط§ظ„ط¯ظˆط± ${role.code}`);
     }
 
-    console.log('تم إنشاء الأدوار الأساسية بنجاح!');
+    console.log('طھظ… ط¥ظ†ط´ط§ط، ط§ظ„ط£ط¯ظˆط§ط± ط§ظ„ط£ط³ط§ط³ظٹط© ط¨ظ†ط¬ط§ط­!');
 
   } catch (error) {
-    console.error('خطأ في إنشاء الأدوار الأساسية:', error);
+    console.error('ط®ط·ط£ ظپظٹ ط¥ظ†ط´ط§ط، ط§ظ„ط£ط¯ظˆط§ط± ط§ظ„ط£ط³ط§ط³ظٹط©:', error);
     throw error;
   }
 }
+
