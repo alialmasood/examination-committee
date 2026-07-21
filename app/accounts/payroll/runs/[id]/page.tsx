@@ -29,10 +29,15 @@ import {
   runSubmitReviewUrl,
   runApproveUrl,
   runRejectUrl,
+  runApprovalHistoryUrl,
   runPeopleUrl,
   runPersonDetailUrl,
   runScopeUrl,
   runScopeMemberUrl,
+  approvalHistoryActionBadge,
+  approvalStatusTransitionLabel,
+  shortApprovalHashDisplay,
+  APPROVAL_HISTORY_ACTION_DETAIL_AR,
 } from '../../_lib';
 
 // إعادة تصدير لرسائل القرار — متاحة للاختبارات من مسار الصفحة أيضاً
@@ -230,6 +235,14 @@ export default function RunDetailPage() {
   const [rejectIdempotencyKey, setRejectIdempotencyKey] = useState<string | null>(null);
   const [rejectAttemptReason, setRejectAttemptReason] = useState<string | null>(null);
 
+  const [approvalHistory, setApprovalHistory] = useState<any[]>([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [historyFetchKey, setHistoryFetchKey] = useState(0);
+
   const loadPeople = async (status: PeopleFilter = peopleFilter, search: string = peopleSearch) => {
     const qs = new URLSearchParams({ page: '1', page_size: '100' });
     if (status !== 'ALL') qs.set('status', status);
@@ -246,6 +259,38 @@ export default function RunDetailPage() {
     const r = await fetchJson(`${runRecalculationsUrl(id)}?page=1&page_size=20`);
     if (!r.success) return;
     setRecalcHistory(Array.isArray(r.data?.items) ? r.data.items : []);
+  };
+
+  const loadApprovalHistory = async (page = 1) => {
+    if (historyLoading) return;
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const r = await fetchJson(
+        `${runApprovalHistoryUrl(id)}?page=${page}&page_size=20`
+      );
+      if (r.__status === 403) {
+        setApprovalHistory([]);
+        setHistoryTotal(0);
+        setHistoryHasMore(false);
+        setHistoryError('ليس لديك صلاحية عرض سجل مراجعة واعتماد الرواتب');
+        return;
+      }
+      if (!r.success && !r.ok) {
+        setHistoryError('تعذر تحميل سجل المراجعة والاعتماد.');
+        return;
+      }
+      const hist = r.data?.history ?? r.history ?? null;
+      const items = Array.isArray(hist?.items) ? hist.items : [];
+      setApprovalHistory(items);
+      setHistoryPage(Number(hist?.page ?? page) || page);
+      setHistoryTotal(Number(hist?.total ?? items.length) || 0);
+      setHistoryHasMore(hist?.has_more === true);
+    } catch {
+      setHistoryError('تعذر تحميل سجل المراجعة والاعتماد.');
+    } finally {
+      setHistoryLoading(false);
+    }
   };
 
   const load = async () => {
@@ -267,6 +312,8 @@ export default function RunDetailPage() {
       setPeople([]);
       setRecalcHistory([]);
     }
+    // سجل الاعتماد مستقل — فشله لا يمنع صفحة التشغيل
+    setHistoryFetchKey((k) => k + 1);
   };
 
   useEffect(() => {
@@ -287,6 +334,20 @@ export default function RunDetailPage() {
   }, [toast]);
 
   useEffect(() => {
+    if (!historyFetchKey) return;
+    const canHist =
+      can(caps, CAP.VIEW_APPROVAL_HISTORY) ||
+      approvalMeta?.can_view_history === true;
+    if (!canHist && caps.length > 0 && approvalMeta != null && approvalMeta.can_view_history === false) {
+      setApprovalHistory([]);
+      setHistoryError('');
+      return;
+    }
+    void loadApprovalHistory(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyFetchKey]);
+
+  useEffect(() => {
     const st = run?.status;
     if (st !== 'CALCULATED' && st !== 'UNDER_REVIEW' && st !== 'APPROVED') return;
     void loadPeople(peopleFilter, peopleSearch);
@@ -300,6 +361,8 @@ export default function RunDetailPage() {
   const canSubmitCap = can(caps, CAP.SUBMIT_REVIEW);
   const canApproveCap = can(caps, CAP.APPROVE);
   const canRejectCap = can(caps, CAP.REJECT);
+  const canViewHistoryCap =
+    can(caps, CAP.VIEW_APPROVAL_HISTORY) || approvalMeta?.can_view_history === true;
   const decisionBusy = approving || rejecting;
   const departments: any[] = options?.departments ?? [];
   const costCenters: any[] = options?.cost_centers ?? [];
@@ -1000,6 +1063,114 @@ export default function RunDetailPage() {
               </tbody>
             </table>
           </div>
+        </section>
+      )}
+
+      {(canViewHistoryCap || historyError || historyLoading || approvalHistory.length > 0) && (
+        <section className="mb-6" aria-label="سجل مراجعة واعتماد الرواتب">
+          <h2 className="text-lg font-semibold mb-2">سجل مراجعة واعتماد الرواتب</h2>
+          {!canViewHistoryCap && !historyLoading && (
+            <p className="text-sm text-gray-500 bg-gray-50 border rounded p-3">
+              ليس لديك صلاحية عرض سجل مراجعة واعتماد الرواتب.
+            </p>
+          )}
+          {canViewHistoryCap && historyLoading && (
+            <p className="text-sm text-gray-500">جارٍ تحميل سجل المراجعة...</p>
+          )}
+          {canViewHistoryCap && !historyLoading && historyError && (
+            <p className="text-sm text-red-700 bg-red-50 border border-red-100 rounded p-3">
+              {historyError}
+            </p>
+          )}
+          {canViewHistoryCap && !historyLoading && !historyError && approvalHistory.length === 0 && (
+            <p className="text-sm text-gray-500 bg-white border rounded p-3">
+              لا توجد إجراءات مراجعة أو اعتماد لهذا التشغيل حتى الآن.
+            </p>
+          )}
+          {canViewHistoryCap && !historyLoading && !historyError && approvalHistory.length > 0 && (
+            <div className="bg-white shadow rounded p-4">
+              <ol className="relative border-r border-gray-200 pr-4 space-y-4">
+                {approvalHistory.map((item) => {
+                  const badge =
+                    item.action === 'APPROVED'
+                      ? 'bg-green-100 text-green-800'
+                      : item.action === 'REJECTED'
+                        ? 'bg-amber-100 text-amber-900'
+                        : 'bg-blue-100 text-blue-800';
+                  return (
+                    <li key={item.id} className="relative">
+                      <span className="absolute -right-[1.35rem] top-1.5 h-2.5 w-2.5 rounded-full bg-gray-400" />
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <span className={`text-xs rounded px-2 py-0.5 ${badge}`}>
+                          {approvalHistoryActionBadge(item.action)}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          دورة المراجعة {item.approval_cycle}
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {item.created_at
+                            ? new Date(item.created_at).toLocaleString('ar-IQ')
+                            : '—'}
+                        </span>
+                      </div>
+                      <p className="text-sm font-medium">
+                        {item.action_label_ar ||
+                          APPROVAL_HISTORY_ACTION_DETAIL_AR[item.action] ||
+                          item.action}
+                      </p>
+                      <p className="text-xs text-gray-600 mt-0.5">
+                        المنفذ: {item.actor?.display_name || 'مستخدم سابق'}
+                      </p>
+                      <p className="text-xs text-gray-600">
+                        الانتقال:{' '}
+                        {approvalStatusTransitionLabel(item.from_status, item.to_status)}
+                      </p>
+                      {item.action === 'REJECTED' && item.reason && (
+                        <p className="text-sm mt-1 whitespace-pre-wrap break-words">
+                          سبب الرفض: {item.reason}
+                        </p>
+                      )}
+                      {item.action !== 'REJECTED' && item.comment && (
+                        <p className="text-sm mt-1 whitespace-pre-wrap break-words">
+                          تعليق: {item.comment}
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-400 mt-1 font-mono">
+                        بصمة: {shortApprovalHashDisplay(item.snapshot_hash_short)}
+                        {item.version_before != null && item.version_after != null
+                          ? ` · إصدار ${item.version_before} → ${item.version_after}`
+                          : ''}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ol>
+              {(historyPage > 1 || historyHasMore) && (
+                <div className="flex gap-2 mt-4 justify-end">
+                  <button
+                    type="button"
+                    className="border rounded px-3 py-1 text-sm disabled:opacity-40"
+                    disabled={historyLoading || historyPage <= 1}
+                    onClick={() => void loadApprovalHistory(historyPage - 1)}
+                  >
+                    السابق
+                  </button>
+                  <span className="text-xs text-gray-500 self-center">
+                    صفحة {historyPage}
+                    {historyTotal ? ` من ${Math.max(1, Math.ceil(historyTotal / 20))}` : ''}
+                  </span>
+                  <button
+                    type="button"
+                    className="border rounded px-3 py-1 text-sm disabled:opacity-40"
+                    disabled={historyLoading || !historyHasMore}
+                    onClick={() => void loadApprovalHistory(historyPage + 1)}
+                  >
+                    التالي
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
 

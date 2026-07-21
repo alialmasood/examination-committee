@@ -26,7 +26,35 @@ export const runRecalculationsUrl = (id: string) => `/api/accounts/payroll/runs/
 export const runSubmitReviewUrl = (id: string) => `/api/accounts/payroll/runs/${id}/submit-review`;
 export const runApproveUrl = (id: string) => `/api/accounts/payroll/runs/${id}/approve`;
 export const runRejectUrl = (id: string) => `/api/accounts/payroll/runs/${id}/reject`;
+export const runApprovalHistoryUrl = (id: string) =>
+  `/api/accounts/payroll/runs/${id}/approval-history`;
 export const runPeopleUrl = (id: string) => `/api/accounts/payroll/runs/${id}/people`;
+
+/** تسميات إجراءات سجل الاعتماد — 9.B.4 */
+export const APPROVAL_HISTORY_ACTION_LABEL: Record<string, string> = {
+  SUBMITTED_FOR_REVIEW: 'أُرسل للمراجعة',
+  APPROVED: 'معتمد',
+  REJECTED: 'مرفوض للتصحيح',
+};
+
+export const APPROVAL_HISTORY_ACTION_DETAIL_AR: Record<string, string> = {
+  SUBMITTED_FOR_REVIEW: 'تم إرسال التشغيل للمراجعة',
+  APPROVED: 'تم اعتماد التشغيل',
+  REJECTED: 'تم رفض التشغيل وإعادته للتصحيح',
+};
+
+export function approvalHistoryActionBadge(action: string): string {
+  return APPROVAL_HISTORY_ACTION_LABEL[action] ?? action;
+}
+
+/** اختصار بصمة الاعتماد للعرض — لا تعرض الهاش كاملاً */
+export function shortApprovalHashDisplay(h: string | null | undefined): string {
+  if (!h) return '—';
+  const s = String(h).trim();
+  if (s.includes('…')) return s;
+  if (s.length <= 16) return s;
+  return `${s.slice(0, 8)}…${s.slice(-6)}`;
+}
 export const runPersonDetailUrl = (id: string, runPersonId: string) =>
   `/api/accounts/payroll/runs/${id}/people/${runPersonId}`;
 export const runScopeUrl = (id: string) => `/api/accounts/payroll/runs/${id}/scope-members`;
@@ -156,6 +184,7 @@ export const CAP = {
   SUBMIT_REVIEW: 'payroll_submit_review',
   APPROVE: 'payroll_approve',
   REJECT: 'payroll_reject',
+  VIEW_APPROVAL_HISTORY: 'payroll_view_approval_history',
   CANCEL_RUNS: 'payroll_cancel_runs',
   ADMIN: 'payroll_admin',
 } as const;
@@ -325,6 +354,10 @@ export const SCOPE_TYPE: Record<string, string> = {
 export function label(map: Record<string, string>, s: string | null | undefined): string {
   if (!s) return '—';
   return map[s] ?? s;
+}
+
+export function approvalStatusTransitionLabel(from: string, to: string): string {
+  return `${label(RUN_STATUS, from)} → ${label(RUN_STATUS, to)}`;
 }
 
 const STATUS_TONE: Record<string, string> = {
