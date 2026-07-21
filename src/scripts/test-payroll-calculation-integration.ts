@@ -910,7 +910,7 @@ async function main() {
         });
         throw new Error('should reject ERROR count');
       } catch (e) {
-        assert(e instanceof AccountsHttpError && e.status === 409, 'reject errors');
+        assert(e instanceof AccountsHttpError && e.status === 422, 'reject errors');
       }
       assertPayrollRunReadyForPosting({
         status: 'APPROVED',

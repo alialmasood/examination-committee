@@ -568,13 +568,19 @@ async function main() {
       );
     });
 
-    await it('14) لا يوجد Posting/Payments/Payslips endpoint', async () => {
-      for (const route of ['post', 'posting', 'payments', 'payslips', 'journal']) {
+    await it('14) لا يوجد Payments/Payslips (Posting مفعّل في 9.C.2)', async () => {
+      assert(
+        existsSync(
+          resolve(__dirname, `../../app/api/accounts/payroll/runs/[id]/post/route.ts`)
+        ),
+        'endpoint post مطلوب في 9.C.2'
+      );
+      for (const route of ['payments', 'payslips', 'reversal']) {
         assert(
           !existsSync(
             resolve(__dirname, `../../app/api/accounts/payroll/runs/[id]/${route}/route.ts`)
           ),
-          `endpoint موجود: ${route}`
+          `endpoint مؤجّل موجود خطأً: ${route}`
         );
       }
     });
