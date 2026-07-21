@@ -18,6 +18,7 @@ import {
   errMsg,
   approveDecisionErrorMsg,
   rejectDecisionErrorMsg,
+  postingErrorMsg,
   fetchJson,
   iqdWhole,
   label,
@@ -29,6 +30,7 @@ import {
   runSubmitReviewUrl,
   runApproveUrl,
   runRejectUrl,
+  runPostUrl,
   runApprovalHistoryUrl,
   runPeopleUrl,
   runPersonDetailUrl,
@@ -41,7 +43,7 @@ import {
 } from '../../_lib';
 
 // إعادة تصدير لرسائل القرار — متاحة للاختبارات من مسار الصفحة أيضاً
-export { approveDecisionErrorMsg, rejectDecisionErrorMsg };
+export { approveDecisionErrorMsg, rejectDecisionErrorMsg, postingErrorMsg };
 
 type PeopleFilter = 'ALL' | 'CALCULATED' | 'ERROR' | 'EXCLUDED';
 
@@ -60,6 +62,26 @@ const APPROVAL_BLOCKER_LABEL: Record<string, string> = {
   SNAPSHOT_DRIFT: 'تغيرت بصمة اللقطة بعد الإرسال للمراجعة',
   MISSING_REVIEW_HASH: 'بصمة قفل المراجعة ناقصة أو غير صالحة',
   SOD_SUBMITTER: 'لا يجوز لمرسل المراجعة اعتماد أو رفض نفس التشغيل',
+};
+
+const POSTING_BLOCKER_LABEL: Record<string, string> = {
+  STATUS_NOT_APPROVED: 'التشغيل ليس معتمدًا بعد',
+  UNSUPPORTED_CURRENCY: 'العملة غير مدعومة (IQD فقط)',
+  HAS_ERRORS: 'توجد أخطاء احتساب',
+  HAS_BLOCKING_ISSUES: 'توجد مشكلات حاجبة',
+  MISSING_SNAPSHOT_HASH: 'بصمة اللقطة ناقصة',
+  MISSING_APPROVED_HASH: 'بصمة الاعتماد ناقصة',
+  SNAPSHOT_DRIFT: 'انحراف بصمة اللقطة عن الاعتماد',
+  APPROVAL_FIELDS_INCOMPLETE: 'حقول الاعتماد غير مكتملة',
+  INVALID_APPROVAL_CYCLE: 'دورة الاعتماد غير صالحة',
+  MISSING_DEFAULT_POSTING_DATE: 'تاريخ الترحيل الافتراضي غير متوفر',
+  GL_MAPPING_MISSING: 'ربط الحسابات المحاسبية غير مكتمل',
+  ROUNDING_EXCEEDED: 'فرق التقريب يتجاوز الحد المسموح',
+  ROUNDING_ACCOUNT_MISSING: 'حساب التقريب غير معرف',
+  JOURNAL_UNBALANCED: 'تعذر بناء قيد متوازن',
+  GL_ACCOUNT_INVALID: 'حساب محاسبي غير صالح',
+  PREVIEW_BUILD_FAILED: 'تعذر بناء معاينة القيد',
+  ALREADY_POSTED: 'تم الترحيل مسبقًا',
 };
 
 function newIdempotencyKey(): string {
@@ -235,6 +257,17 @@ export default function RunDetailPage() {
   const [rejectIdempotencyKey, setRejectIdempotencyKey] = useState<string | null>(null);
   const [rejectAttemptReason, setRejectAttemptReason] = useState<string | null>(null);
 
+  const [postingMeta, setPostingMeta] = useState<any>(null);
+  const [postOpen, setPostOpen] = useState(false);
+  const [posting, setPosting] = useState(false);
+  const [postComment, setPostComment] = useState('');
+  const [postMsg, setPostMsg] = useState('');
+  const [postingDate, setPostingDate] = useState('');
+  const [postIdempotencyKey, setPostIdempotencyKey] = useState<string | null>(null);
+  const [postAttemptDate, setPostAttemptDate] = useState<string | null>(null);
+  const [postAttemptComment, setPostAttemptComment] = useState<string | null>(null);
+  const [showAllPostLines, setShowAllPostLines] = useState(false);
+
   const [approvalHistory, setApprovalHistory] = useState<any[]>([]);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyTotal, setHistoryTotal] = useState(0);
@@ -303,8 +336,9 @@ export default function RunDetailPage() {
     setCalcSummary(r.data?.calculation_summary ?? null);
     setRecalcMeta(r.data?.recalculation ?? null);
     setApprovalMeta(r.data?.approval ?? null);
+    setPostingMeta(r.data?.posting ?? null);
     const status = String(nextRun?.status ?? '');
-    if (status === 'CALCULATED' || status === 'UNDER_REVIEW' || status === 'APPROVED') {
+    if (status === 'CALCULATED' || status === 'UNDER_REVIEW' || status === 'APPROVED' || status === 'POSTED') {
       await loadPeople();
       if (status === 'CALCULATED') await loadRecalcHistory();
       else setRecalcHistory([]);
@@ -349,7 +383,7 @@ export default function RunDetailPage() {
 
   useEffect(() => {
     const st = run?.status;
-    if (st !== 'CALCULATED' && st !== 'UNDER_REVIEW' && st !== 'APPROVED') return;
+    if (st !== 'CALCULATED' && st !== 'UNDER_REVIEW' && st !== 'APPROVED' && st !== 'POSTED') return;
     void loadPeople(peopleFilter, peopleSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peopleFilter]);
@@ -361,9 +395,10 @@ export default function RunDetailPage() {
   const canSubmitCap = can(caps, CAP.SUBMIT_REVIEW);
   const canApproveCap = can(caps, CAP.APPROVE);
   const canRejectCap = can(caps, CAP.REJECT);
+  const canPostCap = can(caps, CAP.POST);
   const canViewHistoryCap =
     can(caps, CAP.VIEW_APPROVAL_HISTORY) || approvalMeta?.can_view_history === true;
-  const decisionBusy = approving || rejecting;
+  const decisionBusy = approving || rejecting || posting;
   const departments: any[] = options?.departments ?? [];
   const costCenters: any[] = options?.cost_centers ?? [];
   const activePeople: any[] = options?.active_people ?? [];
@@ -687,6 +722,82 @@ export default function RunDetailPage() {
     }
   }
 
+  function openPostDialog() {
+    const def = postingMeta?.default_posting_date
+      ? String(postingMeta.default_posting_date).slice(0, 10)
+      : '';
+    setPostingDate(def);
+    setPostComment('');
+    setPostMsg('');
+    setPostIdempotencyKey(null);
+    setPostAttemptDate(null);
+    setPostAttemptComment(null);
+    setShowAllPostLines(false);
+    setPostOpen(true);
+  }
+
+  async function doPost() {
+    const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(postingDate.trim());
+    if (!dateOk) {
+      setPostMsg('تاريخ الترحيل غير صالح. استخدم الصيغة YYYY-MM-DD.');
+      return;
+    }
+    const commentTrimmed = postComment.trim();
+    if (commentTrimmed.length > 500) {
+      setPostMsg('ملاحظة الترحيل يجب ألا تتجاوز 500 حرف.');
+      return;
+    }
+    if (posting || approving || rejecting || submitting || recalculating || calculating) return;
+    let key = postIdempotencyKey;
+    if (
+      !key ||
+      (postAttemptDate != null && postAttemptDate !== postingDate.trim()) ||
+      (postAttemptComment != null && postAttemptComment !== commentTrimmed)
+    ) {
+      key = newIdempotencyKey();
+      setPostIdempotencyKey(key);
+    }
+    setPostAttemptDate(postingDate.trim());
+    setPostAttemptComment(commentTrimmed);
+    setPosting(true);
+    setPostMsg('');
+    try {
+      const r = await fetchJson(runPostUrl(id), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          version: run.version,
+          updated_at: run.updated_at,
+          idempotency_key: key,
+          posting_date: postingDate.trim(),
+          comment: commentTrimmed || null,
+          confirmation: true,
+        }),
+      });
+      if (!r.success) {
+        const msg = postingErrorMsg(r);
+        setPostMsg(msg);
+        setError(msg);
+        return;
+      }
+      setPostOpen(false);
+      setPostComment('');
+      setPostMsg('');
+      setError('');
+      setPostIdempotencyKey(null);
+      setPostAttemptDate(null);
+      setPostAttemptComment(null);
+      setToast(
+        r.idempotent_replay
+          ? 'تم تأكيد عملية الترحيل السابقة دون إنشاء قيد جديد.'
+          : 'تم ترحيل تشغيل الرواتب محاسبيًا بنجاح.'
+      );
+      await load();
+    } finally {
+      setPosting(false);
+    }
+  }
+
   async function addMember() {
     if (!addPerson) return;
     setBusy(true);
@@ -741,19 +852,22 @@ export default function RunDetailPage() {
   const isCalculated = run.status === 'CALCULATED';
   const isUnderReview = run.status === 'UNDER_REVIEW';
   const isApproved = run.status === 'APPROVED';
-  const showResults = isCalculated || isUnderReview || isApproved;
-  const canEdit = create && isDraft && !isApproved;
-  const canScope = create && isDraft && run.scope_type === 'PERSON_LIST' && !isApproved;
+  const isPosted = run.status === 'POSTED';
+  const showResults = isCalculated || isUnderReview || isApproved || isPosted;
+  const canEdit = create && isDraft && !isApproved && !isPosted;
+  const canScope = create && isDraft && run.scope_type === 'PERSON_LIST' && !isApproved && !isPosted;
   const canCancel =
     cancelCap &&
     !isApproved &&
+    !isPosted &&
     !isUnderReview &&
     (run.status === 'DRAFT' || run.status === 'CALCULATED');
-  const showCalculate = isDraft && canCalculate && !isApproved;
+  const showCalculate = isDraft && canCalculate && !isApproved && !isPosted;
   const showRecalculate =
     isCalculated &&
     !isUnderReview &&
     !isApproved &&
+    !isPosted &&
     canRecalculateCap &&
     run.currency_code === 'IQD' &&
     recalcMeta?.can_recalculate !== false &&
@@ -763,6 +877,7 @@ export default function RunDetailPage() {
     canSubmitCap &&
     isCalculated &&
     !isApproved &&
+    !isPosted &&
     run.currency_code === 'IQD' &&
     approvalMeta?.can_submit_for_review !== false &&
     !submitting &&
@@ -771,11 +886,13 @@ export default function RunDetailPage() {
     canSubmitCap &&
     isCalculated &&
     !isApproved &&
+    !isPosted &&
     approvalMeta?.can_submit_for_review === false;
   const isCurrentUserSubmitter = approvalMeta?.is_current_user_submitter === true;
   const showApproveEnabled =
     canApproveCap &&
     isUnderReview &&
+    !isPosted &&
     !isCurrentUserSubmitter &&
     approvalMeta?.can_approve !== false &&
     !decisionBusy &&
@@ -783,11 +900,13 @@ export default function RunDetailPage() {
   const showApproveDisabled =
     canApproveCap &&
     isUnderReview &&
+    !isPosted &&
     !isCurrentUserSubmitter &&
     approvalMeta?.can_approve === false;
   const showRejectEnabled =
     canRejectCap &&
     isUnderReview &&
+    !isPosted &&
     !isCurrentUserSubmitter &&
     approvalMeta?.can_reject !== false &&
     !decisionBusy &&
@@ -795,8 +914,22 @@ export default function RunDetailPage() {
   const showRejectDisabled =
     canRejectCap &&
     isUnderReview &&
+    !isPosted &&
     !isCurrentUserSubmitter &&
     approvalMeta?.can_reject === false;
+  const showPostEnabled =
+    canPostCap &&
+    isApproved &&
+    !isPosted &&
+    postingMeta?.can_post !== false &&
+    postingMeta?.readiness !== false &&
+    !posting &&
+    !decisionBusy;
+  const showPostDisabled =
+    canPostCap &&
+    isApproved &&
+    !isPosted &&
+    (postingMeta?.can_post === false || postingMeta?.readiness === false);
   // if !canSubmitCap: hide entirely (neither enabled nor disabled)
   const scopeRefName = run.scope_ref_id
     ? (run.scope_type === 'COST_CENTER'
@@ -825,8 +958,8 @@ export default function RunDetailPage() {
           {toast}
         </div>
       )}
-      {(error || calcMsg || recalcMsg || submitMsg || approveMsg || rejectMsg) && (
-        <p className="text-red-600 mb-3 text-sm">{error || calcMsg || recalcMsg || submitMsg || approveMsg || rejectMsg}</p>
+      {(error || calcMsg || recalcMsg || submitMsg || approveMsg || rejectMsg || postMsg) && (
+        <p className="text-red-600 mb-3 text-sm">{error || calcMsg || recalcMsg || submitMsg || approveMsg || rejectMsg || postMsg}</p>
       )}
       <div className="flex justify-between items-center mb-4">
         <div>
@@ -900,7 +1033,57 @@ export default function RunDetailPage() {
             {' · '}
             الدورة: {approvalMeta?.approval_cycle ?? '—'}
           </p>
-          <p className="text-emerald-800">التشغيل جاهز لمرحلة الترحيل لاحقاً. لا يوجد ترحيل في هذه المرحلة.</p>
+          <p className="text-emerald-800">التشغيل جاهز للترحيل المحاسبي النهائي.</p>
+          {showPostDisabled && Array.isArray(postingMeta?.blockers) && postingMeta.blockers.length > 0 && (
+            <p className="text-amber-900 text-xs">
+              موانع الترحيل:{' '}
+              {postingMeta.blockers
+                .map((b: string) => POSTING_BLOCKER_LABEL[b] ?? b)
+                .join(' · ')}
+            </p>
+          )}
+        </div>
+      )}
+
+      {isPosted && (
+        <div className="bg-indigo-50 border border-indigo-300 text-indigo-950 rounded p-3 text-sm mb-4 space-y-2">
+          <p className="font-semibold">تم ترحيل تشغيل الرواتب محاسبيًا وإنشاء القيد النهائي بنجاح.</p>
+          <p>
+            رقم القيد: {postingMeta?.journal_entry?.document_number || '—'}
+            {' · '}
+            الحالة: {postingMeta?.journal_entry?.status || 'POSTED'}
+            {' · '}
+            تاريخ الترحيل: {postingMeta?.posting_date || postingMeta?.journal_entry?.entry_date || '—'}
+          </p>
+          <p>
+            المرحّل: {postingMeta?.posted_by?.display_name || '—'}
+            {' · '}
+            وقت الترحيل: {postingMeta?.posted_at
+              ? new Date(postingMeta.posted_at).toLocaleString('ar-IQ')
+              : '—'}
+            {' · '}
+            الدورة: {approvalMeta?.approval_cycle ?? run.approval_cycle ?? '—'}
+          </p>
+          <p>
+            مدين: {iqdWhole(postingMeta?.journal_entry?.debit_total ?? postingMeta?.debit_total_preview)}
+            {' · '}
+            دائن: {iqdWhole(postingMeta?.journal_entry?.credit_total ?? postingMeta?.credit_total_preview)}
+            {' · '}
+            بصمة الترحيل: {shortApprovalHashDisplay(postingMeta?.posted_snapshot_hash_short)}
+          </p>
+          {postingMeta?.journal_entry?.display_url && (
+            <p>
+              <Link
+                href={postingMeta.journal_entry.display_url}
+                className="text-indigo-800 underline font-medium"
+              >
+                عرض القيد المحاسبي
+              </Link>
+            </p>
+          )}
+          <p className="text-indigo-800 text-xs">
+            أي تصحيح بعد الترحيل يحتاج إلى قيد عكسي ضمن مرحلة لاحقة.
+          </p>
         </div>
       )}
 
@@ -1017,6 +1200,27 @@ export default function RunDetailPage() {
               رفض وإعادة للتصحيح
             </button>
             <p className="text-xs text-amber-800">{formatApprovalBlockers(approvalMeta?.approval_blockers)}</p>
+          </div>
+        )}
+        {showPostEnabled && (
+          <button
+            className="bg-indigo-800 text-white rounded px-3 py-1.5 text-sm disabled:opacity-50"
+            disabled={posting || decisionBusy}
+            onClick={openPostDialog}
+          >
+            ترحيل الرواتب محاسبيًا
+          </button>
+        )}
+        {showPostDisabled && (
+          <div className="flex flex-col gap-1 max-w-md">
+            <button className="bg-gray-300 text-gray-600 rounded px-3 py-1.5 text-sm cursor-not-allowed" disabled>
+              ترحيل الرواتب محاسبيًا
+            </button>
+            <p className="text-xs text-amber-800">
+              {(Array.isArray(postingMeta?.blockers) ? postingMeta.blockers : [])
+                .map((b: string) => POSTING_BLOCKER_LABEL[b] ?? b)
+                .join(' · ') || 'التشغيل غير جاهز للترحيل.'}
+            </p>
           </div>
         )}
         {canEdit && <button className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm" onClick={openEdit}>تعديل</button>}
@@ -1520,6 +1724,118 @@ export default function RunDetailPage() {
         }}
         onConfirm={() => void doReject()}
       />
+
+      <ConfirmDialog
+        open={postOpen}
+        title="ترحيل تشغيل الرواتب محاسبيًا"
+        message="سيتم إنشاء قيد محاسبي نهائي للرواتب المعتمدة وتغيير حالة التشغيل إلى مرحّل."
+        warning="بعد الترحيل لن يكون بالإمكان إعادة الاحتساب أو تعديل التشغيل، ولا يمكن حذف القيد. أي تصحيح لاحق يتطلب قيد عكسي في مرحلة مستقلة."
+        commentOptional
+        reason={postComment}
+        onReasonChange={setPostComment}
+        reasonLabel="ملاحظة الترحيل — اختياري"
+        reasonPlaceholder="ملاحظة اختيارية على الترحيل…"
+        reasonHelper="التعليق اختياري وبحد أقصى 500 حرف."
+        maxWidthClass="max-w-2xl"
+        confirmTone="primary"
+        confirmLabel="إنشاء القيد وترحيل الرواتب"
+        busyLabel="جارٍ إنشاء القيد المحاسبي وترحيل الرواتب..."
+        busy={posting}
+        confirmDisabled={!/^\d{4}-\d{2}-\d{2}$/.test(postingDate.trim())}
+        summaryLines={[
+          { label: 'فترة الرواتب', value: String(run.period_name_ar || run.period_code || '—') },
+          { label: 'عدد الموظفين', value: String(totalPeople) },
+          { label: 'إجمالي الاستحقاقات', value: iqdWhole(postingMeta?.gross_total ?? run.gross_total) },
+          { label: 'إجمالي الاستقطاعات', value: iqdWhole(postingMeta?.deduction_total ?? run.deduction_total) },
+          { label: 'مساهمة صاحب العمل', value: iqdWhole(postingMeta?.employer_contribution_total ?? run.employer_contribution_total) },
+          { label: 'صافي الرواتب', value: iqdWhole(postingMeta?.net_total ?? run.net_total) },
+          { label: 'إجمالي المدين', value: iqdWhole(postingMeta?.debit_total_preview) },
+          { label: 'إجمالي الدائن', value: iqdWhole(postingMeta?.credit_total_preview) },
+          { label: 'فرق التقريب', value: iqdWhole(postingMeta?.rounding_difference ?? '0') },
+          {
+            label: 'مجموعات القيد',
+            value: String(Array.isArray(postingMeta?.line_groups) ? postingMeta.line_groups.length : 0),
+          },
+          { label: 'دورة الاعتماد', value: String(approvalMeta?.approval_cycle ?? run.approval_cycle ?? '—') },
+          {
+            label: 'بصمة مختصرة',
+            value: shortApprovalHashDisplay(
+              approvalMeta?.approved_snapshot_hash_short || run.approved_snapshot_hash
+            ),
+          },
+        ]}
+        onCancel={() => {
+          if (!posting) {
+            setPostOpen(false);
+            setPostMsg('');
+            setPostComment('');
+          }
+        }}
+        onConfirm={() => void doPost()}
+      >
+        <div className="mb-4">
+          <label className="block text-sm text-gray-700 mb-1">تاريخ الترحيل</label>
+          <input
+            type="date"
+            className="w-full border rounded px-3 py-2 text-sm"
+            value={postingDate}
+            disabled={posting}
+            onChange={(e) => setPostingDate(e.target.value)}
+          />
+          {!/^\d{4}-\d{2}-\d{2}$/.test(postingDate.trim()) && (
+            <p className="text-xs text-red-600 mt-1">أدخل تاريخ ترحيل صالحًا.</p>
+          )}
+        </div>
+        {Array.isArray(postingMeta?.line_groups) && postingMeta.line_groups.length > 0 && (
+          <div className="mb-4 border rounded overflow-hidden">
+            <div className="max-h-48 overflow-y-auto">
+              <table className="w-full text-xs text-right">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-2 py-1">رمز الحساب</th>
+                    <th className="px-2 py-1">اسم الحساب</th>
+                    <th className="px-2 py-1">مركز الكلفة</th>
+                    <th className="px-2 py-1">مدين</th>
+                    <th className="px-2 py-1">دائن</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(showAllPostLines
+                    ? postingMeta.line_groups
+                    : postingMeta.line_groups.slice(0, 8)
+                  ).map((g: any, idx: number) => (
+                    <tr key={`${g.account_id}-${idx}`} className="border-t">
+                      <td className="px-2 py-1 font-mono" dir="ltr">{g.account_code}</td>
+                      <td className="px-2 py-1">{g.account_name}</td>
+                      <td className="px-2 py-1">{g.cost_center_name || '—'}</td>
+                      <td className="px-2 py-1" dir="ltr">{iqdWhole(g.debit)}</td>
+                      <td className="px-2 py-1" dir="ltr">{iqdWhole(g.credit)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-gray-50 border-t font-semibold">
+                  <tr>
+                    <td colSpan={3} className="px-2 py-1">الإجمالي</td>
+                    <td className="px-2 py-1" dir="ltr">{iqdWhole(postingMeta.debit_total_preview)}</td>
+                    <td className="px-2 py-1" dir="ltr">{iqdWhole(postingMeta.credit_total_preview)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            {postingMeta.line_groups.length > 8 && (
+              <button
+                type="button"
+                className="w-full text-xs text-indigo-800 py-1 border-t"
+                disabled={posting}
+                onClick={() => setShowAllPostLines((v) => !v)}
+              >
+                {showAllPostLines ? 'إخفاء التفاصيل' : `إظهار كل المجموعات (${postingMeta.line_groups.length})`}
+              </button>
+            )}
+          </div>
+        )}
+        {postMsg && <p className="text-sm text-red-600 mb-3">{postMsg}</p>}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={cancelOpen}

@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /** أدوات مشتركة لواجهة الرواتب — 9.A.1 */
+import type { ReactNode } from 'react';
 
 export const API = {
   options: '/api/accounts/payroll/options',
@@ -26,6 +27,7 @@ export const runRecalculationsUrl = (id: string) => `/api/accounts/payroll/runs/
 export const runSubmitReviewUrl = (id: string) => `/api/accounts/payroll/runs/${id}/submit-review`;
 export const runApproveUrl = (id: string) => `/api/accounts/payroll/runs/${id}/approve`;
 export const runRejectUrl = (id: string) => `/api/accounts/payroll/runs/${id}/reject`;
+export const runPostUrl = (id: string) => `/api/accounts/payroll/runs/${id}/post`;
 export const runApprovalHistoryUrl = (id: string) =>
   `/api/accounts/payroll/runs/${id}/approval-history`;
 export const runPeopleUrl = (id: string) => `/api/accounts/payroll/runs/${id}/people`;
@@ -168,6 +170,103 @@ export function rejectDecisionErrorMsg(r: any): string {
   return errMsg(r);
 }
 
+/**
+ * رؤية زر الترحيل — مرآة لمنطق صفحة تفاصيل التشغيل (بلا React).
+ * لا تدّعي تغطية RTL؛ للاختبارات النقية فقط.
+ */
+export function postingButtonVisibility(input: {
+  canPostCap: boolean;
+  isApproved: boolean;
+  isPosted: boolean;
+  can_post?: boolean | null;
+  readiness?: boolean | null;
+  postingBusy?: boolean;
+  decisionBusy?: boolean;
+}): { showEnabled: boolean; showDisabled: boolean; hidden: boolean } {
+  const {
+    canPostCap,
+    isApproved,
+    isPosted,
+    can_post,
+    readiness,
+    postingBusy = false,
+    decisionBusy = false,
+  } = input;
+  const showEnabled =
+    canPostCap &&
+    isApproved &&
+    !isPosted &&
+    can_post !== false &&
+    readiness !== false &&
+    !postingBusy &&
+    !decisionBusy;
+  const showDisabled =
+    canPostCap &&
+    isApproved &&
+    !isPosted &&
+    (can_post === false || readiness === false);
+  return {
+    showEnabled,
+    showDisabled,
+    hidden: !showEnabled && !showDisabled,
+  };
+}
+
+/** رسائل أخطاء ترحيل الرواتب 9.C.2 */
+export function postingErrorMsg(r: any): string {
+  const code = r?.error?.code || r?.code;
+  if (r?.__status === 403 || code === 'FORBIDDEN') {
+    return 'ليس لديك صلاحية ترحيل الرواتب محاسبيًا.';
+  }
+  if (r?.__status === 404 || code === 'PAYROLL_RUN_NOT_FOUND') {
+    return 'تعذر العثور على تشغيل الرواتب أو لا تملك صلاحية الوصول إليه.';
+  }
+  if (code === 'STALE_PAYROLL_RUN' || (r?.__status === 409 && String(r?.message || '').includes('مستخدم آخر'))) {
+    return 'تم تعديل تشغيل الرواتب بواسطة مستخدم آخر. يرجى تحديث الصفحة.';
+  }
+  if (code === 'PAYROLL_ALREADY_POSTED') {
+    return 'تم ترحيل تشغيل الرواتب مسبقًا.';
+  }
+  if (
+    code === 'PAYROLL_POSTING_CONFLICT' ||
+    code === 'IDEMPOTENCY_CONFLICT' ||
+    code === 'PAYROLL_POSTING_INTEGRITY_CONFLICT'
+  ) {
+    return 'تعذر تنفيذ الترحيل بسبب عملية متزامنة. يرجى تحديث الصفحة.';
+  }
+  if (code === 'PAYROLL_APPROVAL_INTEGRITY_FAILED') {
+    return 'تعذر التحقق من اعتماد تشغيل الرواتب.';
+  }
+  if (code === 'PAYROLL_SNAPSHOT_INVALID') {
+    return 'تغيرت أو تعذر التحقق من نتائج الرواتب المعتمدة.';
+  }
+  if (code === 'FISCAL_PERIOD_NOT_OPEN' || code === 'INVALID_POSTING_DATE' || code === 'GL_PERIOD_LOCKED') {
+    return 'الفترة المالية المحددة غير مفتوحة للترحيل.';
+  }
+  if (code === 'PAYROLL_GL_MAPPING_MISSING') {
+    return 'يجب إكمال ربط مكونات الرواتب بالحسابات المحاسبية قبل الترحيل.';
+  }
+  if (code === 'PAYROLL_GL_ACCOUNT_INVALID') {
+    return 'أحد الحسابات المحاسبية المطلوبة غير صالح أو غير نشط.';
+  }
+  if (code === 'PAYROLL_JOURNAL_UNBALANCED') {
+    return 'تعذر إنشاء قيد متوازن من نتائج الرواتب الحالية.';
+  }
+  if (code === 'PAYROLL_ROUNDING_EXCEEDED' || code === 'PAYROLL_ROUNDING_ACCOUNT_MISSING') {
+    return 'فرق التقريب يتجاوز الحد المسموح أو حساب التقريب غير معرف.';
+  }
+  if (r?.__status === 500 || code === 'TECHNICAL_FAILURE') {
+    return 'حدث خطأ تقني أثناء ترحيل الرواتب. لم يتم إنشاء أي قيد وبقي التشغيل معتمدًا.';
+  }
+  if (r?.__status === 409) {
+    return r?.error?.message || r?.message || 'تعذر تنفيذ الترحيل بسبب عملية متزامنة. يرجى تحديث الصفحة.';
+  }
+  if (r?.__status === 422) {
+    return r?.error?.message || r?.message || 'تعذر ترحيل الرواتب بسبب إعدادات التشغيل الحالية.';
+  }
+  return errMsg(r);
+}
+
 /** صلاحيات الرواتب (يجب أن تطابق PAYROLL_CAPABILITIES في الخادم). */
 export const CAP = {
   VIEW: 'payroll_view',
@@ -185,6 +284,7 @@ export const CAP = {
   APPROVE: 'payroll_approve',
   REJECT: 'payroll_reject',
   VIEW_APPROVAL_HISTORY: 'payroll_view_approval_history',
+  POST: 'payroll_post',
   CANCEL_RUNS: 'payroll_cancel_runs',
   ADMIN: 'payroll_admin',
 } as const;
@@ -377,6 +477,7 @@ const STATUS_TONE: Record<string, string> = {
   CALCULATED: 'bg-green-100 text-green-800',
   UNDER_REVIEW: 'bg-amber-100 text-amber-900',
   APPROVED: 'bg-emerald-100 text-emerald-900',
+  POSTED: 'bg-indigo-100 text-indigo-900',
 };
 
 export function StatusBadge({ status, map }: { status: string; map: Record<string, string> }) {
@@ -437,6 +538,10 @@ export function ConfirmDialog({
   extraWarning,
   commentOptional,
   summaryLines,
+  children,
+  maxWidthClass = 'max-w-md',
+  confirmDisabled,
+  confirmTone = 'danger',
 }: {
   open: boolean;
   title: string;
@@ -459,6 +564,10 @@ export function ConfirmDialog({
   /** إظهار حقل تعليق اختياري (0–500) */
   commentOptional?: boolean;
   summaryLines?: Array<{ label: string; value: string }>;
+  children?: ReactNode;
+  maxWidthClass?: string;
+  confirmDisabled?: boolean;
+  confirmTone?: 'danger' | 'primary';
 }) {
   if (!open) return null;
   const trimmed = (reason ?? '').trim();
@@ -468,9 +577,13 @@ export function ConfirmDialog({
     : commentOptional
       ? trimmed.length > 500
       : false;
+  const confirmBtnClass =
+    confirmTone === 'primary'
+      ? 'bg-indigo-800 text-white rounded px-3 py-2 text-sm disabled:opacity-50'
+      : 'bg-red-800 text-white rounded px-3 py-2 text-sm disabled:opacity-50';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" dir="rtl">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-5">
+      <div className={`bg-white rounded-lg shadow-lg w-full ${maxWidthClass} p-5 max-h-[90vh] overflow-y-auto`}>
         <h3 className="text-lg font-semibold mb-2">{title}</h3>
         <p className="text-sm text-gray-600 mb-3 whitespace-pre-line">{message}</p>
         {warning && (
@@ -495,6 +608,7 @@ export function ConfirmDialog({
             ))}
           </dl>
         )}
+        {children}
         {showReasonField && (
           <div className="mb-4">
             <label className="block text-sm text-gray-700 mb-1">
@@ -526,8 +640,8 @@ export function ConfirmDialog({
             {cancelLabel ?? 'إلغاء'}
           </button>
           <button
-            className="bg-red-800 text-white rounded px-3 py-2 text-sm disabled:opacity-50"
-            disabled={busy || reasonInvalid}
+            className={confirmBtnClass}
+            disabled={busy || reasonInvalid || confirmDisabled}
             onClick={onConfirm}
           >
             {busy ? (busyLabel ?? 'جارٍ التنفيذ…') : (confirmLabel ?? 'تأكيد')}
