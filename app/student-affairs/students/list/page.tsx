@@ -726,7 +726,7 @@ export default function StudentsListPage() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
       {/* Header */}
       <div className="bg-white shadow-lg border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="w-full px-3 sm:px-4 lg:px-5">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4 space-x-reverse">
               <button
@@ -754,10 +754,10 @@ export default function StudentsListPage() {
 
       {/* Filters and Search */}
       <div className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0 lg:space-x-4 space-x-reverse">
+        <div className="w-full px-3 sm:px-4 lg:px-5 py-4">
+          <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
             {/* Search */}
-            <form onSubmit={handleSearch} className="flex-1 max-w-md">
+            <form onSubmit={handleSearch} className="flex-1 max-w-xl">
               <div className="relative">
                                  <input
                    type="text"
@@ -1102,8 +1102,8 @@ export default function StudentsListPage() {
       )}
 
              {/* Table */}
-       <div className="w-full px-1 py-6">
-         <div className="bg-white shadow-xl rounded-lg overflow-x-auto relative">
+       <div className="w-full px-0 py-4">
+         <div className="bg-white shadow-xl rounded-lg overflow-x-auto relative w-full">
           {loading ? (
             <div className="flex items-center justify-center h-64">
               <div className="text-center">
@@ -1126,58 +1126,58 @@ export default function StudentsListPage() {
              </div>
           ) : (
             <div className="w-full">
-              <table className="w-full divide-y divide-gray-200">
+              <table className="w-full min-w-full table-auto divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[3rem]">
                       #
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-48">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[8rem]">
                       الرقم التسلسلي
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-56">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[12rem]">
                       الاسم الكامل
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[6rem]">
                       اللقب
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-44">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[7rem]">
                       تاريخ الميلاد
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-44">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[7rem]">
                       رقم الهاتف
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[4rem]">
                       الجنس
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[6rem]">
                       سنة التخرج
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-56">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[12rem]">
                       القسم
                     </th>
-                                         <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-44">
+                                         <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[7rem]">
                        السنة الأكاديمية
                      </th>
-                     <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
+                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[6rem]">
                        مرحلة القبول
                      </th>
-                     <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
+                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[6rem]">
                        الدرجة العلمية
                      </th>
-                     <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-48">
+                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[9rem]">
                        رقم الهوية الوطنية
                      </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[6rem]">
                       المعدل التراكمي
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[6rem]">
                       نوع الدراسة
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[6rem]">
                       الفصل الدراسي
                     </th>
-                    <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[7rem]">
                       تأكيد الدفع
                     </th>
                   </tr>
@@ -1187,22 +1187,22 @@ export default function StudentsListPage() {
                     console.log('📊 عرض الجدول مع', students.length, 'طالب');
                     return (
                     <tr key={student.id} className="hover:bg-gray-50 transition-colors duration-200">
-                      <td className="px-2 py-4 whitespace-nowrap text-xs font-medium text-gray-900 text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs font-medium text-gray-900 text-center">
                         {(currentPage - 1) * 50 + index + 1}
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs font-medium text-blue-600 text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs font-medium text-blue-600 text-center">
                         {student.university_id || '-'}
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900">
                         {student.full_name_ar || student.full_name}
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                         {student.nickname}
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                         {formatDate(student.birth_date)}
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                         {student.phone ? 
                           (student.phone.startsWith('+964') ? 
                             student.phone.replace('+964', '') : 
@@ -1211,41 +1211,41 @@ export default function StudentsListPage() {
                           '-'
                         }
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                         {formatGender(student.gender)}
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                         {student.secondary_graduation_year || '-'}
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900">
                         {formatDepartment(student.department || student.major || '')}
                       </td>
-                                             <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                                             <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                          {student.academic_year || '-'}
                        </td>
-                       <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                       <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                          {formatAdmissionType(student.admission_type || '')}
                        </td>
-                       <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                       <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                          {formatLevel(student.level || '')}
                        </td>
-                       <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                       <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                          {student.national_id || '-'}
                        </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                         {student.secondary_gpa !== null && student.secondary_gpa !== undefined 
                           ? (typeof student.secondary_gpa === 'number' 
                               ? student.secondary_gpa.toFixed(2).replace(/\.?0+$/, '') 
                               : parseFloat(String(student.secondary_gpa)).toFixed(2).replace(/\.?0+$/, ''))
                           : '-'}
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                         {student.study_type === 'morning' ? 'صباحي' : student.study_type === 'evening' ? 'مسائي' : student.study_type || '-'}
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-gray-900 text-center">
                         {student.semester === 'first' ? 'الأول' : student.semester === 'second' ? 'الثاني' : student.semester || '-'}
                       </td>
-                      <td className="px-2 py-4 whitespace-nowrap text-xs text-center">
+                      <td className="px-3 py-4 whitespace-nowrap text-xs text-center">
                         {student.payment_status === 'paid' ? (
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-emerald-700 bg-emerald-50 border border-emerald-200">تم الدفع</span>
                         ) : (

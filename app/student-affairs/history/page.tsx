@@ -345,8 +345,17 @@ export default function StudentHistoryPage() {
                     </tr>
                   ))
                 ) : hasResults ? (
-                  students.map((student) => (
-                    <tr key={`${student.studentId}-${student.academicYear}`}>
+                  students.map((student, index) => (
+                    <tr
+                      key={[
+                        student.studentId,
+                        student.academicYear,
+                        student.stageCode ?? student.stage,
+                        student.status,
+                        student.studyType ?? '',
+                        index,
+                      ].join('-')}
+                    >
                       <td className="px-6 py-2 whitespace-nowrap align-middle">
                         <div className="text-sm font-semibold text-gray-900 leading-tight">{student.fullName}</div>
                         <div className="text-xs text-gray-500 leading-tight mt-0.5">{student.universityId}</div>

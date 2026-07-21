@@ -426,8 +426,8 @@ export default function StudentAffairsLayout({
           </header>
 
           {/* Main Content */}
-          <main className="flex-1 p-8">
-            <div className="max-w-7xl mx-auto">
+          <main className={`flex-1 ${pathname === '/student-affairs/students/list' ? 'p-3 lg:p-4' : 'p-8'}`}>
+            <div className={pathname === '/student-affairs/students/list' ? 'w-full max-w-none' : 'max-w-7xl mx-auto'}>
               {children}
             </div>
           </main>

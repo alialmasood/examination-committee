@@ -124,6 +124,7 @@ export default function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('all');
   const [academicYears, setAcademicYears] = useState<string[]>(['all']);
@@ -308,7 +309,7 @@ export default function StudentsPage() {
       const params = new URLSearchParams({
         page: pagination.page.toString(),
         limit: pagination.limit.toString(),
-        ...(searchTerm && { search: searchTerm }),
+        ...(debouncedSearch && { search: debouncedSearch }),
         ...(selectedDepartment && { department: selectedDepartment }),
         ...(selectedAcademicYear && selectedAcademicYear !== 'all' && { academic_year: selectedAcademicYear })
       });
@@ -447,6 +448,16 @@ export default function StudentsPage() {
     }
   };
 
+  // تأخير البحث لتجنب الطلبات المتكررة مع كل حرف
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const next = searchTerm.trim();
+      setDebouncedSearch(next);
+      setPagination((prev) => (prev.page === 1 ? prev : { ...prev, page: 1 }));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
   // جلب قائمة الأعوام الدراسية المتاحة
   useEffect(() => {
     const fetchAcademicYears = async () => {
@@ -480,7 +491,7 @@ export default function StudentsPage() {
   useEffect(() => {
     fetchStudents();
     fetchDepartmentCounts();
-  }, [pagination.page, searchTerm, selectedDepartment, selectedAcademicYear]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pagination.page, debouncedSearch, selectedDepartment, selectedAcademicYear]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // البث الفوري لتحديث القائمة عند تغيير حالات الدفع من نظام الحسابات
   useEffect(() => {
@@ -3251,10 +3262,10 @@ export default function StudentsPage() {
             <div className="relative">
               <input
                 type="text"
-                placeholder="البحث عن طالب..."
+                placeholder="ابحث بالاسم أو الرقم الجامعي أو الهوية أو اللقب..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-64 px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10 text-sm"
+                className="w-80 px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10 text-sm"
               />
               <div className="absolute inset-y-0 right-0 flex items-center pr-3">
                 <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3264,7 +3275,10 @@ export default function StudentsPage() {
             </div>
             <select 
               value={selectedAcademicYear}
-              onChange={(e) => setSelectedAcademicYear(e.target.value)}
+              onChange={(e) => {
+                setSelectedAcademicYear(e.target.value);
+                setPagination((prev) => ({ ...prev, page: 1 }));
+              }}
               disabled={yearsLoading}
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
             >
@@ -3276,7 +3290,10 @@ export default function StudentsPage() {
             </select>
             <select 
               value={selectedDepartment}
-              onChange={(e) => setSelectedDepartment(e.target.value)}
+              onChange={(e) => {
+                setSelectedDepartment(e.target.value);
+                setPagination((prev) => ({ ...prev, page: 1 }));
+              }}
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10 text-sm"
             >
               <option value="">جميع الأقسام</option>

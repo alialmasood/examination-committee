@@ -21,7 +21,13 @@ const DEPARTMENTS = [
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const academicYear = searchParams.get('academic_year') || '2025-2026';
+    // academic_year=all أو فارغ صراحةً = كل السنوات
+    // بدون معامل = السنة الافتراضية (للتوافق مع الصفحات الأخرى)
+    const academicYearRaw = searchParams.get('academic_year');
+    const academicYear =
+      academicYearRaw === 'all' || academicYearRaw === ''
+        ? ''
+        : academicYearRaw || '2025-2026';
 
     const statsPromises = DEPARTMENTS.map(async (dept) => {
       // جلب إجمالي عدد الطلاب في القسم - استخدام دالة تطبيع النص العربي

@@ -7,11 +7,35 @@ export async function GET(request: NextRequest) {
     const searchTerm = searchParams.get('q') || '';
     const limit = parseInt(searchParams.get('limit') || '10');
 
-    if (searchTerm.length < 1) {
+    if (searchTerm.trim().length < 1) {
       return NextResponse.json({ students: [] });
     }
 
-    // البحث في الأسماء العربية والإنجليزية
+    // البحث في الأسماء والبيانات المعروضة مع تطبيع العربية
+    const tokens = searchTerm
+      .trim()
+      .split(/\s+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    if (tokens.length === 0) {
+      return NextResponse.json({ students: [] });
+    }
+
+    const tokenConditions = tokens.map((_, i) => {
+      const p = i + 1;
+      return `(
+        normalize_arabic(COALESCE(s.full_name_ar, '')) ILIKE normalize_arabic($${p})
+        OR normalize_arabic(COALESCE(s.full_name, '')) ILIKE normalize_arabic($${p})
+        OR normalize_arabic(COALESCE(s.first_name, '')) ILIKE normalize_arabic($${p})
+        OR normalize_arabic(COALESCE(s.middle_name, '')) ILIKE normalize_arabic($${p})
+        OR normalize_arabic(COALESCE(s.last_name, '')) ILIKE normalize_arabic($${p})
+        OR normalize_arabic(COALESCE(s.nickname, '')) ILIKE normalize_arabic($${p})
+        OR CAST(s.university_id AS TEXT) ILIKE $${p}
+        OR CAST(s.national_id AS TEXT) ILIKE $${p}
+      )`;
+    });
+
     const studentsQuery = `
       SELECT 
         s.id,
@@ -25,21 +49,13 @@ export async function GET(request: NextRequest) {
         s.status
       FROM student_affairs.students s
       WHERE s.status = 'active'
-        AND (
-          s.full_name_ar ILIKE $1 
-          OR s.full_name ILIKE $1
-          OR s.first_name ILIKE $1
-          OR s.last_name ILIKE $1
-          OR s.middle_name ILIKE $1
-          OR s.university_id ILIKE $1
-          OR s.national_id ILIKE $1
-        )
+        AND (${tokenConditions.join(' AND ')})
       ORDER BY s.full_name_ar ASC
-      LIMIT $2
+      LIMIT $${tokens.length + 1}
     `;
 
-    const searchPattern = `%${searchTerm}%`;
-    const result = await query(studentsQuery, [searchPattern, limit]);
+    const searchParamsValues = [...tokens.map((t) => `%${t}%`), limit];
+    const result = await query(studentsQuery, searchParamsValues);
 
     const students = result.rows.map(row => ({
       id: row.id,

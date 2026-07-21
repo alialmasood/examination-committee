@@ -276,48 +276,81 @@ export default function AccountsInstallmentsPage() {
   }, [filteredPaidStudents]);
 
   const fetchDepartmentStats = useCallback(async () => {
-      try {
-        const res = await fetch('/api/departments/stats');
-        const data = await res.json();
-        if (data.success) {
-          setDepartments(data.data);
+    try {
+      const res = await fetch('/api/departments/stats?academic_year=all', {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      const data = await res.json();
+      if (data.success) {
+        setDepartments(data.data || []);
         setError(null);
-        } else {
-          setError('تعذر جلب بيانات الأقسام');
-        }
-      } catch {
-        setError('خطأ في الاتصال بالخادم');
+      } else {
+        setError(data.error || 'تعذر جلب بيانات الأقسام');
       }
+    } catch (err) {
+      console.error('خطأ في جلب إحصاءات الأقسام:', err);
+      setError('خطأ في الاتصال بالخادم عند جلب إحصاءات الأقسام');
+    }
   }, []);
 
   const fetchPendingSummary = useCallback(async () => {
-      try {
-      const res = await fetch('/api/accounts/installments/pending');
+    try {
+      const res = await fetch('/api/accounts/installments/pending', {
+        credentials: 'include',
+        cache: 'no-store',
+      });
       const data = await res.json();
       if (data.success) {
-        setNewStudentsNeedingReceipt(data.data.count);
+        setNewStudentsNeedingReceipt(data.data?.count ?? 0);
+      } else {
+        console.error('فشل جلب عدد قيد الدفع:', data.error);
       }
-      } catch {}
+    } catch (err) {
+      console.error('خطأ في جلب عدد قيد الدفع:', err);
+    }
   }, []);
 
   const fetchPendingList = useCallback(async () => {
-      try {
-      const res = await fetch('/api/accounts/installments/pending/list');
+    try {
+      const res = await fetch('/api/accounts/installments/pending/list', {
+        credentials: 'include',
+        cache: 'no-store',
+      });
       const data = await res.json();
       if (data.success) {
-        setPendingStudents(data.data);
+        setPendingStudents(Array.isArray(data.data) ? data.data : []);
+      } else {
+        console.error('فشل جلب قائمة قيد الدفع:', data.error);
+        setPendingStudents([]);
+        setError((prev) => prev || data.error || 'تعذر جلب الطلبة قيد الدفع');
       }
-      } catch {}
+    } catch (err) {
+      console.error('خطأ في جلب قائمة قيد الدفع:', err);
+      setPendingStudents([]);
+      setError((prev) => prev || 'خطأ في جلب الطلبة قيد الدفع');
+    }
   }, []);
 
   const fetchPaidList = useCallback(async () => {
-      try {
-      const res = await fetch('/api/accounts/installments/paid/list');
+    try {
+      const res = await fetch('/api/accounts/installments/paid/list', {
+        credentials: 'include',
+        cache: 'no-store',
+      });
       const data = await res.json();
       if (data.success) {
-        setPaidStudents(data.data);
+        setPaidStudents(Array.isArray(data.data) ? data.data : []);
+      } else {
+        console.error('فشل جلب قائمة المسددين:', data.error);
+        setPaidStudents([]);
+        setError((prev) => prev || data.error || 'تعذر جلب الطلبة المسددين');
       }
-      } catch {}
+    } catch (err) {
+      console.error('خطأ في جلب قائمة المسددين:', err);
+      setPaidStudents([]);
+      setError((prev) => prev || 'خطأ في جلب الطلبة المسددين');
+    }
   }, []);
 
   const refreshRealtimeData = useCallback(async () => {
@@ -379,6 +412,8 @@ export default function AccountsInstallmentsPage() {
       setMarking(id);
       const res = await fetch(`/api/accounts/installments/mark-paid/${id}`, { 
         method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           amount: Number(amount || 0) || 0,

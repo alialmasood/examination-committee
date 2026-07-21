@@ -27,9 +27,33 @@ export async function GET(request: NextRequest) {
     let paramIndex = 1;
     
     if (search) {
-      whereConditions.push(`(s.full_name_ar ILIKE $${paramIndex} OR s.first_name ILIKE $${paramIndex} OR s.last_name ILIKE $${paramIndex} OR s.university_id ILIKE $${paramIndex} OR s.national_id ILIKE $${paramIndex})`);
-      queryParams.push(`%${search}%`);
-      paramIndex++;
+      const tokens = search
+        .trim()
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+
+      // كل كلمة يجب أن تطابق أحد الحقول المعروضة/القابلة للبحث
+      if (tokens.length > 0) {
+        for (const token of tokens) {
+          whereConditions.push(`(
+            normalize_arabic(COALESCE(s.full_name_ar, '')) ILIKE normalize_arabic($${paramIndex})
+            OR normalize_arabic(COALESCE(s.full_name, '')) ILIKE normalize_arabic($${paramIndex})
+            OR normalize_arabic(COALESCE(s.first_name, '')) ILIKE normalize_arabic($${paramIndex})
+            OR normalize_arabic(COALESCE(s.middle_name, '')) ILIKE normalize_arabic($${paramIndex})
+            OR normalize_arabic(COALESCE(s.last_name, '')) ILIKE normalize_arabic($${paramIndex})
+            OR normalize_arabic(COALESCE(s.nickname, '')) ILIKE normalize_arabic($${paramIndex})
+            OR normalize_arabic(COALESCE(s.mother_name, '')) ILIKE normalize_arabic($${paramIndex})
+            OR normalize_arabic(COALESCE(s.major, '')) ILIKE normalize_arabic($${paramIndex})
+            OR CAST(s.university_id AS TEXT) ILIKE $${paramIndex}
+            OR CAST(s.student_number AS TEXT) ILIKE $${paramIndex}
+            OR CAST(s.national_id AS TEXT) ILIKE $${paramIndex}
+            OR CAST(s.phone AS TEXT) ILIKE $${paramIndex}
+          )`);
+          queryParams.push(`%${token}%`);
+          paramIndex++;
+        }
+      }
     }
     
     if (department) {
