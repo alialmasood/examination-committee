@@ -36,14 +36,14 @@ export default function LoginPage() {
       const result = await response.json();
 
       if (result.success) {
-        console.log('طھظ… طھط³ط¬ظٹظ„ ط§ظ„ط¯ط®ظˆظ„ ط¨ظ†ط¬ط§ط­:', result);
+        console.log('تم تسجيل الدخول بنجاح:', result);
         
-        // طھظˆط¬ظٹظ‡ ط§ظ„ظ…ط³طھط®ط¯ظ… ط¥ظ„ظ‰ ط§ظ„ظ†ط¸ط§ظ… ط§ظ„ظ…ظ†ط§ط³ط¨
+        // توجيه المستخدم إلى النظام المناسب
         if (result.systems && result.systems.length > 0) {
           const firstSystem = result.systems[0];
-          console.log('طھظˆط¬ظٹظ‡ ط¥ظ„ظ‰ ط§ظ„ظ†ط¸ط§ظ…:', firstSystem);
+          console.log('توجيه إلى النظام:', firstSystem);
           
-          // طھظˆط¬ظٹظ‡ ط­ط³ط¨ ظ†ظˆط¹ ط§ظ„ظ†ط¸ط§ظ…
+          // توجيه حسب نوع النظام
           switch (firstSystem.code) {
             case 'STUDENT_AFFAIRS':
               window.location.href = '/student-affairs';
@@ -106,15 +106,15 @@ export default function LoginPage() {
               window.location.href = '/accounts';
               break;
             default:
-              alert(`ط§ظ„ظ†ط¸ط§ظ… ${firstSystem.name_ar} ط؛ظٹط± ظ…طھط§ط­ ط­ط§ظ„ظٹط§ظ‹`);
+              alert(`النظام ${firstSystem.name_ar} غير متاح حالياً`);
           }
         }
       } else {
-        alert(result.message || 'ظپط´ظ„ ظپظٹ طھط³ط¬ظٹظ„ ط§ظ„ط¯ط®ظˆظ„');
+        alert(result.message || 'فشل في تسجيل الدخول');
       }
     } catch (error) {
-      console.error('ط®ط·ط£ ظپظٹ طھط³ط¬ظٹظ„ ط§ظ„ط¯ط®ظˆظ„:', error);
-      alert('ط­ط¯ط« ط®ط·ط£ ظپظٹ ط§ظ„ط§طھطµط§ظ„ ط¨ط§ظ„ط®ط§ط¯ظ…');
+      console.error('خطأ في تسجيل الدخول:', error);
+      alert('حدث خطأ في الاتصال بالخادم');
     } finally {
       setIsLoading(false);
     }
@@ -122,33 +122,33 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 flex items-center justify-center p-4 relative">
-      {/* ط®ظ„ظپظٹط© طھط¹ظƒط³ ط§ظ„ط¹ظ„ظ… ظˆط§ظ„ظ…ط¹ط±ظپط© */}
+      {/* خلفية تعكس العلم والمعرفة */}
       <div className="absolute inset-0 overflow-hidden">
-        {/* ط£ط´ظƒط§ظ„ ظ‡ظ†ط¯ط³ظٹط© طھط¹ظƒط³ ط§ظ„ط¨ظ†ظٹط© ط§ظ„ط£ظƒط§ط¯ظٹظ…ظٹط© */}
+        {/* أشكال هندسية تعكس البنية الأكاديمية */}
         <div className="absolute top-20 right-20 w-32 h-32 bg-blue-200/30 rotate-45 rounded-lg transform animate-pulse"></div>
         <div className="absolute top-40 left-32 w-24 h-24 bg-indigo-200/40 rotate-12 rounded-lg transform animate-pulse"></div>
         <div className="absolute bottom-32 right-40 w-28 h-28 bg-purple-200/30 -rotate-12 rounded-lg transform animate-pulse"></div>
         
-        {/* ط®ط·ظˆط· طھط¹ظƒط³ ط§ظ„طھط¯ط±ط¬ ط§ظ„ط£ظƒط§ط¯ظٹظ…ظٹ */}
+        {/* خطوط تعكس التدرج الأكاديمي */}
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-blue-300/50 to-transparent"></div>
         <div className="absolute bottom-0 right-0 w-full h-1 bg-gradient-to-l from-transparent via-indigo-300/50 to-transparent"></div>
         
-        {/* ظ†ظ‚ط§ط· طھط¹ظƒط³ ط§ظ„ظ…ط¹ط±ظپط© */}
+        {/* نقاط تعكس المعرفة */}
         <div className="absolute top-1/4 left-1/4 w-2 h-2 bg-blue-400/60 rounded-full animate-ping"></div>
         <div className="absolute top-1/3 right-1/3 w-1.5 h-1.5 bg-indigo-400/60 rounded-full animate-ping" style={{animationDelay: '0.5s'}}></div>
         <div className="absolute bottom-1/4 left-1/3 w-2.5 h-2.5 bg-purple-400/60 rounded-full animate-ping" style={{animationDelay: '1s'}}></div>
         <div className="absolute bottom-1/3 right-1/4 w-1 h-1 bg-blue-500/60 rounded-full animate-ping" style={{animationDelay: '1.5s'}}></div>
         
-        {/* ط£ط´ظƒط§ظ„ طھط¹ظƒط³ ط§ظ„ظƒطھط¨ ظˆط§ظ„ظ…ط¹ط±ظپط© */}
+        {/* أشكال تعكس الكتب والمعرفة */}
         <div className="absolute top-1/2 left-10 w-16 h-20 bg-gradient-to-b from-blue-200/40 to-indigo-200/40 rounded-sm transform rotate-12 opacity-60"></div>
         <div className="absolute top-1/2 left-16 w-16 h-20 bg-gradient-to-b from-indigo-200/40 to-purple-200/40 rounded-sm transform rotate-6 opacity-60"></div>
         <div className="absolute top-1/2 left-22 w-16 h-20 bg-gradient-to-b from-purple-200/40 to-blue-200/40 rounded-sm transform -rotate-6 opacity-60"></div>
         
-        {/* ط®ط·ظˆط· طھط¹ظƒط³ ط§ظ„طھظ‚ط¯ظ… ط§ظ„ط£ظƒط§ط¯ظٹظ…ظٹ */}
+        {/* خطوط تعكس التقدم الأكاديمي */}
         <div className="absolute top-1/4 right-10 w-40 h-0.5 bg-gradient-to-l from-blue-300/60 to-transparent transform rotate-12"></div>
         <div className="absolute bottom-1/4 left-10 w-32 h-0.5 bg-gradient-to-r from-indigo-300/60 to-transparent transform -rotate-12"></div>
         
-        {/* ط£ط´ظƒط§ظ„ طھط¹ظƒط³ ط§ظ„ط´ظ‡ط§ط¯ط§طھ ظˆط§ظ„ط¯ط±ط¬ط§طھ */}
+        {/* أشكال تعكس الشهادات والدرجات */}
         <div className="absolute top-1/6 right-1/4 w-12 h-12 border-2 border-blue-300/40 rounded-full flex items-center justify-center">
           <div className="w-6 h-6 border border-blue-400/60 rounded-full"></div>
         </div>
@@ -156,27 +156,27 @@ export default function LoginPage() {
           <div className="w-4 h-4 border border-indigo-400/60 rounded-full"></div>
         </div>
         
-        {/* ط®ط·ظˆط· طھط¹ظƒط³ ط§ظ„طھط¯ط±ط¬ ط§ظ„ط£ظƒط§ط¯ظٹظ…ظٹ */}
+        {/* خطوط تعكس التدرج الأكاديمي */}
         <div className="absolute top-1/2 left-0 w-1 h-20 bg-gradient-to-b from-blue-300/50 via-indigo-300/50 to-purple-300/50"></div>
         <div className="absolute top-1/2 right-0 w-1 h-20 bg-gradient-to-b from-purple-300/50 via-indigo-300/50 to-blue-300/50"></div>
         
-        {/* ظ†ظ‚ط§ط· طھط¹ظƒط³ ط§ظ„ط¥ظ†ط¬ط§ط²ط§طھ ط§ظ„ط£ظƒط§ط¯ظٹظ…ظٹط© */}
+        {/* نقاط تعكس الإنجازات الأكاديمية */}
         <div className="absolute top-1/5 left-1/2 w-1 h-1 bg-blue-500/80 rounded-full"></div>
         <div className="absolute top-2/5 left-1/2 w-1 h-1 bg-indigo-500/80 rounded-full"></div>
         <div className="absolute top-3/5 left-1/2 w-1 h-1 bg-purple-500/80 rounded-full"></div>
         <div className="absolute top-4/5 left-1/2 w-1 h-1 bg-blue-600/80 rounded-full"></div>
         
-        {/* ط£ط´ظƒط§ظ„ ط¥ط¶ط§ظپظٹط© طھط¹ظƒط³ ط§ظ„ظ…ط¹ط±ظپط© */}
+        {/* أشكال إضافية تعكس المعرفة */}
         <div className="absolute top-1/3 right-1/6 w-8 h-8 bg-gradient-to-br from-blue-200/30 to-indigo-200/30 rounded-full transform rotate-45"></div>
         <div className="absolute bottom-1/3 left-1/6 w-6 h-6 bg-gradient-to-br from-indigo-200/30 to-purple-200/30 rounded-full transform -rotate-45"></div>
         <div className="absolute top-2/3 right-1/3 w-10 h-10 bg-gradient-to-br from-purple-200/30 to-blue-200/30 rounded-full transform rotate-12"></div>
         
-        {/* ط®ط·ظˆط· ط¥ط¶ط§ظپظٹط© طھط¹ظƒط³ ط§ظ„طھظ‚ط¯ظ… */}
+        {/* خطوط إضافية تعكس التقدم */}
         <div className="absolute top-1/6 left-1/3 w-24 h-0.5 bg-gradient-to-r from-blue-300/40 to-transparent transform rotate-45"></div>
         <div className="absolute bottom-1/6 right-1/3 w-20 h-0.5 bg-gradient-to-l from-indigo-300/40 to-transparent transform -rotate-45"></div>
         <div className="absolute top-3/4 left-1/4 w-16 h-0.5 bg-gradient-to-r from-purple-300/40 to-transparent transform rotate-30"></div>
         
-        {/* ط£ط´ظƒط§ظ„ طھط¹ظƒط³ ط§ظ„ط´ظ‡ط§ط¯ط§طھ ط§ظ„ظ…طھظ‚ط¯ظ…ط© */}
+        {/* أشكال تعكس الشهادات المتقدمة */}
         <div className="absolute top-1/4 left-1/5 w-14 h-14 border border-blue-300/30 rounded-lg transform rotate-12 flex items-center justify-center">
           <div className="w-8 h-8 border border-blue-400/50 rounded-lg transform -rotate-12"></div>
         </div>
@@ -184,21 +184,21 @@ export default function LoginPage() {
           <div className="w-6 h-6 border border-indigo-400/50 rounded-lg transform rotate-12"></div>
         </div>
         
-        {/* ظ†ظ‚ط§ط· ط¥ط¶ط§ظپظٹط© طھط¹ظƒط³ ط§ظ„ظ…ط¹ط±ظپط© */}
+        {/* نقاط إضافية تعكس المعرفة */}
         <div className="absolute top-1/8 right-1/8 w-1.5 h-1.5 bg-blue-400/70 rounded-full animate-ping" style={{animationDelay: '0.3s'}}></div>
         <div className="absolute top-3/8 left-1/8 w-1 h-1 bg-indigo-400/70 rounded-full animate-ping" style={{animationDelay: '0.8s'}}></div>
         <div className="absolute bottom-1/8 right-3/8 w-2 h-2 bg-purple-400/70 rounded-full animate-ping" style={{animationDelay: '1.2s'}}></div>
         <div className="absolute bottom-3/8 left-3/8 w-1.5 h-1.5 bg-blue-500/70 rounded-full animate-ping" style={{animationDelay: '0.6s'}}></div>
         
-        {/* ط£ط´ظƒط§ظ„ طھط¹ظƒط³ ط§ظ„ظƒطھط¨ ط§ظ„ظ…ظپطھظˆط­ط© */}
+        {/* أشكال تعكس الكتب المفتوحة */}
         <div className="absolute top-1/2 right-1/8 w-12 h-16 bg-gradient-to-b from-blue-200/25 to-indigo-200/25 rounded-sm transform rotate-6"></div>
         <div className="absolute top-1/2 right-1/8 w-12 h-16 bg-gradient-to-b from-indigo-200/25 to-purple-200/25 rounded-sm transform -rotate-6 ml-2"></div>
         
-        {/* ط®ط·ظˆط· طھط¹ظƒط³ ط§ظ„طھط¯ط±ط¬ ط§ظ„ط£ظƒط§ط¯ظٹظ…ظٹ */}
+        {/* خطوط تعكس التدرج الأكاديمي */}
         <div className="absolute top-1/6 right-1/2 w-1 h-16 bg-gradient-to-b from-blue-300/40 via-indigo-300/40 to-purple-300/40"></div>
         <div className="absolute bottom-1/6 left-1/2 w-1 h-16 bg-gradient-to-b from-purple-300/40 via-indigo-300/40 to-blue-300/40"></div>
         
-        {/* ط£ط´ظƒط§ظ„ طھط¹ظƒط³ ط§ظ„ظ…ط®طھط¨ط±ط§طھ ظˆط§ظ„طھط¬ط§ط±ط¨ */}
+        {/* أشكال تعكس المختبرات والتجارب */}
         <div className="absolute top-2/3 left-1/8 w-8 h-8 border-2 border-blue-300/40 rounded-full flex items-center justify-center">
           <div className="w-4 h-4 bg-blue-400/60 rounded-full"></div>
         </div>
@@ -206,37 +206,37 @@ export default function LoginPage() {
           <div className="w-3 h-3 bg-indigo-400/60 rounded-full"></div>
         </div>
         
-        {/* ط®ط·ظˆط· طھط¹ظƒط³ ط§ظ„طھظ‚ط¯ظ… ط§ظ„ط¹ظ„ظ…ظٹ */}
+        {/* خطوط تعكس التقدم العلمي */}
         <div className="absolute top-1/5 right-1/4 w-32 h-0.5 bg-gradient-to-l from-blue-300/30 via-indigo-300/30 to-purple-300/30 transform rotate-30"></div>
         <div className="absolute bottom-1/5 left-1/4 w-28 h-0.5 bg-gradient-to-r from-purple-300/30 via-indigo-300/30 to-blue-300/30 transform -rotate-30"></div>
       </div>
 
-      {/* ط¨ط·ط§ظ‚ط© طھط³ط¬ظٹظ„ ط§ظ„ط¯ط®ظˆظ„ */}
+      {/* بطاقة تسجيل الدخول */}
       <div className="relative w-full max-w-md">
         <div className="bg-white/90 backdrop-blur-lg rounded-2xl shadow-2xl border border-white/30 p-6 hover:shadow-glow transition-all duration-300">
-          {/* ط´ط¹ط§ط± ط§ظ„ظƒظ„ظٹط© */}
+          {/* شعار الكلية */}
           <div className="text-center mb-6">
-            {/* ط´ط¹ط§ط± ط§ظ„ظƒظ„ظٹط© */}
+            {/* شعار الكلية */}
             <div className="w-20 h-20 mx-auto mb-3 flex items-center justify-center">
               <Image 
                 src="/logos/college-logo.png" 
-                alt="ط´ط¹ط§ط± ظƒظ„ظٹط© ط§ظ„ط´ط±ظ‚" 
+                alt="شعار كلية الشرق" 
                 width={80}
                 height={80}
                 className="w-full h-full object-contain hover:scale-105 transition-transform duration-300"
                 onError={(e) => {
-                  // ظپظٹ ط­ط§ظ„ط© ط¹ط¯ظ… ظˆط¬ظˆط¯ ط§ظ„ط´ط¹ط§ط±طŒ ظ†ط¹ط±ط¶ ط§ظ„ط´ط¹ط§ط± ط§ظ„ط¨ط¯ظٹظ„
+                  // في حالة عدم وجود الشعار، نعرض الشعار البديل
                   e.currentTarget.style.display = 'none';
                   (e.currentTarget.nextElementSibling as HTMLElement)?.style.setProperty('display', 'flex');
                 }}
               />
-              {/* ط´ط¹ط§ط± ط¨ط¯ظٹظ„ ظپظٹ ط­ط§ظ„ط© ط¹ط¯ظ… ظˆط¬ظˆط¯ ط§ظ„طµظˆط±ط© */}
+              {/* شعار بديل في حالة عدم وجود الصورة */}
               <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-purple-600 rounded-full flex items-center justify-center shadow-lg hover:scale-105 transition-transform duration-300 hidden">
-                <span className="text-white text-2xl font-bold">ط´</span>
+                <span className="text-white text-2xl font-bold">ش</span>
               </div>
             </div>
             
-            {/* ط§ط³ظ… ط§ظ„ظ†ط¸ط§ظ… */}
+            {/* اسم النظام */}
             <div className="mb-3">
               <h1 className="text-4xl font-black mb-2" style={{ fontFamily: 'Segoe UI Black, system-ui, sans-serif' }}>
                 <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
@@ -254,20 +254,20 @@ export default function LoginPage() {
               </div>
             </div>
             
-            {/* ظ…ط¹ظ„ظˆظ…ط§طھ ط§ظ„ظƒظ„ظٹط© */}
+            {/* معلومات الكلية */}
             <div className="mb-3">
-              <h2 className="text-xl font-semibold text-gray-800 mb-1">ظƒظ„ظٹط© ط§ظ„ط´ط±ظ‚</h2>
-              <p className="text-gray-600 text-sm">ظ„ظ„ط¹ظ„ظˆظ… ط§ظ„طھظ‚ظ†ظٹط© ط§ظ„طھط®طµطµظٹط©</p>
+              <h2 className="text-xl font-semibold text-gray-800 mb-1">كلية الشرق</h2>
+              <p className="text-gray-600 text-sm">للعلوم التقنية التخصصية</p>
             </div>
             
             <div className="w-20 h-1 bg-gradient-to-r from-blue-600 to-purple-600 mx-auto rounded-full"></div>
           </div>
 
-          {/* ظ†ظ…ظˆط°ط¬ طھط³ط¬ظٹظ„ ط§ظ„ط¯ط®ظˆظ„ */}
+          {/* نموذج تسجيل الدخول */}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
-                ط§ط³ظ… ط§ظ„ظ…ط³طھط®ط¯ظ…
+                اسم المستخدم
               </label>
               <input
                 type="text"
@@ -276,14 +276,14 @@ export default function LoginPage() {
                 value={formData.username}
                 onChange={handleInputChange}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white/70 backdrop-blur-sm hover:bg-white/80 focus:bg-white"
-                placeholder="ط£ط¯ط®ظ„ ط§ط³ظ… ط§ظ„ظ…ط³طھط®ط¯ظ…"
+                placeholder="أدخل اسم المستخدم"
                 required
               />
             </div>
 
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                ظƒظ„ظ…ط© ط§ظ„ظ…ط±ظˆط±
+                كلمة المرور
               </label>
               <div className="relative">
                 <input
@@ -293,7 +293,7 @@ export default function LoginPage() {
                   value={formData.password}
                   onChange={handleInputChange}
                   className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white/70 backdrop-blur-sm hover:bg-white/80 focus:bg-white"
-                  placeholder="ط£ط¯ط®ظ„ ظƒظ„ظ…ط© ط§ظ„ظ…ط±ظˆط±"
+                  placeholder="أدخل كلمة المرور"
                   required
                 />
                 <button
@@ -319,11 +319,11 @@ export default function LoginPage() {
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
                 <label htmlFor="remember-me" className="mr-2 block text-sm text-gray-700">
-                  طھط°ظƒط±ظ†ظٹ
+                  تذكرني
                 </label>
               </div>
               <a href="#" className="text-sm text-blue-600 hover:text-blue-500 transition-colors">
-                ظ†ط³ظٹطھ ظƒظ„ظ…ط© ط§ظ„ظ…ط±ظˆط±طں
+                نسيت كلمة المرور؟
               </a>
             </div>
 
@@ -335,18 +335,18 @@ export default function LoginPage() {
               {isLoading ? (
                 <div className="flex items-center justify-center">
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
-                  ط¬ط§ط±ظٹ طھط³ط¬ظٹظ„ ط§ظ„ط¯ط®ظˆظ„...
+                  جاري تسجيل الدخول...
                 </div>
               ) : (
-                'طھط³ط¬ظٹظ„ ط§ظ„ط¯ط®ظˆظ„'
+                'تسجيل الدخول'
               )}
             </button>
           </form>
 
-          {/* ظ…ط¹ظ„ظˆظ…ط§طھ ط¥ط¶ط§ظپظٹط© */}
+          {/* معلومات إضافية */}
           <div className="mt-6 text-center">
             <p className="text-sm text-gray-600 mb-2">
-              ظ†ط¸ط§ظ… ط¥ط¯ط§ط±ط© ط´ط§ظ…ظ„ ظ„ظƒظ„ظٹط© ط§ظ„ط´ط±ظ‚ ظ„ظ„ط¹ظ„ظˆظ… ط§ظ„طھظ‚ظ†ظٹط© ط§ظ„طھط®طµطµظٹط©
+              نظام إدارة شامل لكلية الشرق للعلوم التقنية التخصصية
             </p>
             <div className="flex items-center justify-center space-x-2 space-x-reverse">
               <span className="text-xs text-gray-500">Powered by</span>
@@ -360,4 +360,3 @@ export default function LoginPage() {
     </div>
   );
 }
-
