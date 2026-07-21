@@ -1,0 +1,336 @@
+{
+  "template": "correction-exam-a4-v1",
+  "thresholds": {
+    "fillThreshold": 0.07,
+    "blankThreshold": 0.07,
+    "multipleDelta": 0.028,
+    "minConfidence": 0.35
+  },
+  "expectedAnswersCount": 25,
+  "results": [
+    {
+      "imagePath": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\debug-runs\\single-page-test-1\\original.png",
+      "studentCode": "",
+      "answers": [
+        {
+          "questionNumber": 1,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.3627760252365931,
+          "bubbleScores": {
+            "A": 0.0,
+            "B": 0.3627760252365931,
+            "C": 0.22082018927444794,
+            "D": 0.3280757097791798
+          }
+        },
+        {
+          "questionNumber": 2,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.34069400630914826,
+          "bubbleScores": {
+            "A": 0.2586750788643533,
+            "B": 0.0,
+            "C": 0.2334384858044164,
+            "D": 0.34069400630914826
+          }
+        },
+        {
+          "questionNumber": 3,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.35962145110410093,
+          "bubbleScores": {
+            "A": 0.2744479495268139,
+            "B": 0.35962145110410093,
+            "C": 0.0,
+            "D": 0.2996845425867508
+          }
+        },
+        {
+          "questionNumber": 4,
+          "selectedOption": null,
+          "status": "multiple",
+          "confidence": 0.3249211356466877,
+          "bubbleScores": {
+            "A": 0.25236593059936907,
+            "B": 0.3249211356466877,
+            "C": 0.0,
+            "D": 0.3028391167192429
+          }
+        },
+        {
+          "questionNumber": 5,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.4637223974763407,
+          "bubbleScores": {
+            "A": 0.0,
+            "B": 0.4637223974763407,
+            "C": 0.22712933753943218,
+            "D": 0.41009463722397477
+          }
+        },
+        {
+          "questionNumber": 6,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.4195583596214511,
+          "bubbleScores": {
+            "A": 0.3501577287066246,
+            "B": 0.0,
+            "C": 0.24921135646687698,
+            "D": 0.4195583596214511
+          }
+        },
+        {
+          "questionNumber": 7,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.42902208201892744,
+          "bubbleScores": {
+            "A": 0.3659305993690852,
+            "B": 0.42902208201892744,
+            "C": 0.24605678233438485,
+            "D": 0.35962145110410093
+          }
+        },
+        {
+          "questionNumber": 8,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.416403785488959,
+          "bubbleScores": {
+            "A": 0.334384858044164,
+            "B": 0.416403785488959,
+            "C": 0.19873817034700317,
+            "D": 0.3753943217665615
+          }
+        },
+        {
+          "questionNumber": 9,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.4637223974763407,
+          "bubbleScores": {
+            "A": 0.305993690851735,
+            "B": 0.4637223974763407,
+            "C": 0.0,
+            "D": 0.41009463722397477
+          }
+        },
+        {
+          "questionNumber": 10,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.3627760252365931,
+          "bubbleScores": {
+            "A": 0.27129337539432175,
+            "B": 0.3627760252365931,
+            "C": 0.19873817034700317,
+            "D": 0.0
+          }
+        },
+        {
+          "questionNumber": 11,
+          "selectedOption": null,
+          "status": "multiple",
+          "confidence": 0.31545741324921134,
+          "bubbleScores": {
+            "A": 0.3028391167192429,
+            "B": 0.31545741324921134,
+            "C": 0.0,
+            "D": 0.2334384858044164
+          }
+        },
+        {
+          "questionNumber": 12,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.3186119873817035,
+          "bubbleScores": {
+            "A": 0.27129337539432175,
+            "B": 0.3186119873817035,
+            "C": 0.15772870662460567,
+            "D": 0.0
+          }
+        },
+        {
+          "questionNumber": 13,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.305993690851735,
+          "bubbleScores": {
+            "A": 0.20504731861198738,
+            "B": 0.305993690851735,
+            "C": 0.17981072555205047,
+            "D": 0.0
+          }
+        },
+        {
+          "questionNumber": 14,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.3312302839116719,
+          "bubbleScores": {
+            "A": 0.21766561514195584,
+            "B": 0.3312302839116719,
+            "C": 0.0,
+            "D": 0.26813880126182965
+          }
+        },
+        {
+          "questionNumber": 15,
+          "selectedOption": null,
+          "status": "multiple",
+          "confidence": 0.2334384858044164,
+          "bubbleScores": {
+            "A": 0.2334384858044164,
+            "B": 0.0,
+            "C": 0.1829652996845426,
+            "D": 0.22082018927444794
+          }
+        },
+        {
+          "questionNumber": 16,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.2996845425867508,
+          "bubbleScores": {
+            "A": 0.22082018927444794,
+            "B": 0.2996845425867508,
+            "C": 0.15141955835962145,
+            "D": 0.0
+          }
+        },
+        {
+          "questionNumber": 17,
+          "selectedOption": null,
+          "status": "multiple",
+          "confidence": 0.277602523659306,
+          "bubbleScores": {
+            "A": 0.27129337539432175,
+            "B": 0.0,
+            "C": 0.1829652996845426,
+            "D": 0.277602523659306
+          }
+        },
+        {
+          "questionNumber": 18,
+          "selectedOption": null,
+          "status": "multiple",
+          "confidence": 0.2996845425867508,
+          "bubbleScores": {
+            "A": 0.2996845425867508,
+            "B": 0.0,
+            "C": 0.1861198738170347,
+            "D": 0.29337539432176657
+          }
+        },
+        {
+          "questionNumber": 19,
+          "selectedOption": null,
+          "status": "multiple",
+          "confidence": 0.33753943217665616,
+          "bubbleScores": {
+            "A": 0.33753943217665616,
+            "B": 0.31545741324921134,
+            "C": 0.0,
+            "D": 0.23974763406940064
+          }
+        },
+        {
+          "questionNumber": 20,
+          "selectedOption": null,
+          "status": "multiple",
+          "confidence": 0.3249211356466877,
+          "bubbleScores": {
+            "A": 0.305993690851735,
+            "B": 0.3249211356466877,
+            "C": 0.0,
+            "D": 0.28391167192429023
+          }
+        },
+        {
+          "questionNumber": 21,
+          "selectedOption": null,
+          "status": "multiple",
+          "confidence": 0.305993690851735,
+          "bubbleScores": {
+            "A": 0.2996845425867508,
+            "B": 0.0,
+            "C": 0.22397476340694006,
+            "D": 0.305993690851735
+          }
+        },
+        {
+          "questionNumber": 22,
+          "selectedOption": null,
+          "status": "multiple",
+          "confidence": 0.35331230283911674,
+          "bubbleScores": {
+            "A": 0.33753943217665616,
+            "B": 0.0,
+            "C": 0.23659305993690852,
+            "D": 0.35331230283911674
+          }
+        },
+        {
+          "questionNumber": 23,
+          "selectedOption": null,
+          "status": "multiple",
+          "confidence": 0.334384858044164,
+          "bubbleScores": {
+            "A": 0.334384858044164,
+            "B": 0.0,
+            "C": 0.2302839116719243,
+            "D": 0.31545741324921134
+          }
+        },
+        {
+          "questionNumber": 24,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.3753943217665615,
+          "bubbleScores": {
+            "A": 0.31545741324921134,
+            "B": 0.3753943217665615,
+            "C": 0.19242902208201892,
+            "D": 0.0
+          }
+        },
+        {
+          "questionNumber": 25,
+          "selectedOption": null,
+          "status": "uncertain",
+          "confidence": 0.45110410094637227,
+          "bubbleScores": {
+            "A": 0.305993690851735,
+            "B": 0.45110410094637227,
+            "C": 0.0,
+            "D": 0.3943217665615142
+          }
+        }
+      ],
+      "metrics": {
+        "totalQuestions": 25,
+        "correctReads": 0,
+        "wrongReads": 15,
+        "blanks": 0,
+        "multiple": 10,
+        "uncertain": 15,
+        "accuracyPercentage": 0.0
+      }
+    }
+  ],
+  "aggregate": {
+    "totalQuestions": 25,
+    "correctReads": 0,
+    "wrongReads": 15,
+    "blanks": 0,
+    "multiple": 10,
+    "uncertain": 15,
+    "accuracyPercentage": 0.0
+  }
+}

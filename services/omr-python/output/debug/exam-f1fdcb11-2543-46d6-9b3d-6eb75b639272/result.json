@@ -1,0 +1,319 @@
+{
+  "success": true,
+  "studentCode": "",
+  "answers": [
+    {
+      "questionNumber": 1,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.3764172335600907,
+      "bubbleScores": {
+        "A": 0.3333333333333333,
+        "B": 0.3764172335600907,
+        "C": 0.23809523809523808,
+        "D": 0.2925170068027211
+      }
+    },
+    {
+      "questionNumber": 2,
+      "selectedOption": "A",
+      "status": "answered",
+      "confidence": 0.5238095238095238,
+      "bubbleScores": {
+        "A": 0.5238095238095238,
+        "B": 0.3401360544217687,
+        "C": 0.2199546485260771,
+        "D": 0.25170068027210885
+      }
+    },
+    {
+      "questionNumber": 3,
+      "selectedOption": "A",
+      "status": "answered",
+      "confidence": 0.41950113378684806,
+      "bubbleScores": {
+        "A": 0.41950113378684806,
+        "B": 0.31746031746031744,
+        "C": 0.1927437641723356,
+        "D": 0.2562358276643991
+      }
+    },
+    {
+      "questionNumber": 4,
+      "selectedOption": "A",
+      "status": "answered",
+      "confidence": 0.36961451247165533,
+      "bubbleScores": {
+        "A": 0.36961451247165533,
+        "B": 0.28798185941043086,
+        "C": 0.18594104308390022,
+        "D": 0.18820861678004536
+      }
+    },
+    {
+      "questionNumber": 5,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.6507936507936508,
+      "bubbleScores": {
+        "A": 0.31746031746031744,
+        "B": 0.6507936507936508,
+        "C": 0.24036281179138322,
+        "D": 0.30839002267573695
+      }
+    },
+    {
+      "questionNumber": 6,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.36507936507936506,
+      "bubbleScores": {
+        "A": 0.2653061224489796,
+        "B": 0.36507936507936506,
+        "C": 0.20408163265306123,
+        "D": 0.2585034013605442
+      }
+    },
+    {
+      "questionNumber": 7,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.3129251700680272,
+      "bubbleScores": {
+        "A": 0.21541950113378686,
+        "B": 0.3129251700680272,
+        "C": 0.19727891156462585,
+        "D": 0.20408163265306123
+      }
+    },
+    {
+      "questionNumber": 8,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.6870748299319728,
+      "bubbleScores": {
+        "A": 0.1927437641723356,
+        "B": 0.6870748299319728,
+        "C": 0.17687074829931973,
+        "D": 0.22448979591836735
+      }
+    },
+    {
+      "questionNumber": 9,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.37188208616780044,
+      "bubbleScores": {
+        "A": 0.30158730158730157,
+        "B": 0.37188208616780044,
+        "C": 0.07936507936507936,
+        "D": 0.2947845804988662
+      }
+    },
+    {
+      "questionNumber": 10,
+      "selectedOption": "C",
+      "status": "answered",
+      "confidence": 0.35147392290249435,
+      "bubbleScores": {
+        "A": 0.24263038548752835,
+        "B": 0.31746031746031744,
+        "C": 0.35147392290249435,
+        "D": 0.24263038548752835
+      }
+    },
+    {
+      "questionNumber": 11,
+      "selectedOption": "C",
+      "status": "answered",
+      "confidence": 0.4126984126984127,
+      "bubbleScores": {
+        "A": 0.2199546485260771,
+        "B": 0.30612244897959184,
+        "C": 0.4126984126984127,
+        "D": 0.20861678004535147
+      }
+    },
+    {
+      "questionNumber": 12,
+      "selectedOption": null,
+      "status": "uncertain",
+      "confidence": 0.20861678004535147,
+      "bubbleScores": {
+        "A": 0.16780045351473924,
+        "B": 0.20861678004535147,
+        "C": 0.1746031746031746,
+        "D": 0.1927437641723356
+      }
+    },
+    {
+      "questionNumber": 13,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.3401360544217687,
+      "bubbleScores": {
+        "A": 0.29931972789115646,
+        "B": 0.3401360544217687,
+        "C": 0.22448979591836735,
+        "D": 0.18594104308390022
+      }
+    },
+    {
+      "questionNumber": 14,
+      "selectedOption": "D",
+      "status": "answered",
+      "confidence": 0.37188208616780044,
+      "bubbleScores": {
+        "A": 0.25170068027210885,
+        "B": 0.3310657596371882,
+        "C": 0.1927437641723356,
+        "D": 0.37188208616780044
+      }
+    },
+    {
+      "questionNumber": 15,
+      "selectedOption": "D",
+      "status": "answered",
+      "confidence": 0.35374149659863946,
+      "bubbleScores": {
+        "A": 0.17913832199546487,
+        "B": 0.2108843537414966,
+        "C": 0.1655328798185941,
+        "D": 0.35374149659863946
+      }
+    },
+    {
+      "questionNumber": 16,
+      "selectedOption": "D",
+      "status": "answered",
+      "confidence": 0.764172335600907,
+      "bubbleScores": {
+        "A": 0.14965986394557823,
+        "B": 0.18140589569160998,
+        "C": 0.14965986394557823,
+        "D": 0.764172335600907
+      }
+    },
+    {
+      "questionNumber": 17,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.29931972789115646,
+      "bubbleScores": {
+        "A": 0.2494331065759637,
+        "B": 0.29931972789115646,
+        "C": 0.2018140589569161,
+        "D": 0.23129251700680273
+      }
+    },
+    {
+      "questionNumber": 18,
+      "selectedOption": null,
+      "status": "multiple",
+      "confidence": 0.22675736961451248,
+      "bubbleScores": {
+        "A": 0.21541950113378686,
+        "B": 0.06802721088435375,
+        "C": 0.19501133786848074,
+        "D": 0.22675736961451248
+      }
+    },
+    {
+      "questionNumber": 19,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.21768707482993196,
+      "bubbleScores": {
+        "A": 0.1360544217687075,
+        "B": 0.21768707482993196,
+        "C": 0.1564625850340136,
+        "D": 0.17233560090702948
+      }
+    },
+    {
+      "questionNumber": 20,
+      "selectedOption": "A",
+      "status": "answered",
+      "confidence": 0.45351473922902497,
+      "bubbleScores": {
+        "A": 0.45351473922902497,
+        "B": 0.1927437641723356,
+        "C": 0.15873015873015872,
+        "D": 0.1655328798185941
+      }
+    },
+    {
+      "questionNumber": 21,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.3492063492063492,
+      "bubbleScores": {
+        "A": 0.2925170068027211,
+        "B": 0.3492063492063492,
+        "C": 0.17913832199546487,
+        "D": 0.2925170068027211
+      }
+    },
+    {
+      "questionNumber": 22,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.31065759637188206,
+      "bubbleScores": {
+        "A": 0.21541950113378686,
+        "B": 0.31065759637188206,
+        "C": 0.18140589569160998,
+        "D": 0.031746031746031744
+      }
+    },
+    {
+      "questionNumber": 23,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.3741496598639456,
+      "bubbleScores": {
+        "A": 0.16099773242630386,
+        "B": 0.3741496598639456,
+        "C": 0.17006802721088435,
+        "D": 0.19954648526077098
+      }
+    },
+    {
+      "questionNumber": 24,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.41950113378684806,
+      "bubbleScores": {
+        "A": 0.1360544217687075,
+        "B": 0.41950113378684806,
+        "C": 0.13378684807256236,
+        "D": 0.15192743764172337
+      }
+    },
+    {
+      "questionNumber": 25,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.28798185941043086,
+      "bubbleScores": {
+        "A": 0.24263038548752835,
+        "B": 0.28798185941043086,
+        "C": 0.0,
+        "D": 0.24489795918367346
+      }
+    }
+  ],
+  "needsReview": true,
+  "errors": [],
+  "debugImageFiles": {
+    "original": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\exam-f1fdcb11-2543-46d6-9b3d-6eb75b639272\\original.png",
+    "grayscale": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\exam-f1fdcb11-2543-46d6-9b3d-6eb75b639272\\grayscale.png",
+    "thresholded": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\exam-f1fdcb11-2543-46d6-9b3d-6eb75b639272\\thresholded.png",
+    "contour": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\exam-f1fdcb11-2543-46d6-9b3d-6eb75b639272\\contour.png",
+    "detected_outer_page_contour": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\exam-f1fdcb11-2543-46d6-9b3d-6eb75b639272\\detected_outer_page_contour.png",
+    "warped_full_page": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\exam-f1fdcb11-2543-46d6-9b3d-6eb75b639272\\warped_full_page.png",
+    "warped": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\exam-f1fdcb11-2543-46d6-9b3d-6eb75b639272\\warped.png",
+    "roiOverlay": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\exam-f1fdcb11-2543-46d6-9b3d-6eb75b639272\\roi_overlay.png",
+    "markedBubbles": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\exam-f1fdcb11-2543-46d6-9b3d-6eb75b639272\\marked_bubbles.png"
+  }
+}

@@ -1,0 +1,344 @@
+{
+  "success": true,
+  "studentCode": "",
+  "answers": [
+    {
+      "questionNumber": 1,
+      "selectedOption": "A",
+      "status": "answered",
+      "confidence": 0.971535325050354,
+      "bubbleScores": {
+        "A": 0.971535325050354,
+        "B": 0.3764172335600907,
+        "C": 0.23356009070294784,
+        "D": 0.2743764172335601
+      },
+      "bestChoiceLetter": "A"
+    },
+    {
+      "questionNumber": 2,
+      "selectedOption": "A",
+      "status": "answered",
+      "confidence": 0.9625716805458069,
+      "bubbleScores": {
+        "A": 0.9625716805458069,
+        "B": 0.3401360544217687,
+        "C": 0.2199546485260771,
+        "D": 0.25170068027210885
+      },
+      "bestChoiceLetter": "A"
+    },
+    {
+      "questionNumber": 3,
+      "selectedOption": "A",
+      "status": "answered",
+      "confidence": 0.9806767702102661,
+      "bubbleScores": {
+        "A": 0.9806767702102661,
+        "B": 0.31746031746031744,
+        "C": 0.1927437641723356,
+        "D": 0.2562358276643991
+      },
+      "bestChoiceLetter": "A"
+    },
+    {
+      "questionNumber": 4,
+      "selectedOption": "A",
+      "status": "answered",
+      "confidence": 0.9875150322914124,
+      "bubbleScores": {
+        "A": 0.9875150322914124,
+        "B": 0.28798185941043086,
+        "C": 0.18594104308390022,
+        "D": 0.18820861678004536
+      },
+      "bestChoiceLetter": "A"
+    },
+    {
+      "questionNumber": 5,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.9397270083427429,
+      "bubbleScores": {
+        "A": 0.31746031746031744,
+        "B": 0.9397270083427429,
+        "C": 0.24036281179138322,
+        "D": 0.30839002267573695
+      },
+      "bestChoiceLetter": "B"
+    },
+    {
+      "questionNumber": 6,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.9698901772499084,
+      "bubbleScores": {
+        "A": 0.2653061224489796,
+        "B": 0.9698901772499084,
+        "C": 0.20408163265306123,
+        "D": 0.2585034013605442
+      },
+      "bestChoiceLetter": "B"
+    },
+    {
+      "questionNumber": 7,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.3129251700680272,
+      "bubbleScores": {
+        "A": 0.21541950113378686,
+        "B": 0.3129251700680272,
+        "C": 0.19727891156462585,
+        "D": 0.20408163265306123
+      },
+      "bestChoiceLetter": "B"
+    },
+    {
+      "questionNumber": 8,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.964714765548706,
+      "bubbleScores": {
+        "A": 0.1927437641723356,
+        "B": 0.964714765548706,
+        "C": 0.17687074829931973,
+        "D": 0.22448979591836735
+      },
+      "bestChoiceLetter": "B"
+    },
+    {
+      "questionNumber": 9,
+      "selectedOption": "C",
+      "status": "answered",
+      "confidence": 0.9869458675384521,
+      "bubbleScores": {
+        "A": 0.3219954648526077,
+        "B": 0.3877551020408163,
+        "C": 0.9869458675384521,
+        "D": 0.30385487528344673
+      },
+      "bestChoiceLetter": "C"
+    },
+    {
+      "questionNumber": 10,
+      "selectedOption": "C",
+      "status": "answered",
+      "confidence": 0.9779289364814758,
+      "bubbleScores": {
+        "A": 0.24263038548752835,
+        "B": 0.31746031746031744,
+        "C": 0.9779289364814758,
+        "D": 0.24263038548752835
+      },
+      "bestChoiceLetter": "C"
+    },
+    {
+      "questionNumber": 11,
+      "selectedOption": "C",
+      "status": "answered",
+      "confidence": 0.9718643426895142,
+      "bubbleScores": {
+        "A": 0.2199546485260771,
+        "B": 0.30612244897959184,
+        "C": 0.9718643426895142,
+        "D": 0.20861678004535147
+      },
+      "bestChoiceLetter": "C"
+    },
+    {
+      "questionNumber": 12,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.20861678004535147,
+      "bubbleScores": {
+        "A": 0.16780045351473924,
+        "B": 0.20861678004535147,
+        "C": 0.1746031746031746,
+        "D": 0.1927437641723356
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 13,
+      "selectedOption": "D",
+      "status": "answered",
+      "confidence": 0.9772709012031555,
+      "bubbleScores": {
+        "A": 0.29931972789115646,
+        "B": 0.3401360544217687,
+        "C": 0.22448979591836735,
+        "D": 0.9772709012031555
+      },
+      "bestChoiceLetter": "D"
+    },
+    {
+      "questionNumber": 14,
+      "selectedOption": "D",
+      "status": "answered",
+      "confidence": 0.9599661827087402,
+      "bubbleScores": {
+        "A": 0.25170068027210885,
+        "B": 0.3310657596371882,
+        "C": 0.1927437641723356,
+        "D": 0.9599661827087402
+      },
+      "bestChoiceLetter": "D"
+    },
+    {
+      "questionNumber": 15,
+      "selectedOption": "D",
+      "status": "answered",
+      "confidence": 0.9783557653427124,
+      "bubbleScores": {
+        "A": 0.17913832199546487,
+        "B": 0.2108843537414966,
+        "C": 0.1655328798185941,
+        "D": 0.9783557653427124
+      },
+      "bestChoiceLetter": "D"
+    },
+    {
+      "questionNumber": 16,
+      "selectedOption": "D",
+      "status": "answered",
+      "confidence": 0.9349873065948486,
+      "bubbleScores": {
+        "A": 0.14965986394557823,
+        "B": 0.18140589569160998,
+        "C": 0.14965986394557823,
+        "D": 0.9349873065948486
+      },
+      "bestChoiceLetter": "D"
+    },
+    {
+      "questionNumber": 17,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.31065759637188206,
+      "bubbleScores": {
+        "A": 0.2698412698412698,
+        "B": 0.31065759637188206,
+        "C": 0.20408163265306123,
+        "D": 0.272108843537415
+      },
+      "bestChoiceLetter": "B"
+    },
+    {
+      "questionNumber": 18,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.9895069599151611,
+      "bubbleScores": {
+        "A": 0.21541950113378686,
+        "B": 0.9895069599151611,
+        "C": 0.19501133786848074,
+        "D": 0.22675736961451248
+      },
+      "bestChoiceLetter": "B"
+    },
+    {
+      "questionNumber": 19,
+      "selectedOption": "A",
+      "status": "answered",
+      "confidence": 0.9798496961593628,
+      "bubbleScores": {
+        "A": 0.9798496961593628,
+        "B": 0.21768707482993196,
+        "C": 0.1564625850340136,
+        "D": 0.17233560090702948
+      },
+      "bestChoiceLetter": "A"
+    },
+    {
+      "questionNumber": 20,
+      "selectedOption": "A",
+      "status": "answered",
+      "confidence": 0.9825263619422913,
+      "bubbleScores": {
+        "A": 0.9825263619422913,
+        "B": 0.1927437641723356,
+        "C": 0.15873015873015872,
+        "D": 0.1655328798185941
+      },
+      "bestChoiceLetter": "A"
+    },
+    {
+      "questionNumber": 21,
+      "selectedOption": "C",
+      "status": "answered",
+      "confidence": 0.9841980934143066,
+      "bubbleScores": {
+        "A": 0.2925170068027211,
+        "B": 0.3492063492063492,
+        "C": 0.9841980934143066,
+        "D": 0.2925170068027211
+      },
+      "bestChoiceLetter": "C"
+    },
+    {
+      "questionNumber": 22,
+      "selectedOption": "D",
+      "status": "answered",
+      "confidence": 0.994326651096344,
+      "bubbleScores": {
+        "A": 0.21541950113378686,
+        "B": 0.31065759637188206,
+        "C": 0.18140589569160998,
+        "D": 0.994326651096344
+      },
+      "bestChoiceLetter": "D"
+    },
+    {
+      "questionNumber": 23,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.9807389974594116,
+      "bubbleScores": {
+        "A": 0.16099773242630386,
+        "B": 0.9807389974594116,
+        "C": 0.17006802721088435,
+        "D": 0.19954648526077098
+      },
+      "bestChoiceLetter": "B"
+    },
+    {
+      "questionNumber": 24,
+      "selectedOption": "B",
+      "status": "answered",
+      "confidence": 0.9832020998001099,
+      "bubbleScores": {
+        "A": 0.1360544217687075,
+        "B": 0.9832020998001099,
+        "C": 0.13378684807256236,
+        "D": 0.15192743764172337
+      },
+      "bestChoiceLetter": "B"
+    },
+    {
+      "questionNumber": 25,
+      "selectedOption": "C",
+      "status": "answered",
+      "confidence": 0.9966297745704651,
+      "bubbleScores": {
+        "A": 0.24263038548752835,
+        "B": 0.28798185941043086,
+        "C": 0.9966297745704651,
+        "D": 0.24489795918367346
+      },
+      "bestChoiceLetter": "C"
+    }
+  ],
+  "needsReview": true,
+  "errors": [],
+  "debugImageFiles": {
+    "original": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776986185504\\original.png",
+    "grayscale": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776986185504\\grayscale.png",
+    "thresholded": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776986185504\\thresholded.png",
+    "contour": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776986185504\\contour.png",
+    "detected_outer_page_contour": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776986185504\\detected_outer_page_contour.png",
+    "warped_full_page": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776986185504\\warped_full_page.png",
+    "warped": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776986185504\\warped.png",
+    "roiOverlay": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776986185504\\roi_overlay.png",
+    "markedBubbles": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776986185504\\marked_bubbles.png"
+  }
+}

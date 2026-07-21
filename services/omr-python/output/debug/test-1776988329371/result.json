@@ -1,0 +1,344 @@
+{
+  "success": true,
+  "studentCode": "",
+  "answers": [
+    {
+      "questionNumber": 1,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 2,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 3,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 4,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 5,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 6,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 7,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 8,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.000299591941293329,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.000299591941293329,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 9,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 10,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 11,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 12,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 8.559769572457299e-05,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 8.559769572457299e-05,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 13,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 14,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 15,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 16,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 17,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 18,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 19,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 7.703792740358039e-05,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 7.703792740358039e-05,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 20,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 21,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 22,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 23,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 24,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    },
+    {
+      "questionNumber": 25,
+      "selectedOption": null,
+      "status": "blank",
+      "confidence": 0.0,
+      "bubbleScores": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "bestChoiceLetter": null
+    }
+  ],
+  "needsReview": true,
+  "errors": [],
+  "debugImageFiles": {
+    "original": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776988329371\\original.png",
+    "grayscale": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776988329371\\grayscale.png",
+    "thresholded": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776988329371\\thresholded.png",
+    "contour": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776988329371\\contour.png",
+    "detected_outer_page_contour": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776988329371\\detected_outer_page_contour.png",
+    "warped_full_page": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776988329371\\warped_full_page.png",
+    "warped": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776988329371\\warped.png",
+    "roiOverlay": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776988329371\\roi_overlay.png",
+    "markedBubbles": "D:\\projects\\Examinationcommittee\\systimit\\services\\omr-python\\output\\debug\\test-1776988329371\\marked_bubbles.png"
+  }
+}
