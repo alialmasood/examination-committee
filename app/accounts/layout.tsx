@@ -157,12 +157,12 @@ export default function AccountsLayout({
           </div>
         </div>
 
-        <nav className="pt-4 px-2">
-          <div className="space-y-1">
+        <nav className="pt-2 px-2">
+          <div className="space-y-0.5">
             {/* Dashboard */}
             <Link
               href="/accounts"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts' 
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -180,30 +180,10 @@ export default function AccountsLayout({
               الصفحة الرئيسية
             </Link>
 
-            {/* Exams (as Finance operations placeholder) */}
-            <Link
-              href="/accounts/exams"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
-                pathname === '/accounts/exams' 
-                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
-                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
-              }`}
-            >
-              <div className="flex items-center">
-                {pathname === '/accounts/exams' && (
-                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
-                )}
-                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-              إدارة العمليات
-            </Link>
-
             {/* Students (as Students/Accounts) */}
             <Link
               href="/accounts/students"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/students' || pathname?.startsWith('/accounts/students/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -222,7 +202,7 @@ export default function AccountsLayout({
 
             <Link
               href="/accounts/suppliers"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/suppliers' || pathname?.startsWith('/accounts/suppliers/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4'
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -241,7 +221,7 @@ export default function AccountsLayout({
 
             <Link
               href="/accounts/purchasing"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/purchasing' || pathname?.startsWith('/accounts/purchasing/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4'
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -260,7 +240,7 @@ export default function AccountsLayout({
 
             <Link
               href="/accounts/fixed-assets"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/fixed-assets' || pathname?.startsWith('/accounts/fixed-assets/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4'
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -280,7 +260,7 @@ export default function AccountsLayout({
             {/* Installments */}
             <Link
               href="/accounts/installments"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/installments' 
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -301,7 +281,7 @@ export default function AccountsLayout({
             {/* Journal Entries */}
             <Link
               href="/accounts/entries"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/entries' || pathname?.startsWith('/accounts/entries/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -321,7 +301,7 @@ export default function AccountsLayout({
             {/* Chart of Accounts */}
             <Link
               href="/accounts/chart-of-accounts"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/chart-of-accounts' || pathname?.startsWith('/accounts/chart-of-accounts/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -341,7 +321,7 @@ export default function AccountsLayout({
             {/* Payroll */}
             <Link
               href="/accounts/payroll"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/payroll' || pathname?.startsWith('/accounts/payroll/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -358,30 +338,10 @@ export default function AccountsLayout({
               الرواتب
             </Link>
 
-            {/* College Staff Accounts */}
-            <Link
-              href="/accounts/staff"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
-                pathname === '/accounts/staff' || pathname?.startsWith('/accounts/staff/')
-                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
-                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
-              }`}
-            >
-              <div className="flex items-center">
-                {(pathname === '/accounts/staff' || pathname?.startsWith('/accounts/staff/')) && (
-                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
-                )}
-                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-              </div>
-              حسابات كادر الكلية
-            </Link>
-
             {/* Cash Box Account */}
             <Link
               href="/accounts/cashbox"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/cashbox' || pathname?.startsWith('/accounts/cashbox/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -401,7 +361,7 @@ export default function AccountsLayout({
             {/* Bank Accounts */}
             <Link
               href="/accounts/banks"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/banks' ||
                 (pathname?.startsWith('/accounts/banks/') &&
                   !pathname?.startsWith('/accounts/banks/vouchers') &&
@@ -429,7 +389,7 @@ export default function AccountsLayout({
             {/* Bank Vouchers */}
             <Link
               href="/accounts/banks/vouchers"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/banks/vouchers' ||
                 pathname?.startsWith('/accounts/banks/vouchers/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4'
@@ -451,7 +411,7 @@ export default function AccountsLayout({
             {/* Bank Transfers */}
             <Link
               href="/accounts/banks/transfers"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/banks/transfers' ||
                 pathname?.startsWith('/accounts/banks/transfers/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4'
@@ -473,7 +433,7 @@ export default function AccountsLayout({
             {/* Bank Reconciliation */}
             <Link
               href="/accounts/banks/reconciliation"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/banks/reconciliation' ||
                 pathname?.startsWith('/accounts/banks/reconciliation/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4'
@@ -492,50 +452,10 @@ export default function AccountsLayout({
               التسوية المصرفية
             </Link>
 
-            {/* Treasury Account */}
-            <Link
-              href="/accounts/treasury"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
-                pathname === '/accounts/treasury' || pathname?.startsWith('/accounts/treasury/')
-                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
-                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
-              }`}
-            >
-              <div className="flex items-center">
-                {(pathname === '/accounts/treasury' || pathname?.startsWith('/accounts/treasury/')) && (
-                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
-                )}
-                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" />
-                </svg>
-              </div>
-              حساب الخزينة
-            </Link>
-
-            {/* Results (as Reports/Statements) */}
-            <Link
-              href="/accounts/results"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
-                pathname === '/accounts/results' 
-                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
-                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
-              }`}
-            >
-              <div className="flex items-center">
-                {pathname === '/accounts/results' && (
-                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
-                )}
-                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </div>
-              كشوفات مالية
-            </Link>
-
             {/* Reports */}
             <Link
               href="/accounts/reports"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
                 pathname === '/accounts/reports' || pathname?.startsWith('/accounts/reports/')
                   ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
                   : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
@@ -550,27 +470,6 @@ export default function AccountsLayout({
                 </svg>
               </div>
               التقارير
-            </Link>
-
-            {/* Settings */}
-            <Link
-              href="/accounts/settings"
-              className={`group flex items-center px-2 py-2 text-sm font-medium transition-all duration-200 ${
-                pathname === '/accounts/settings' 
-                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
-                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
-              }`}
-            >
-              <div className="flex items-center">
-                {pathname === '/accounts/settings' && (
-                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
-                )}
-                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              </div>
-              الإعدادات
             </Link>
           </div>
         </nav>
@@ -642,6 +541,21 @@ export default function AccountsLayout({
                   <p className="text-sm font-medium text-white">{user.full_name}</p>
                   <p className="text-xs text-gray-300">{user.username}</p>
                 </div>
+                <Link
+                  href="/accounts/settings"
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    pathname === '/accounts/settings' || pathname?.startsWith('/accounts/settings/')
+                      ? 'bg-white/15 text-white'
+                      : 'text-gray-300 hover:text-white hover:bg-gray-600'
+                  }`}
+                  title="الإعدادات"
+                >
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span className="hidden sm:inline">الإعدادات</span>
+                </Link>
                 <button
                   onClick={handleLogout}
                   className="p-2 rounded-md text-gray-300 hover:text-white hover:bg-red-600 transition-colors"

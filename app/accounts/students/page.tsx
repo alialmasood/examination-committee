@@ -10,7 +10,6 @@ import {
   PAYMENT_METHOD_LABEL,
   studentApi,
   sumMoneyValues,
-  type StudentAccountListItem,
   type StudentBillingPlanDetail,
   type StudentChargeListItem,
   type StudentCollectionListItem,
@@ -45,12 +44,11 @@ export default function AccountsStudentsPage() {
     setLoading(true);
     const today = new Date().toISOString().slice(0, 10);
 
-    const [chargesRes, collectionsRes, accountsRes, plansRes] = await Promise.all([
+    const [chargesRes, collectionsRes, plansRes] = await Promise.all([
       studentApi<StudentChargeListItem[]>(
         '/api/accounts/student-charges?page_size=100&status=POSTED'
       ),
       studentApi<StudentCollectionListItem[]>(`${COLLECTIONS_API}?page_size=50`),
-      studentApi<StudentAccountListItem[]>('/api/accounts/student-accounts?page_size=100'),
       studentApi<StudentBillingPlanDetail[]>(
         '/api/accounts/student-billing-plans?status=ACTIVE&page_size=20'
       ),
@@ -112,14 +110,10 @@ export default function AccountsStudentsPage() {
       }
     }
 
-    const accountBalanceFallback = sumMoneyValues(
-      (accountsRes.data || []).map((a) => a.balance)
-    );
-
     setSummary({
-      totalReceivables: totalReceivables || accountBalanceFallback,
+      totalReceivables,
       totalCollected,
-      remaining: remaining || accountBalanceFallback,
+      remaining,
       dueInstallments,
       overdueInstallments,
       cashCollected,
