@@ -47,6 +47,11 @@ export async function GET(request: NextRequest, context: Ctx) {
         auth.user.id,
         PAYROLL_CAPABILITIES.REJECT
       );
+      const canViewHistoryCap = await hasPayrollCapability(
+        client,
+        auth.user.id,
+        PAYROLL_CAPABILITIES.VIEW_APPROVAL_HISTORY
+      );
 
       const blockingIssues = await txQuery<{ n: number }>(
         client,
@@ -239,6 +244,7 @@ export async function GET(request: NextRequest, context: Ctx) {
           can_submit_for_review,
           can_approve,
           can_reject,
+          can_view_history: canViewHistoryCap,
           can_recalculate,
           review_state,
           approval_cycle: Number(row.approval_cycle ?? 0),
