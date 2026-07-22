@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 
 interface DepartmentStat {
   id: string;
@@ -1073,7 +1074,11 @@ export default function AccountsInstallmentsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {departments.map((dept) => (
-            <div key={dept.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 hover:shadow-md transition-shadow">
+            <Link
+              key={dept.id}
+              href={`/accounts/installments/departments/${dept.id}`}
+              className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 hover:shadow-md hover:border-red-300 transition-all block cursor-pointer"
+            >
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-base font-bold text-gray-800">{dept.name}</h3>
                 <span className="text-sm font-semibold text-gray-600">{dept.total}</span>
@@ -1105,8 +1110,9 @@ export default function AccountsInstallmentsPage() {
                   <span className="text-sm text-gray-600">إجمالي المبالغ</span>
                   <span className="text-lg font-bold text-emerald-600">{new Intl.NumberFormat('en-US').format(dept.totalAmount || 0)} IQD</span>
                 </div>
+                <p className="text-[11px] text-red-800/80 pt-1">اضغط لعرض التقرير التفصيلي ←</p>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       )}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   CashBoxDetail,
   CashBoxOptions,
+  FIXED_CASH_BOX_TYPES,
   cashApi,
 } from './types';
 
@@ -49,7 +50,7 @@ export default function CashBoxFormModal({
       setCode('');
       setNameAr('');
       setNameEn('');
-      setBoxType(options?.box_types[0]?.code || 'MAIN');
+      setBoxType(FIXED_CASH_BOX_TYPES[0].code);
       setAccountId('');
       setCeiling('');
       setDescription('');
@@ -74,16 +75,10 @@ export default function CashBoxFormModal({
 
   if (!open) return null;
 
-  const pettyRequiresCeiling = boxType === 'PETTY';
-
   const submit = async () => {
     setError(null);
     if (!code.trim() || !nameAr.trim() || !boxType) {
       setError('الرمز والاسم العربي والنوع مطلوبة');
-      return;
-    }
-    if (pettyRequiresCeiling && !(Number(ceiling) > 0)) {
-      setError('صندوق النثريات يتطلب سقفاً أكبر من صفر');
       return;
     }
 
@@ -211,7 +206,7 @@ export default function CashBoxFormModal({
               onChange={(e) => setBoxType(e.target.value)}
               disabled={saving}
             >
-              {(options?.box_types || []).map((t) => (
+              {(FIXED_CASH_BOX_TYPES).map((t) => (
                 <option key={t.code} value={t.code}>
                   {t.name_ar}
                 </option>
@@ -240,9 +235,7 @@ export default function CashBoxFormModal({
           </label>
 
           <label className="block text-sm">
-            <span className="text-gray-700">
-              السقف النقدي{pettyRequiresCeiling ? ' *' : ''}
-            </span>
+            <span className="text-gray-700">السقف النقدي</span>
             <input
               className="mt-1 w-full border rounded-md px-3 py-2 text-sm"
               value={ceiling}

@@ -1,32 +1,22 @@
+/** أنواع الصناديق الثابتة المعتمدة في الواجهة */
 export const CASH_BOX_TYPE_SEED = [
   {
     code: 'MAIN',
     name_ar: 'الصندوق الرئيسي',
     name_en: 'Main cash box',
     sort_order: 1,
-    description: 'النقد العام للإدارة المالية',
+    description: 'الصندوق الرئيسي للكلية',
   },
   {
-    code: 'PETTY',
-    name_ar: 'صندوق المصروفات النثرية',
-    name_en: 'Petty cash',
+    code: 'HIGHER_ED',
+    name_ar: 'صندوق التعليم العالي',
+    name_en: 'Higher education cash box',
     sort_order: 2,
-    description: 'مصروفات صغيرة بسقف محدد',
-  },
-  {
-    code: 'FEES',
-    name_ar: 'صندوق الأقساط',
-    name_en: 'Fees cash box',
-    sort_order: 3,
-    description: 'تحصيل أقساط الطلبة نقداً',
-  },
-  {
-    code: 'TEMPORARY',
-    name_ar: 'صندوق مؤقت',
-    name_en: 'Temporary cash box',
-    sort_order: 4,
-    description: 'صناديق مؤقتة أو استثنائية',
+    description: 'صندوق التعليم العالي',
   },
 ] as const;
 
 export type CashBoxTypeCode = (typeof CASH_BOX_TYPE_SEED)[number]['code'];
+
+export const FIXED_CASH_BOX_TYPES: Array<{ code: string; name_ar: string }> =
+  CASH_BOX_TYPE_SEED.map((t) => ({ code: t.code, name_ar: t.name_ar }));

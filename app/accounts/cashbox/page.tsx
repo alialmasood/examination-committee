@@ -10,6 +10,7 @@ import {
   CashBoxListItem,
   CashBoxOptions,
   CashBoxStats,
+  FIXED_CASH_BOX_TYPES,
   canActivateChecklist,
   cashApi,
 } from './components/types';
@@ -195,7 +196,7 @@ export default function AccountsCashboxPage() {
             }}
           >
             <option value="">كل الأنواع</option>
-            {(options?.box_types || []).map((t) => (
+            {FIXED_CASH_BOX_TYPES.map((t) => (
               <option key={t.code} value={t.code}>
                 {t.name_ar}
               </option>

@@ -46,11 +46,6 @@ export default function PayrollDashboard() {
         </div>
       )}
 
-      <div className="mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-        هذه المرحلة تأسيسية (9.A.1): إعداد السجل الأساسي فقط. تشغيل الرواتب (Payroll Runs)
-        والاحتساب والترحيل المحاسبي والمدفوعات ستأتي في مراحل لاحقة، لذا لا تُعرض أرقام رواتب إجمالية بعد.
-      </div>
-
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         <StatCard label="الأشخاص الفعّالون" value={counts.people ?? '—'} href="/accounts/payroll/people?status=ACTIVE" tone="text-green-700" />
         <StatCard label="العقود الفعّالة" value={counts.contracts ?? '—'} href="/accounts/payroll/contracts?status=ACTIVE" tone="text-green-700" />

@@ -180,6 +180,27 @@ export default function AccountsLayout({
               الصفحة الرئيسية
             </Link>
 
+            {/* Installments */}
+            <Link
+              href="/accounts/installments"
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
+                pathname === '/accounts/installments' 
+                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
+                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
+              }`}
+            >
+              <div className="flex items-center">
+                {pathname === '/accounts/installments' && (
+                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
+                )}
+                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-3.866 0-7 1.79-7 4v3a2 2 0 002 2h10a2 2 0 002-2v-3c0-2.21-3.134-4-7-4z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8V6m0 0a2 2 0 100-4 2 2 0 000 4z" />
+                </svg>
+              </div>
+              أقساط الطلبة
+            </Link>
+
             {/* Students (as Students/Accounts) */}
             <Link
               href="/accounts/students"
@@ -198,6 +219,26 @@ export default function AccountsLayout({
                 </svg>
               </div>
               حسابات الطلبة
+            </Link>
+
+            {/* Payroll */}
+            <Link
+              href="/accounts/payroll"
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
+                pathname === '/accounts/payroll' || pathname?.startsWith('/accounts/payroll/')
+                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
+                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
+              }`}
+            >
+              <div className="flex items-center">
+                {(pathname === '/accounts/payroll' || pathname?.startsWith('/accounts/payroll/')) && (
+                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
+                )}
+                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </div>
+              الرواتب
             </Link>
 
             <Link
@@ -257,27 +298,6 @@ export default function AccountsLayout({
               الأصول الثابتة
             </Link>
 
-            {/* Installments */}
-            <Link
-              href="/accounts/installments"
-              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
-                pathname === '/accounts/installments' 
-                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
-                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
-              }`}
-            >
-              <div className="flex items-center">
-                {pathname === '/accounts/installments' && (
-                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
-                )}
-                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-3.866 0-7 1.79-7 4v3a2 2 0 002 2h10a2 2 0 002-2v-3c0-2.21-3.134-4-7-4z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8V6m0 0a2 2 0 100-4 2 2 0 000 4z" />
-                </svg>
-              </div>
-              أقساط الطلاب
-            </Link>
-
             {/* Journal Entries */}
             <Link
               href="/accounts/entries"
@@ -316,26 +336,6 @@ export default function AccountsLayout({
                 </svg>
               </div>
               دليل الحسابات
-            </Link>
-
-            {/* Payroll */}
-            <Link
-              href="/accounts/payroll"
-              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
-                pathname === '/accounts/payroll' || pathname?.startsWith('/accounts/payroll/')
-                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4' 
-                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
-              }`}
-            >
-              <div className="flex items-center">
-                {(pathname === '/accounts/payroll' || pathname?.startsWith('/accounts/payroll/')) && (
-                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
-                )}
-                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-              </div>
-              الرواتب
             </Link>
 
             {/* Cash Box Account */}

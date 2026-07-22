@@ -2,6 +2,12 @@
 
 export type CashBoxStatus = 'DRAFT' | 'ACTIVE' | 'SUSPENDED' | 'CLOSED';
 
+/** قائمة ثابتة لحقل نوع الصندوق في الإضافة/التعديل والفلاتر */
+export const FIXED_CASH_BOX_TYPES = [
+  { code: 'MAIN', name_ar: 'الصندوق الرئيسي' },
+  { code: 'HIGHER_ED', name_ar: 'صندوق التعليم العالي' },
+] as const;
+
 export type CashBoxListItem = {
   id: string;
   code: string;
@@ -134,13 +140,9 @@ export function canActivateChecklist(box: {
   const hasPrimary = Boolean(
     box.primary_custodian_user_id || box.primary_custodian?.id
   );
-  const ceilingOk =
-    box.box_type_code !== 'PETTY' ||
-    (box.ceiling_amount != null && Number(box.ceiling_amount) > 0);
   const items = [
     { label: 'الحساب المرتبط صالح', pass: Boolean(box.account_id) },
     { label: 'يوجد أمين أساسي ساري', pass: hasPrimary },
-    { label: 'السقف صالح لصندوق النثريات', pass: ceilingOk },
   ];
   return {
     ok: box.status === 'DRAFT' && items.every((i) => i.pass),
