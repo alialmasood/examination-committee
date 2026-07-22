@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/src/lib/db';
 import { getSystemPathByDepartment } from '@/src/lib/department-system-map';
+import {
+  isAuthFailure,
+  requireAccountsAccess,
+} from '@/src/lib/accounts/auth';
+import { ensureStudentAccountsForPaidStudents } from '@/src/lib/accounts/student-accounts';
+import { withTransaction } from '@/src/lib/accounts/with-transaction';
 
 export async function POST(
   req: NextRequest,
@@ -17,16 +23,16 @@ export async function POST(
       `SELECT major, university_id, study_type, admission_channel FROM student_affairs.students WHERE id = $1`,
       [id]
     );
-    
+
     if (studentResult.rows.length === 0) {
       return NextResponse.json({ success: false, error: 'الطالب غير موجود' }, { status: 404 });
     }
-    
+
     const department = studentResult.rows[0].major;
     const studyType = studentResult.rows[0].study_type;
     const admissionChannel = studentResult.rows[0].admission_channel;
     const systemPath = getSystemPathByDepartment(department);
-    
+
     // تحديد النسب الثابتة لكل قناة
     const fixedDiscounts: Record<string, number> = {
       'general': 0,
@@ -38,7 +44,7 @@ export async function POST(
     };
 
     // إذا كانت قناة القبول لديها نسبة ثابتة، نستخدم القيمة الثابتة ونتجاهل القيمة المرسلة
-    if (admissionChannel && fixedDiscounts.hasOwnProperty(admissionChannel)) {
+    if (admissionChannel && Object.prototype.hasOwnProperty.call(fixedDiscounts, admissionChannel)) {
       discountPercentage = fixedDiscounts[admissionChannel];
     }
 
@@ -54,12 +60,12 @@ export async function POST(
         'تقنيات صحة المجتمع': 2750000,
         'تقنيات العلاج الطبيعي': 2750000,
         'هندسة تقنيات البناء والانشاءات': 2500000,
-        'تقنيات البناء والاستشارات': 2500000, // للتوافق مع البيانات القديمة
+        'تقنيات البناء والاستشارات': 2500000,
         'تقنيات هندسة النفط والغاز': 2500000,
         'تقنيات الفيزياء الصحية': 2500000,
         'هندسة تقنيات الامن السيبراني والحوسبة السحابية': 3000000,
-        'تقنيات الامن السيبراني': 3000000, // للتوافق مع البيانات القديمة
-        'تقنيات الأمن السيبراني': 3000000, // للتوافق مع البيانات القديمة
+        'تقنيات الامن السيبراني': 3000000,
+        'تقنيات الأمن السيبراني': 3000000,
       };
       return fees[dept] || 0;
     };
@@ -67,8 +73,7 @@ export async function POST(
     const annualFee = getAnnualTuitionFee(department, studyType);
     const discountAmount = (annualFee * discountPercentage) / 100;
     const finalFeeAfterDiscount = annualFee - discountAmount;
-    
-    // التحقق من وجود عمود discount_percentage وإنشاؤه إن لم يكن موجوداً
+
     try {
       await query(`
         ALTER TABLE student_affairs.students
@@ -86,7 +91,6 @@ export async function POST(
       console.log('الأعمدة موجودة بالفعل أو حدث خطأ في التحقق:', error);
     }
 
-    // تحديث حالة الدفع مع نسبة التخفيض ومبلغ التخفيض والقسط النهائي
     await query(
       `UPDATE student_affairs.students 
        SET payment_status = 'paid', 
@@ -99,9 +103,22 @@ export async function POST(
        WHERE id = $1`,
       [id, amount, discountPercentage, discountAmount, finalFeeAfterDiscount]
     );
-    
-    // إرجاع معلومات إضافية للنظام المرتبط
-    return NextResponse.json({ 
+
+    // إنشاء حساب مالي للطالب المسدد إن لم يكن موجوداً
+    try {
+      const auth = await requireAccountsAccess(req);
+      if (!isAuthFailure(auth)) {
+        await withTransaction((client) =>
+          ensureStudentAccountsForPaidStudents(client, auth.user.id, {
+            studentIds: [id],
+          })
+        );
+      }
+    } catch (syncErr) {
+      console.error('تعذر مزامنة الحساب المالي بعد تأكيد الدفع:', syncErr);
+    }
+
+    return NextResponse.json({
       success: true,
       systemPath: systemPath || null,
       department: department || null
@@ -111,5 +128,3 @@ export async function POST(
     return NextResponse.json({ success: false, error: 'خطأ في تحديث حالة الدفع' }, { status: 500 });
   }
 }
-
-

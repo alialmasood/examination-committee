@@ -35,7 +35,7 @@ export default function StudentRefundDetailPage() {
   const load = useCallback(async () => {
     const r = await studentApi<StudentRefund>(`${REFUNDS_API}/${id}`);
     if (r.success) setRow(r.data || null);
-    else setError(r.message || '???? ???????');
+    else setError(r.message || 'تعذر التحميل');
     const p = await studentApi<Preview>(
       `${REFUNDS_API}/${id}/preview-allocation`,
       { method: 'POST', body: '{}' }
@@ -58,14 +58,14 @@ export default function StudentRefundDetailPage() {
         reason,
       }),
     });
-    if (!r.success) setError(r.message || '???? ???????');
+    if (!r.success) setError(r.message || 'تعذر التنفيذ');
     else void load();
   };
 
   if (!row) {
     return (
       <div className="p-6" dir="rtl">
-        {error || '???? ????????'}
+        {error || 'جاري التحميل...'}
       </div>
     );
   }
@@ -81,32 +81,32 @@ export default function StudentRefundDetailPage() {
           href={`/accounts/students/refunds/${id}/print`}
           className="px-3 py-1.5 border rounded-md text-sm"
         >
-          ?????
+          طباعة
         </Link>
       </div>
       <p className="text-sm mb-2">
-        {row.reason} ? {formatMoney(row.amount)} ?{' '}
-        {REFUND_STATUS_LABEL[row.status]} ? {row.payment_method}
+        {row.reason} — {formatMoney(row.amount)} —{' '}
+        {REFUND_STATUS_LABEL[row.status]} — {row.payment_method}
       </p>
       {preview && (
         <div className="border rounded p-3 mb-4 text-sm bg-gray-50">
           <p>
-            ?????? ??????: {formatMoney(preview.credit_balance)} ? ??????:{' '}
+            الرصيد الدائن: {formatMoney(preview.credit_balance)} — المتاح:{' '}
             {formatMoney(preview.available_credit)}
           </p>
           <p>
-            ????? ?????????:{' '}
-            {preview.allocations_sum_ok ? '?????' : '??? ?????'}
+            مجموع التخصيصات:{' '}
+            {preview.allocations_sum_ok ? 'مطابق' : 'غير مطابق'}
           </p>
           <ul className="mt-2 space-y-1">
             {preview.lines.map((line, i) => (
               <li key={i}>
-                {line.collection_number || '?'} ? ?????{' '}
-                {formatMoney(line.collection_amount)} ? ???? ?????????{' '}
-                {formatMoney(line.refundable_amount)} ? ????{' '}
+                {line.collection_number || '—'} — تحصيل{' '}
+                {formatMoney(line.collection_amount)} — قابل للاسترداد{' '}
+                {formatMoney(line.refundable_amount)} — مخصص{' '}
                 {formatMoney(line.allocated_amount)}
                 {!line.within_limit && (
-                  <span className="text-red-900"> (?????)</span>
+                  <span className="text-red-900"> (تجاوز)</span>
                 )}
               </li>
             ))}
@@ -120,7 +120,7 @@ export default function StudentRefundDetailPage() {
             className="px-3 py-1.5 bg-red-900 text-white rounded"
             onClick={() => void act('submit')}
           >
-            ?????
+            إرسال
           </button>
         )}
         {row.status === 'PENDING_APPROVAL' && (
@@ -130,14 +130,14 @@ export default function StudentRefundDetailPage() {
               className="px-3 py-1.5 bg-green-800 text-white rounded"
               onClick={() => void act('approve')}
             >
-              ??????
+              اعتماد
             </button>
             <button
               type="button"
               className="px-3 py-1.5 border rounded"
               onClick={() => void act('reject')}
             >
-              ???
+              رفض
             </button>
           </>
         )}
@@ -147,14 +147,14 @@ export default function StudentRefundDetailPage() {
             className="px-3 py-1.5 bg-red-900 text-white rounded"
             onClick={() => void act('post')}
           >
-            ?????
+            ترحيل
           </button>
         )}
         {!['VOID', 'REJECTED'].includes(row.status) && (
           <>
             <input
               className="border rounded px-2 py-1"
-              placeholder="??? ???????"
+              placeholder="سبب الإلغاء"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
@@ -163,7 +163,7 @@ export default function StudentRefundDetailPage() {
               className="px-3 py-1.5 border border-red-900 text-red-900 rounded"
               onClick={() => void act('void')}
             >
-              ?????
+              إلغاء
             </button>
           </>
         )}

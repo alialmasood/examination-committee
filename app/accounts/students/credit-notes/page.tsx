@@ -39,7 +39,7 @@ export default function StudentCreditNotesPage() {
       ),
     ]);
     if (r.success) setRows(r.data || []);
-    else setError(r.message || '???? ???????');
+    else setError(r.message || 'تعذر التحميل');
     if (o.success) setOpt(o.data || null);
     if (c.success) setCharges(c.data || []);
   }, []);
@@ -54,14 +54,14 @@ export default function StudentCreditNotesPage() {
       method: 'POST',
       body: JSON.stringify(form),
     });
-    if (!r.success) setError(r.message || '??? ???????');
+    if (!r.success) setError(r.message || 'فشل الإنشاء');
     else void load();
   };
 
   return (
     <div className="p-4 md:p-6" dir="rtl">
       <StudentsNav />
-      <h1 className="text-xl font-bold text-red-900 mb-4">????????? ???????</h1>
+      <h1 className="text-xl font-bold text-red-900 mb-4">الإشعارات الدائنة</h1>
       {error && <p className="text-red-900 mb-2">{error}</p>}
       <div className="grid md:grid-cols-3 gap-2 border rounded p-3 mb-4">
         <select
@@ -71,7 +71,7 @@ export default function StudentCreditNotesPage() {
           }
           className="border rounded px-2 py-1"
         >
-          <option value="">????????</option>
+          <option value="">اختر مطالبة</option>
           {charges.map((x) => (
             <option key={x.id} value={x.id}>
               {x.charge_number}
@@ -80,7 +80,7 @@ export default function StudentCreditNotesPage() {
         </select>
         <input
           className="border rounded px-2 py-1"
-          placeholder="??????"
+          placeholder="المبلغ"
           value={form.amount}
           onChange={(e) => setForm({ ...form, amount: e.target.value })}
         />
@@ -118,16 +118,16 @@ export default function StudentCreditNotesPage() {
             })
           }
         >
-          <option value="">???? ???????</option>
+          <option value="">حساب التعديل</option>
           {opt?.expense_gl_accounts.map((x) => (
             <option key={x.id} value={x.id}>
-              {x.code} ? {x.name_ar}
+              {x.code} — {x.name_ar}
             </option>
           ))}
         </select>
         <textarea
           className="border rounded px-2 py-1 md:col-span-2"
-          placeholder="????? ????????"
+          placeholder="سبب الإشعار"
           value={form.reason}
           onChange={(e) => setForm({ ...form, reason: e.target.value })}
         />
@@ -136,17 +136,17 @@ export default function StudentCreditNotesPage() {
           className="bg-red-900 text-white rounded px-3 py-1"
           onClick={() => void create()}
         >
-          ????? ?????
+          إنشاء إشعار
         </button>
       </div>
       <table className="w-full text-sm">
         <thead>
           <tr className="text-right bg-gray-50">
-            <th className="p-2">?????</th>
-            <th className="p-2">??????</th>
-            <th className="p-2">????????</th>
-            <th className="p-2">??????</th>
-            <th className="p-2">??????</th>
+            <th className="p-2">الرقم</th>
+            <th className="p-2">الطالب</th>
+            <th className="p-2">المطالبة</th>
+            <th className="p-2">المبلغ</th>
+            <th className="p-2">الحالة</th>
           </tr>
         </thead>
         <tbody>
@@ -158,7 +158,7 @@ export default function StudentCreditNotesPage() {
                 </Link>
               </td>
               <td className="p-2">{x.student_full_name_ar}</td>
-              <td className="p-2 font-mono">{x.charge_number || '?'}</td>
+              <td className="p-2 font-mono">{x.charge_number || '—'}</td>
               <td className="p-2">{formatMoney(x.amount)}</td>
               <td className="p-2">
                 <span className={`px-2 py-0.5 rounded ${creditNoteStatusBadge(x.status)}`}>

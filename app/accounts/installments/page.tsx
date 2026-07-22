@@ -1121,7 +1121,7 @@ export default function AccountsInstallmentsPage() {
             </svg>
           </div>
           <div>
-            <p className="text-sm text-amber-800">عدد الطلبة الجدد الذين بحاجة إلى وصل قبض وتأكيد الدفع</p>
+            <p className="text-sm text-amber-800">عدد الطلبة بعد إتمام التسجيل الذين بحاجة إلى وصل قبض وتأكيد الدفع</p>
           </div>
         </div>
         <div className="text-2xl font-extrabold text-amber-700">
@@ -1134,7 +1134,7 @@ export default function AccountsInstallmentsPage() {
         <div className="px-5 py-4 border-b border-gray-200">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex flex-wrap items-center gap-3">
-          <h2 className="text-sm font-semibold text-gray-900">الطلبة الجدد بانتظار إصدار وصل القبض</h2>
+          <h2 className="text-sm font-semibold text-gray-900">الطلبة بعد إتمام التسجيل بانتظار إصدار وصل القبض</h2>
               <div className="flex items-center gap-3 text-xs text-gray-500">
                 <span>الإجمالي: {pendingStudents.length}</span>
                 {pendingDepartmentFilter && (

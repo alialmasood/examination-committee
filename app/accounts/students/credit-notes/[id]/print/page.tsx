@@ -18,7 +18,7 @@ export default function StudentCreditNotePrintPage() {
   const load = useCallback(async () => {
     const r = await studentApi<StudentCreditNote>(`${CREDIT_NOTES_API}/${id}`);
     if (r.success && r.data) setRow(r.data);
-    else setError(r.message || '???? ????? ???????');
+    else setError(r.message || 'تعذر تحميل الإشعار');
   }, [id]);
 
   useEffect(() => {
@@ -36,7 +36,7 @@ export default function StudentCreditNotePrintPage() {
   if (!row) {
     return (
       <div className="p-6" dir="rtl">
-        {error || '???? ????????'}
+        {error || 'جاري التحميل...'}
       </div>
     );
   }
@@ -44,51 +44,51 @@ export default function StudentCreditNotePrintPage() {
   return (
     <div className="max-w-2xl mx-auto p-8 print:p-4" dir="rtl">
       <div className="text-center border-b-2 border-red-900 pb-4 mb-6">
-        <p className="text-sm text-gray-600">???? ?????</p>
-        <h1 className="text-2xl font-bold text-red-900 mt-1">????? ???? ????</h1>
+        <p className="text-sm text-gray-600">كلية الشرق</p>
+        <h1 className="text-2xl font-bold text-red-900 mt-1">إشعار دائن للطالب</h1>
         <p className="font-mono text-lg mt-2">{row.credit_note_number}</p>
         <p className="text-sm mt-1">{CREDIT_NOTE_STATUS_LABEL[row.status]}</p>
       </div>
       <div className="space-y-2 text-sm">
         <p>
-          <strong>??????:</strong> {row.student_full_name_ar || '?'}
+          <strong>الطالب:</strong> {row.student_full_name_ar || '—'}
         </p>
         <p>
-          <strong>??????:</strong>{' '}
-          <span className="font-mono">{row.account_number || '?'}</span>
+          <strong>الحساب:</strong>{' '}
+          <span className="font-mono">{row.account_number || '—'}</span>
         </p>
         <p>
-          <strong>????????:</strong>{' '}
-          <span className="font-mono">{row.charge_number || '?'}</span>
+          <strong>المطالبة:</strong>{' '}
+          <span className="font-mono">{row.charge_number || '—'}</span>
         </p>
         <p>
-          <strong>??? ?????:</strong> {row.reason_code}
+          <strong>رمز السبب:</strong> {row.reason_code}
         </p>
         <p>
-          <strong>?????:</strong> {row.reason}
+          <strong>السبب:</strong> {row.reason}
         </p>
         <p>
-          <strong>??????:</strong> {formatMoney(row.amount)}
+          <strong>المبلغ:</strong> {formatMoney(row.amount)}
         </p>
         <p>
-          <strong>?????:</strong> {row.application_mode}
+          <strong>الوضع:</strong> {row.application_mode}
         </p>
         {row.journal_entry_id && (
           <p>
-            <strong>?????:</strong>{' '}
+            <strong>القيد:</strong>{' '}
             <span className="font-mono text-xs">{row.journal_entry_id}</span>
           </p>
         )}
       </div>
       <div className="grid grid-cols-3 gap-4 mt-10 text-center text-sm">
         <div>
-          <div className="border-t pt-2">?????</div>
+          <div className="border-t pt-2">المحاسب</div>
         </div>
         <div>
-          <div className="border-t pt-2">??????</div>
+          <div className="border-t pt-2">المدقق</div>
         </div>
         <div>
-          <div className="border-t pt-2">??????</div>
+          <div className="border-t pt-2">المدير</div>
         </div>
       </div>
       <button
@@ -96,7 +96,7 @@ export default function StudentCreditNotePrintPage() {
         className="print:hidden mt-6 px-4 py-2 bg-red-900 text-white rounded"
         onClick={() => window.print()}
       >
-        ?????
+        طباعة
       </button>
     </div>
   );

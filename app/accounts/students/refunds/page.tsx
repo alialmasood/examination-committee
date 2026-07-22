@@ -36,7 +36,7 @@ export default function StudentRefundsPage() {
       studentApi<RefundOptions>(REFUND_OPTIONS_API),
     ]);
     if (r.success) setRows(r.data || []);
-    else setError(r.message || '???? ???????');
+    else setError(r.message || 'تعذر التحميل');
     if (o.success) setOpt(o.data || null);
   }, []);
 
@@ -78,22 +78,22 @@ export default function StudentRefundsPage() {
       method: 'POST',
       body: JSON.stringify(payload),
     });
-    if (!r.success) setError(r.message || '??? ???????');
+    if (!r.success) setError(r.message || 'فشل الإنشاء');
     else void load();
   };
 
   return (
     <div className="p-6" dir="rtl">
       <StudentsNav />
-      <h1 className="text-xl font-bold text-red-900">????????? ????? ??????</h1>
+      <h1 className="text-xl font-bold text-red-900">استردادات أرصدة الطلبة</h1>
       <p className="text-sm text-gray-600 mb-3">
-        ????? ??????? ???? ???? ???? ???????? ??? ??????? ??????.
+        استرداد الرصيد الدائن يتم فقط عبر التحصيلات القابلة للاسترداد.
       </p>
       {error && <p className="text-red-900 mb-2">{error}</p>}
       <div className="grid gap-2 md:grid-cols-3 border p-3 my-4 rounded">
         <input
           className="border rounded px-2 py-1"
-          placeholder="????? ?????? ??????"
+          placeholder="معرّف حساب الطالب"
           value={form.student_account_id}
           onChange={(e) => {
             const student_account_id = e.target.value;
@@ -102,11 +102,11 @@ export default function StudentRefundsPage() {
           }}
         />
         <div className="border rounded px-2 py-1 bg-gray-50 text-sm">
-          ?????? ??????: {creditBalance ? formatMoney(creditBalance) : '?'}
+          الرصيد الدائن: {creditBalance ? formatMoney(creditBalance) : '—'}
         </div>
         <input
           className="border rounded px-2 py-1"
-          placeholder="??????"
+          placeholder="المبلغ"
           value={form.amount}
           onChange={(e) => setForm({ ...form, amount: e.target.value })}
         />
@@ -128,16 +128,16 @@ export default function StudentRefundsPage() {
               value={form.cash_box_id}
               onChange={(e) => setForm({ ...form, cash_box_id: e.target.value })}
             >
-              <option value="">???????</option>
+              <option value="">الصناديق</option>
               {opt?.cash_boxes.map((x) => (
                 <option key={x.id} value={x.id}>
-                  {x.code} ? {x.name_ar}
+                  {x.code} — {x.name_ar}
                 </option>
               ))}
             </select>
             <input
               className="border rounded px-2 py-1"
-              placeholder="????? ???? ???????"
+              placeholder="معرّف جلسة الصندوق"
               value={form.cash_box_session_id}
               onChange={(e) =>
                 setForm({ ...form, cash_box_session_id: e.target.value })
@@ -152,23 +152,23 @@ export default function StudentRefundsPage() {
               setForm({ ...form, bank_account_id: e.target.value })
             }
           >
-            <option value="">?????? ???????</option>
+            <option value="">الحساب البنكي</option>
             {opt?.bank_accounts.map((x) => (
               <option key={x.id} value={x.id}>
-                {x.code} ? {x.account_name_ar}
+                {x.code} — {x.account_name_ar}
               </option>
             ))}
           </select>
         )}
         <input
           className="border rounded px-2 py-1"
-          placeholder="????? ??????? ???????"
+          placeholder="معرّف التحصيل المرتبط"
           value={form.collection_id}
           onChange={(e) => setForm({ ...form, collection_id: e.target.value })}
         />
         <textarea
           className="border rounded px-2 py-1 md:col-span-2"
-          placeholder="?????"
+          placeholder="السبب"
           value={form.reason}
           onChange={(e) => setForm({ ...form, reason: e.target.value })}
         />
@@ -177,17 +177,17 @@ export default function StudentRefundsPage() {
           className="bg-red-900 text-white rounded px-3 py-1"
           onClick={() => void create()}
         >
-          ????? ?????
+          إنشاء استرداد
         </button>
       </div>
       <table className="w-full text-sm">
         <thead>
           <tr className="text-right bg-gray-50">
-            <th className="p-2">?????</th>
-            <th className="p-2">??????</th>
-            <th className="p-2">??????</th>
-            <th className="p-2">???????</th>
-            <th className="p-2">??????</th>
+            <th className="p-2">الرقم</th>
+            <th className="p-2">الطالب</th>
+            <th className="p-2">المبلغ</th>
+            <th className="p-2">الطريقة</th>
+            <th className="p-2">الحالة</th>
           </tr>
         </thead>
         <tbody>

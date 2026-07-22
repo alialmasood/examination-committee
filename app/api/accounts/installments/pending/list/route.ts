@@ -4,8 +4,10 @@ import { query } from '@/src/lib/db';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-const PENDING_STATUSES = `('pending', 'registration_pending')`;
-
+/**
+ * قائمة انتظار وصل القبض: فقط بعد إتمام التسجيل من شؤون الطلبة
+ * (payment_status = pending). يستبعد قيد التسجيل (registration_pending).
+ */
 async function ensurePaymentColumns() {
   await query(`
     ALTER TABLE student_affairs.students
@@ -38,9 +40,9 @@ export async function GET() {
          s.registration_date,
          s.photo,
          s.study_type,
-         COALESCE(NULLIF(TRIM(s.payment_status), ''), 'pending') AS payment_status
+         s.payment_status
        FROM student_affairs.students s
-       WHERE COALESCE(NULLIF(TRIM(s.payment_status), ''), 'pending') IN ${PENDING_STATUSES}
+       WHERE TRIM(COALESCE(s.payment_status, '')) = 'pending'
        ORDER BY s.created_at DESC NULLS LAST, s.university_id DESC
        LIMIT 5000`
     );

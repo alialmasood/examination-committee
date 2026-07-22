@@ -44,16 +44,16 @@ export async function GET(request: NextRequest) {
 
       return {
         payment_methods: [
-          { code: 'CASH', name_ar: '????' },
-          { code: 'BANK', name_ar: '?????' },
+          { code: 'CASH', name_ar: 'نقداً' },
+          { code: 'BANK', name_ar: 'بنكي' },
         ],
         statuses: [
-          { code: 'DRAFT', name_ar: '?????' },
-          { code: 'PENDING_APPROVAL', name_ar: '??????? ????????' },
-          { code: 'APPROVED', name_ar: '?????' },
-          { code: 'POSTED', name_ar: '?????' },
-          { code: 'REJECTED', name_ar: '?????' },
-          { code: 'VOID', name_ar: '????' },
+          { code: 'DRAFT', name_ar: 'مسودة' },
+          { code: 'PENDING_APPROVAL', name_ar: 'بانتظار الاعتماد' },
+          { code: 'APPROVED', name_ar: 'معتمد' },
+          { code: 'POSTED', name_ar: 'مرحّل' },
+          { code: 'REJECTED', name_ar: 'مرفوض' },
+          { code: 'VOID', name_ar: 'ملغى' },
         ],
         cash_boxes: cash.rows,
         bank_accounts: bank.rows,

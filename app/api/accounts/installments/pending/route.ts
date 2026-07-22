@@ -4,9 +4,10 @@ import { query } from '@/src/lib/db';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-/** حالات الدفع التي تعني أن الطالب ما زال بانتظار تأكيد الدفع / وصل القبض */
-const PENDING_STATUSES = `('pending', 'registration_pending')`;
-
+/**
+ * يظهر فقط الطلبة بعد «إتمام التسجيل» من شؤون الطلبة
+ * (payment_status = pending) — وليس قيد التسجيل (registration_pending).
+ */
 async function ensurePaymentColumns() {
   await query(`
     ALTER TABLE student_affairs.students
@@ -26,7 +27,7 @@ export async function GET() {
     const result = await query(`
       SELECT COUNT(*)::int AS count
       FROM student_affairs.students s
-      WHERE COALESCE(NULLIF(TRIM(s.payment_status), ''), 'pending') IN ${PENDING_STATUSES}
+      WHERE TRIM(COALESCE(s.payment_status, '')) = 'pending'
     `);
     const count = result.rows[0]?.count || 0;
     return NextResponse.json(

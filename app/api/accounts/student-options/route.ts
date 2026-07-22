@@ -53,6 +53,7 @@ export async function GET(request: NextRequest) {
                 department_id
          FROM student_affairs.students
          WHERE LOWER(TRIM(status)) = 'active'
+           AND COALESCE(NULLIF(TRIM(payment_status), ''), 'pending') = 'paid'
            AND ($1 = ''
                 OR university_id ILIKE '%'||$1||'%'
                 OR COALESCE(student_number,'') ILIKE '%'||$1||'%'

@@ -10,6 +10,7 @@ import {
 import { writeFinancialAudit } from '@/src/lib/accounts/audit';
 import {
   createStudentAccount,
+  ensureStudentAccountsForPaidStudents,
   listStudentAccounts,
   serializeStudentAccount,
 } from '@/src/lib/accounts/student-accounts';
@@ -37,8 +38,10 @@ export async function GET(request: NextRequest) {
         ? null
         : hasBalanceRaw === '1' || hasBalanceRaw.toLowerCase() === 'true';
 
-    const result = await withTransaction((client) =>
-      listStudentAccounts(client, {
+    const result = await withTransaction(async (client) => {
+      // مزامنة الطلبة المسددين من صفحة الأقساط إلى الحسابات المالية
+      await ensureStudentAccountsForPaidStudents(client, auth.user.id);
+      return listStudentAccounts(client, {
         q: sp.get('q')?.trim() || '',
         status: sp.get('status') || null,
         department_id: sp.get('department_id') || null,
@@ -47,8 +50,8 @@ export async function GET(request: NextRequest) {
         has_balance: hasBalance,
         page: Math.max(1, Number(sp.get('page') || 1)),
         page_size: Math.min(100, Math.max(1, Number(sp.get('page_size') || 20))),
-      })
-    );
+      });
+    });
 
     return jsonSuccess({
       data: result.rows.map((r) => ({

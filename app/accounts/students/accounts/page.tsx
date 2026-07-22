@@ -98,7 +98,9 @@ export default function StudentAccountsListPage() {
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">الحسابات المالية للطلبة</h1>
-          <p className="text-sm text-gray-600 mt-1">حساب واحد لكل طالب/عملة · ترقيم STA</p>
+          <p className="text-sm text-gray-600 mt-1">
+            الطلبة الذين أكملوا الدفع من صفحة الأقساط · ترقيم STA
+          </p>
         </div>
         <button
           type="button"
@@ -192,7 +194,7 @@ export default function StudentAccountsListPage() {
             ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-3 py-8 text-center text-gray-500">
-                  لا توجد حسابات
+                  لا توجد حسابات لطلبة مسددين بعد. أكّد الدفع من صفحة الأقساط ثم حدّث القائمة.
                 </td>
               </tr>
             ) : (

@@ -294,6 +294,88 @@ export async function findStudentAccountByStudentCurrency(
   return r.rows[0] ?? null;
 }
 
+/** حساب ذمم الطلبة الافتراضي من دليل الحسابات (1131 ثم 1132) */
+export async function resolveDefaultStudentReceivableGlId(
+  client: TxClient
+): Promise<string | null> {
+  const preferred = await txQuery<{ id: string }>(
+    client,
+    `SELECT a.id
+     FROM accounts.chart_of_accounts a
+     JOIN accounts.account_types t ON t.id = a.account_type_id
+     WHERE t.code = 'ASSET'
+       AND NOT a.is_group
+       AND a.allow_posting
+       AND a.is_active
+       AND a.code = ANY($1::text[])
+     ORDER BY CASE a.code WHEN '1131' THEN 0 WHEN '1132' THEN 1 ELSE 2 END
+     LIMIT 1`,
+    [['1131', '1132']]
+  );
+  if (preferred.rows[0]?.id) return preferred.rows[0].id;
+
+  const eligible = await listEligibleReceivableGlAccounts(client);
+  return eligible[0]?.id ?? null;
+}
+
+/**
+ * إنشاء حسابات مالية للطلبة الذين أكملوا الدفع من صفحة الأقساط
+ * ولم يُنشأ لهم حساب في accounts.student_accounts بعد.
+ */
+export async function ensureStudentAccountsForPaidStudents(
+  client: TxClient,
+  createdBy: string,
+  options?: { studentIds?: string[] }
+): Promise<{ created: number; skipped: number }> {
+  const receivableGlId = await resolveDefaultStudentReceivableGlId(client);
+  if (!receivableGlId) {
+    return { created: 0, skipped: 0 };
+  }
+
+  const studentFilter = options?.studentIds?.length
+    ? `AND s.id = ANY($1::uuid[])`
+    : '';
+  const params: unknown[] = options?.studentIds?.length
+    ? [options.studentIds]
+    : [];
+
+  const missing = await txQuery<{ id: string; academic_year: string | null }>(
+    client,
+    `SELECT s.id, s.academic_year
+     FROM student_affairs.students s
+     WHERE COALESCE(NULLIF(TRIM(s.payment_status), ''), 'pending') = 'paid'
+       AND LOWER(TRIM(COALESCE(s.status, 'active'))) = 'active'
+       AND NOT EXISTS (
+         SELECT 1 FROM accounts.student_accounts sa
+         WHERE sa.student_id = s.id AND sa.currency_code = 'IQD'
+       )
+       ${studentFilter}
+     ORDER BY s.payment_date DESC NULLS LAST, s.updated_at DESC NULLS LAST
+     LIMIT 2000`,
+    params
+  );
+
+  let created = 0;
+  let skipped = 0;
+  for (const row of missing.rows) {
+    try {
+      await getOrCreateStudentAccount(client, {
+        student_id: row.id,
+        receivable_gl_account_id: receivableGlId,
+        academic_year: row.academic_year,
+        notes: 'مزامنة تلقائية بعد تأكيد الدفع من أقساط الطلبة',
+        created_by: createdBy,
+      });
+      created += 1;
+    } catch (err) {
+      skipped += 1;
+      console.error('تعذر إنشاء حساب مالي لطالب مسدد:', row.id, err);
+    }
+  }
+
+  return { created, skipped };
+}
+
 /** رصيد دفتر الطالب = مجموع المدين − مجموع الدائن (لا يشمل opening_reference) */
 export async function getStudentAccountBalance(
   client: TxClient,
@@ -681,6 +763,7 @@ export async function listStudentAccounts(
       AND ($3::uuid IS NULL OR sa.department_id = $3::uuid OR s.department_id = $3::uuid)
       AND ($4::text IS NULL OR s.admission_type = $4)
       AND ($5::text IS NULL OR sa.academic_year = $5 OR s.academic_year = $5)
+      AND COALESCE(NULLIF(TRIM(s.payment_status), ''), 'pending') = 'paid'
       AND (
         $6::boolean IS NULL
         OR (
