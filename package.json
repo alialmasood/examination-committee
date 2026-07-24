@@ -13,6 +13,7 @@
     "db:setup": "tsx src/scripts/setup-db.ts",
     "db:check": "tsx src/scripts/check-tables.ts",
     "seed:admin": "tsx src/scripts/seed-admin.ts",
+    "seed:platform-superadmin": "tsx src/scripts/seed-platform-superadmin.ts",
     "seed:systems": "tsx src/scripts/seed-systems.ts",
     "seed:all": "tsx src/scripts/seed-all.ts",
     "seed:student": "tsx src/scripts/seed-student.ts",

@@ -1,21 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/src/lib/db';
-import { requireStudentAffairsAdmin } from '@/src/lib/admin-systems-access';
+import { requirePlatformAdmin } from '@/src/lib/admin-systems-access';
 
 /**
  * GET /api/admin/systems
  * قائمة الأنظمة مع المستخدمين المرتبطين (بدون كلمات مرور).
+ * مصدر مركزي — لا يتطلب الدخول إلى كل نظام على حدة.
  */
 export async function GET(request: NextRequest) {
-  const auth = await requireStudentAffairsAdmin(request);
+  const auth = await requirePlatformAdmin(request);
   if (!auth.ok) return auth.response;
 
   try {
+    // لا نعتمد على عمود s.name — قد لا يكون موجوداً في بعض قواعد البيانات
     const systemsRes = await query(
       `SELECT
          s.id::text,
          s.code,
-         COALESCE(s.name_ar, s.name, s.code) AS name_ar,
+         COALESCE(NULLIF(TRIM(s.name_ar), ''), s.code) AS name_ar,
          s.base_path,
          COALESCE(s.is_active, TRUE) AS is_active
        FROM student_affairs.systems s
@@ -24,18 +26,41 @@ export async function GET(request: NextRequest) {
          COALESCE(s.name_ar, s.code)`
     );
 
+    // عمود us.role اختياري — بعض الجداول أُنشئت بدونه
+    const roleCol = await query(
+      `SELECT 1
+       FROM information_schema.columns
+       WHERE table_schema = 'student_affairs'
+         AND table_name = 'user_systems'
+         AND column_name = 'role'
+       LIMIT 1`
+    );
+    const hasRole = roleCol.rows.length > 0;
+
     const usersRes = await query(
-      `SELECT
-         us.system_id::text AS system_id,
-         u.id::text AS user_id,
-         u.username,
-         u.full_name,
-         u.email,
-         u.is_active,
-         COALESCE(us.role, 'USER') AS role
-       FROM student_affairs.user_systems us
-       JOIN student_affairs.users u ON u.id = us.user_id
-       ORDER BY u.username`
+      hasRole
+        ? `SELECT
+             us.system_id::text AS system_id,
+             u.id::text AS user_id,
+             u.username,
+             u.full_name,
+             u.email,
+             u.is_active,
+             COALESCE(us.role, 'ADMIN') AS role
+           FROM student_affairs.user_systems us
+           JOIN student_affairs.users u ON u.id = us.user_id
+           ORDER BY u.username`
+        : `SELECT
+             us.system_id::text AS system_id,
+             u.id::text AS user_id,
+             u.username,
+             u.full_name,
+             u.email,
+             u.is_active,
+             'ADMIN' AS role
+           FROM student_affairs.user_systems us
+           JOIN student_affairs.users u ON u.id = us.user_id
+           ORDER BY u.username`
     );
 
     const usersBySystem = new Map<string, Array<Record<string, unknown>>>();

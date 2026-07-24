@@ -37,6 +37,12 @@ export default function LoginPage() {
 
       if (result.success) {
         console.log('تم تسجيل الدخول بنجاح:', result);
+
+        // السوبر أدمن دائماً → بوابة إدارة المنصة (منفصل عن أنظمة العمل)
+        if (result.is_platform_admin) {
+          window.location.href = '/platform-admin/systems';
+          return;
+        }
         
         // توجيه المستخدم إلى النظام المناسب
         if (result.systems && result.systems.length > 0) {

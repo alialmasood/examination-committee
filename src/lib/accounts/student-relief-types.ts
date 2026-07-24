@@ -39,6 +39,14 @@ export type StudentReliefTypeRow = {
 const RELIEF_KINDS = new Set<ReliefKind>(['DISCOUNT', 'SCHOLARSHIP', 'WAIVER']);
 const CALC_TYPES = new Set<ReliefCalculationType>(['FIXED_AMOUNT', 'PERCENTAGE']);
 
+/** حساب المصروف الافتراضي لترحيل التخفيضات — Dr مصروف / Cr ذمم الطالب */
+export const DEFAULT_RELIEF_EXPENSE_GL_CODE = '5895';
+
+const PREFERRED_RELIEF_EXPENSE_CODES = [
+  DEFAULT_RELIEF_EXPENSE_GL_CODE,
+  '5960', // مصروفات متنوعة — احتياطي
+];
+
 function iso(value: Date | string | null | undefined): string | null {
   if (value == null) return null;
   if (value instanceof Date) return value.toISOString();
@@ -59,6 +67,41 @@ function requireCode(value: unknown): string {
     throw new AccountsHttpError('رمز نوع التخفيض يحتوي محارف غير مسموحة', 400);
   }
   return s;
+}
+
+/** رمز تلقائي بسيط وفريد: RT-001, RT-002, … */
+export async function suggestNextReliefTypeCode(client: TxClient): Promise<string> {
+  const r = await txQuery<{ next_num: number }>(
+    client,
+    `SELECT COALESCE(MAX(
+       CASE
+         WHEN code ~ '^RT-[0-9]+$'
+           THEN NULLIF(substring(code from 4), '')::int
+         ELSE NULL
+       END
+     ), 0) + 1 AS next_num
+     FROM accounts.student_relief_types`
+  );
+  let n = Number(r.rows[0]?.next_num ?? 1);
+  for (let i = 0; i < 100; i++) {
+    const code = `RT-${String(n + i).padStart(3, '0')}`;
+    const exists = await txQuery<{ ok: number }>(
+      client,
+      `SELECT 1 AS ok FROM accounts.student_relief_types WHERE code = $1 LIMIT 1`,
+      [code]
+    );
+    if (!exists.rows[0]) return code;
+  }
+  throw new AccountsHttpError('تعذر توليد رمز فريد لنوع التخفيض', 500);
+}
+
+async function resolveReliefTypeCode(
+  client: TxClient,
+  value: unknown
+): Promise<string> {
+  const raw = String(value ?? '').trim();
+  if (!raw) return suggestNextReliefTypeCode(client);
+  return requireCode(raw);
 }
 
 function requireNameAr(value: unknown): string {
@@ -214,6 +257,148 @@ export async function listEligibleReliefExpenseGlAccounts(
   }>;
 }
 
+async function findReliefExpenseGlByCode(
+  client: TxClient,
+  code: string
+): Promise<{ id: string; code: string; name_ar: string } | null> {
+  const r = await txQuery<{ id: string; code: string; name_ar: string }>(
+    client,
+    `SELECT a.id, a.code, a.name_ar
+     FROM accounts.chart_of_accounts a
+     JOIN accounts.account_types t ON t.id = a.account_type_id
+     WHERE UPPER(a.code) = UPPER($1)
+       AND t.code = 'EXPENSE'
+       AND NOT a.is_group
+       AND a.allow_posting
+       AND a.is_active
+     LIMIT 1`,
+    [code]
+  );
+  return r.rows[0] ?? null;
+}
+
+/**
+ * يضمن وجود حساب مصروف تخفيضات افتراضي (5895) في دليل الحسابات.
+ */
+export async function ensureDefaultReliefExpenseGlAccount(
+  client: TxClient,
+  createdBy: string
+): Promise<{ id: string; code: string; name_ar: string }> {
+  for (const code of PREFERRED_RELIEF_EXPENSE_CODES) {
+    const found = await findReliefExpenseGlByCode(client, code);
+    if (found) {
+      await assertValidReliefExpenseGlAccount(client, found.id);
+      return found;
+    }
+  }
+
+  const expenseType = await txQuery<{ id: string; normal_balance: string }>(
+    client,
+    `SELECT id, normal_balance FROM accounts.account_types WHERE code = 'EXPENSE' LIMIT 1`
+  );
+  if (!expenseType.rows[0]) {
+    throw new AccountsHttpError(
+      'نوع حساب المصروفات غير موجود — شغّل migrations أو seed دليل الحسابات',
+      400
+    );
+  }
+
+  const parent = await txQuery<{ id: string; level: number }>(
+    client,
+    `SELECT id, level FROM accounts.chart_of_accounts WHERE code = '5800' LIMIT 1`
+  );
+  const parentId = parent.rows[0]?.id ?? null;
+  const level = parentId ? Number(parent.rows[0].level) + 1 : 1;
+
+  const sort = await txQuery<{ n: number }>(
+    client,
+    `SELECT COALESCE(MAX(sort_order), 0) + 1 AS n
+     FROM accounts.chart_of_accounts
+     WHERE parent_id IS NOT DISTINCT FROM $1::uuid`,
+    [parentId]
+  );
+
+  const ins = await txQuery<{ id: string; code: string; name_ar: string }>(
+    client,
+    `INSERT INTO accounts.chart_of_accounts (
+       code, name_ar, name_en, account_type_id, parent_id, level,
+       is_group, allow_posting, normal_balance, requires_cost_center,
+       is_active, sort_order, source, created_by, updated_by, description
+     ) VALUES (
+       $1, $2, $3, $4::uuid, $5::uuid, $6,
+       FALSE, TRUE, $7, FALSE,
+       TRUE, $8, 'SYSTEM', $9::uuid, $9::uuid, $10
+     )
+     RETURNING id, code, name_ar`,
+    [
+      DEFAULT_RELIEF_EXPENSE_GL_CODE,
+      'مصروف تخفيضات ومنح الطلبة',
+      'Student Relief & Scholarship Expense',
+      expenseType.rows[0].id,
+      parentId,
+      level,
+      expenseType.rows[0].normal_balance,
+      sort.rows[0]?.n ?? 1,
+      createdBy,
+      'حساب مصروف افتراضي لترحيل تخفيضات ومنح الطلبة',
+    ]
+  );
+  return ins.rows[0];
+}
+
+/** يختار حساب مصروف التخفيض: المُمرَّر أو الافتراضي أو أول حساب صالح */
+export async function resolveReliefExpenseGlAccount(
+  client: TxClient,
+  value: unknown,
+  createdBy: string
+): Promise<string> {
+  const raw = String(value ?? '').trim();
+  if (raw) {
+    await assertValidReliefExpenseGlAccount(client, raw);
+    return raw;
+  }
+
+  for (const code of PREFERRED_RELIEF_EXPENSE_CODES) {
+    const found = await findReliefExpenseGlByCode(client, code);
+    if (found) {
+      await assertValidReliefExpenseGlAccount(client, found.id);
+      return found.id;
+    }
+  }
+
+  const eligible = await listEligibleReliefExpenseGlAccounts(client);
+  if (eligible.length > 0) {
+    return eligible[0].id;
+  }
+
+  const created = await ensureDefaultReliefExpenseGlAccount(client, createdBy);
+  return created.id;
+}
+
+export async function getDefaultReliefExpenseGlAccount(
+  client: TxClient,
+  createdBy: string
+): Promise<{ id: string; code: string; name_ar: string }> {
+  for (const code of PREFERRED_RELIEF_EXPENSE_CODES) {
+    const found = await findReliefExpenseGlByCode(client, code);
+    if (found) {
+      await assertValidReliefExpenseGlAccount(client, found.id);
+      return found;
+    }
+  }
+
+  const eligible = await listEligibleReliefExpenseGlAccounts(client);
+  if (eligible.length > 0) {
+    return {
+      id: eligible[0].id,
+      code: eligible[0].code,
+      name_ar: eligible[0].name_ar,
+    };
+  }
+
+  return ensureDefaultReliefExpenseGlAccount(client, createdBy);
+}
+
 export function serializeStudentReliefType(row: StudentReliefTypeRow) {
   return {
     ...row,
@@ -244,7 +429,7 @@ export async function loadStudentReliefType(
 export async function createStudentReliefType(
   client: TxClient,
   input: {
-    code: unknown;
+    code?: unknown;
     name_ar: unknown;
     name_en?: unknown;
     relief_kind: unknown;
@@ -257,10 +442,12 @@ export async function createStudentReliefType(
     created_by: string;
   }
 ): Promise<StudentReliefTypeRow> {
-  await assertValidReliefExpenseGlAccount(
+  const glAccountId = await resolveReliefExpenseGlAccount(
     client,
-    String(input.gl_account_id ?? '')
+    input.gl_account_id,
+    input.created_by
   );
+  await assertValidReliefExpenseGlAccount(client, glAccountId);
 
   const ins = await txQuery<StudentReliefTypeRow>(
     client,
@@ -274,14 +461,14 @@ export async function createStudentReliefType(
        $9,FALSE,TRUE,$10,$11::uuid,$11::uuid
      ) RETURNING *`,
     [
-      requireCode(input.code),
+      await resolveReliefTypeCode(client, input.code),
       requireNameAr(input.name_ar),
       optText(input.name_en, 200),
       parseReliefKind(input.relief_kind),
       parseCalculationType(input.calculation_type),
       parseOptionalMoney(input.default_value, 'القيمة الافتراضية'),
       parseOptionalMoney(input.max_value, 'الحد الأقصى'),
-      String(input.gl_account_id).trim(),
+      glAccountId,
       bool(input.requires_approval, true),
       optText(input.description, 4000),
       input.created_by,

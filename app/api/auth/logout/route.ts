@@ -40,15 +40,17 @@ export async function POST(request: NextRequest) {
     response.cookies.set('access_token', '', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 0
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 0,
     });
 
     response.cookies.set('refresh_token', '', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 0
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 0,
     });
 
     return response;

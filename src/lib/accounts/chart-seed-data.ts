@@ -1618,6 +1618,15 @@ const COLLEGE_CHART_SEED_RAW: SeedAccountDef[] = [
     requires_cost_center: true,
   },
   {
+    code: '5895',
+    name_ar: 'مصروف تخفيضات ومنح الطلبة',
+    name_en: 'Student Relief & Scholarship Expense',
+    type: 'EXPENSE',
+    parent_code: '5800',
+    is_group: false,
+    requires_cost_center: false,
+  },
+  {
     code: '5900',
     name_ar: 'مصروفات أخرى',
     name_en: 'Other Expenses',

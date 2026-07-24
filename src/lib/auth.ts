@@ -2,9 +2,10 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { query } from './db';
 import { AuthUser, SystemAccess, LoginRequest, LoginResponse, JWTPayload, RefreshTokenPayload } from './types';
+import { isPlatformSuperAdminUsername } from '@/src/lib/platform-superadmin';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'please-change-this-key';
-const ACCESS_TOKEN_TTL_MIN = Number(process.env.ACCESS_TOKEN_TTL_MIN) || 20;
+const ACCESS_TOKEN_TTL_MIN = Number(process.env.ACCESS_TOKEN_TTL_MIN) || 60;
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS) || 30;
 
 // دالة لتوليد JWT
@@ -93,8 +94,10 @@ export async function authenticateUser(loginData: LoginRequest): Promise<LoginRe
     );
 
     const systems: SystemAccess[] = systemsResult.rows;
+    const platformAdmin = isPlatformSuperAdminUsername(user.username);
 
-    if (systems.length === 0) {
+    // السوبر أدمن يدخل حتى بلا أنظمة تشغيلية
+    if (systems.length === 0 && !platformAdmin) {
       return {
         success: false,
         message: 'ليس لديك صلاحية للوصول إلى أي نظام'
@@ -122,6 +125,7 @@ export async function authenticateUser(loginData: LoginRequest): Promise<LoginRe
         is_active: user.is_active
       },
       systems,
+      is_platform_admin: platformAdmin,
       access_token: accessToken,
       refresh_token: refreshToken
     };

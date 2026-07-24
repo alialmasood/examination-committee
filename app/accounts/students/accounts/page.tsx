@@ -1,114 +1,135 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import StudentsNav from '../components/StudentsNav';
-import {
-  ACCOUNT_STATUS_LABEL,
-  accountStatusBadge,
-  studentApi,
-  type Pagination,
-  type StudentAccountListItem,
-  type StudentOptions,
-} from '../components/types';
 
-export default function StudentAccountsListPage() {
-  const [rows, setRows] = useState<StudentAccountListItem[]>([]);
-  const [pagination, setPagination] = useState<Pagination>({
-    page: 1,
-    page_size: 20,
-    total: 0,
-    total_pages: 1,
-  });
-  const [q, setQ] = useState('');
-  const [status, setStatus] = useState('');
-  const [hasBalance, setHasBalance] = useState('');
-  const [page, setPage] = useState(1);
+type PaidStudentRow = {
+  id: string;
+  university_id: string | null;
+  name: string | null;
+  department: string | null;
+  study_type: string | null;
+  admission_type: string | null;
+};
+
+type DepartmentStat = {
+  id: string;
+  name: string;
+  total: number;
+  totalAmount: number;
+};
+
+function formatStage(admissionType?: string | null): string {
+  switch (admissionType) {
+    case 'first':
+      return 'الأولى';
+    case 'second':
+      return 'الثانية';
+    case 'third':
+      return 'الثالثة';
+    case 'fourth':
+      return 'الرابعة';
+    default:
+      return 'غير محدد';
+  }
+}
+
+function formatStudyType(studyType?: string | null): string {
+  switch (String(studyType || '').toLowerCase()) {
+    case 'morning':
+    case 'صباحي':
+      return 'صباحي';
+    case 'evening':
+    case 'مسائي':
+      return 'مسائي';
+    default:
+      return studyType?.trim() || '—';
+  }
+}
+
+function normalizeDeptName(value?: string | null): string {
+  return String(value || '')
+    .trim()
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/\s+/g, ' ');
+}
+
+function money(n: number): string {
+  return new Intl.NumberFormat('en-US').format(Math.round(n || 0));
+}
+
+export default function StudentAccountsPage() {
+  const [rows, setRows] = useState<PaidStudentRow[]>([]);
+  const [departments, setDepartments] = useState<DepartmentStat[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [options, setOptions] = useState<StudentOptions | null>(null);
-  const [modal, setModal] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({
-    student_id: '',
-    receivable_gl_account_id: '',
-    academic_year: '',
-    notes: '',
-  });
-
-  const loadOptions = useCallback(async () => {
-    const res = await studentApi<StudentOptions>('/api/accounts/student-options?student_limit=50');
-    if (res.success && res.data) setOptions(res.data);
-  }, []);
+  const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams({
-      page: String(page),
-      page_size: '20',
-    });
-    if (q.trim()) params.set('q', q.trim());
-    if (status) params.set('status', status);
-    if (hasBalance) params.set('has_balance', hasBalance);
-    const res = await studentApi<StudentAccountListItem[]>(
-      `/api/accounts/student-accounts?${params}`
-    );
-    if (!res.success) {
-      setError(res.message || 'تعذر تحميل الحسابات');
+    setError('');
+    try {
+      const [paidRes, deptRes] = await Promise.all([
+        fetch('/api/accounts/installments/paid/list', {
+          credentials: 'include',
+          cache: 'no-store',
+        }),
+        fetch('/api/departments/stats?academic_year=all', {
+          credentials: 'include',
+          cache: 'no-store',
+        }),
+      ]);
+
+      const paidBody = await paidRes.json().catch(() => ({}));
+      const deptBody = await deptRes.json().catch(() => ({}));
+
+      if (!paidRes.ok || !paidBody.success) {
+        setError(
+          paidBody.error || paidBody.message || 'تعذر تحميل قائمة الطلبة المسددين'
+        );
+        setRows([]);
+      } else {
+        setRows(Array.isArray(paidBody.data) ? paidBody.data : []);
+      }
+
+      if (deptRes.ok && deptBody.success && Array.isArray(deptBody.data)) {
+        setDepartments(deptBody.data);
+      } else {
+        setDepartments([]);
+      }
+    } catch {
+      setError('تعذر الاتصال بالخادم');
       setRows([]);
-    } else {
-      setError(null);
-      setRows(res.data || []);
-      if (res.pagination) setPagination(res.pagination);
+      setDepartments([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [page, q, status, hasBalance]);
+  }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch
-    void loadOptions();
-  }, [loadOptions]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch
     void load();
   }, [load]);
 
-  const createAccount = async () => {
-    setSaving(true);
-    setSuccess(null);
-    const res = await studentApi('/api/accounts/student-accounts', {
-      method: 'POST',
-      body: JSON.stringify(form),
-    });
-    setSaving(false);
-    if (!res.success) {
-      setError(res.message || 'تعذر إنشاء الحساب');
-      return;
+  const paidCountByDepartment = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const dept of departments) {
+      const key = normalizeDeptName(dept.name);
+      const count = rows.filter(
+        (row) => normalizeDeptName(row.department) === key
+      ).length;
+      map.set(dept.id, count);
     }
-    setModal(false);
-    setSuccess('تم إنشاء الحساب المالي');
-    setForm({ student_id: '', receivable_gl_account_id: '', academic_year: '', notes: '' });
-    void load();
-  };
+    return map;
+  }, [departments, rows]);
 
   return (
     <div className="p-6" dir="rtl">
-      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">الحسابات المالية للطلبة</h1>
-          <p className="text-sm text-gray-600 mt-1">
-            الطلبة الذين أكملوا الدفع من صفحة الأقساط · ترقيم STA
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setModal(true)}
-          className="px-4 py-2 bg-red-900 text-white text-sm rounded-md hover:bg-red-800"
-        >
-          حساب جديد
-        </button>
+      <div className="mb-4">
+        <h1 className="text-xl font-semibold text-gray-900">الحسابات</h1>
+        <p className="text-sm text-gray-600 mt-1">
+          الطلبة الذين تم تأكيد دفعهم من صفحة الأقساط
+        </p>
       </div>
 
       <StudentsNav />
@@ -118,223 +139,102 @@ export default function StudentAccountsListPage() {
           {error}
         </div>
       )}
-      {success && (
-        <div className="mb-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-          {success}
-        </div>
-      )}
 
-      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <input
-            value={q}
-            onChange={(e) => {
-              setPage(1);
-              setQ(e.target.value);
-            }}
-            placeholder="بحث بالاسم / الرقم الجامعي / رقم الحساب"
-            className="border border-gray-300 rounded-md px-3 py-2 text-sm"
-          />
-          <select
-            value={status}
-            onChange={(e) => {
-              setPage(1);
-              setStatus(e.target.value);
-            }}
-            className="border border-gray-300 rounded-md px-3 py-2 text-sm"
-          >
-            <option value="">كل الحالات</option>
-            <option value="ACTIVE">نشط</option>
-            <option value="SUSPENDED">معلّق</option>
-            <option value="CLOSED">مغلق</option>
-          </select>
-          <select
-            value={hasBalance}
-            onChange={(e) => {
-              setPage(1);
-              setHasBalance(e.target.value);
-            }}
-            className="border border-gray-300 rounded-md px-3 py-2 text-sm"
-          >
-            <option value="">كل الأرصدة</option>
-            <option value="true">له رصيد</option>
-            <option value="false">رصيد صفر</option>
-          </select>
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="border border-gray-300 rounded-md px-3 py-2 text-sm hover:bg-gray-50"
-          >
-            تحديث
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 text-gray-600">
-            <tr>
-              <th className="px-3 py-2 text-right font-medium">رقم الحساب</th>
-              <th className="px-3 py-2 text-right font-medium">الطالب</th>
-              <th className="px-3 py-2 text-right font-medium">الرقم الجامعي</th>
-              <th className="px-3 py-2 text-right font-medium">القسم/التخصص</th>
-              <th className="px-3 py-2 text-right font-medium">المرحلة</th>
-              <th className="px-3 py-2 text-right font-medium">حساب الذمم</th>
-              <th className="px-3 py-2 text-right font-medium">الحالة</th>
-              <th className="px-3 py-2 text-right font-medium">العملة</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-gray-500">
-                  جاري التحميل...
-                </td>
-              </tr>
-            ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-gray-500">
-                  لا توجد حسابات لطلبة مسددين بعد. أكّد الدفع من صفحة الأقساط ثم حدّث القائمة.
-                </td>
-              </tr>
-            ) : (
-              rows.map((row) => (
-                <tr key={row.id} className="border-t border-gray-100 hover:bg-gray-50">
-                  <td className="px-3 py-2">
+      {loading ? (
+        <div className="py-12 text-center text-gray-500 text-sm">جارٍ التحميل…</div>
+      ) : (
+        <>
+          {departments.length > 0 && (
+            <div className="mb-6">
+              <h2 className="text-sm font-semibold text-gray-800 mb-3">الأقسام</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {departments.map((dept) => {
+                  const paidCount = paidCountByDepartment.get(dept.id) || 0;
+                  return (
                     <Link
-                      href={`/accounts/students/accounts/${row.id}`}
-                      className="text-red-900 font-medium hover:underline"
+                      key={dept.id}
+                      href={`/accounts/students/accounts/departments/${dept.id}`}
+                      className="text-right bg-white rounded-lg shadow-sm border border-gray-200 p-5 hover:shadow-md hover:border-red-300 transition-all block"
                     >
-                      {row.account_number}
+                      <div className="flex items-center justify-between mb-3 gap-2">
+                        <h3 className="text-base font-bold text-gray-800 leading-snug">
+                          {dept.name}
+                        </h3>
+                        <span className="text-sm font-semibold text-gray-600 shrink-0">
+                          {paidCount}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-sm text-gray-600">المسددون</span>
+                        <span className="text-sm font-bold text-emerald-700">
+                          {paidCount} طالب
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-sm text-gray-600">إجمالي المبالغ</span>
+                        <span className="text-sm font-bold text-gray-800">
+                          {money(dept.totalAmount || 0)} IQD
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-red-800/80 pt-2">
+                        اضغط لعرض تفاصيل القسم ←
+                      </p>
                     </Link>
-                  </td>
-                  <td className="px-3 py-2">{row.student_full_name_ar || '—'}</td>
-                  <td className="px-3 py-2">
-                    {row.student_university_id || row.student_number || '—'}
-                  </td>
-                  <td className="px-3 py-2">{row.student_major || '—'}</td>
-                  <td className="px-3 py-2">{row.student_admission_type || '—'}</td>
-                  <td className="px-3 py-2">
-                    {row.receivable_gl_code
-                      ? `${row.receivable_gl_code} — ${row.receivable_gl_name_ar || ''}`
-                      : '—'}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`inline-flex px-2 py-0.5 rounded text-xs ${accountStatusBadge(row.status)}`}
-                    >
-                      {ACCOUNT_STATUS_LABEL[row.status] || row.status}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">{row.currency_code}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
-      <div className="flex items-center justify-between mt-3 text-sm text-gray-600">
-        <span>
-          صفحة {pagination.page} من {pagination.total_pages} · الإجمالي {pagination.total}
-        </span>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="px-3 py-1 border rounded disabled:opacity-40"
-          >
-            السابق
-          </button>
-          <button
-            type="button"
-            disabled={page >= pagination.total_pages}
-            onClick={() => setPage((p) => p + 1)}
-            className="px-3 py-1 border rounded disabled:opacity-40"
-          >
-            التالي
-          </button>
-        </div>
-      </div>
-
-      {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-5" dir="rtl">
-            <h2 className="text-lg font-semibold mb-4">إنشاء حساب مالي للطالب</h2>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">الطالب</label>
-                <select
-                  value={form.student_id}
-                  onChange={(e) => setForm((f) => ({ ...f, student_id: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                >
-                  <option value="">اختر طالباً</option>
-                  {(options?.students || []).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.full_name_ar} ({s.university_id || s.student_number})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">حساب الذمم (أصل)</label>
-                <select
-                  value={form.receivable_gl_account_id}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, receivable_gl_account_id: e.target.value }))
-                  }
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                >
-                  <option value="">اختر حساباً</option>
-                  {(options?.receivable_gl_accounts || []).map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name_ar}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">السنة الدراسية</label>
-                <input
-                  value={form.academic_year}
-                  onChange={(e) => setForm((f) => ({ ...f, academic_year: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">ملاحظات</label>
-                <textarea
-                  value={form.notes}
-                  onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                  rows={2}
-                />
-              </div>
-              <p className="text-xs text-gray-500">
-                العملة IQD فقط في هذه المرحلة. الرصيد الافتتاحي المرجعي لا يُحتسب في الدفتر.
+          {rows.length === 0 && !error ? (
+            <div className="py-12 text-center border border-dashed border-gray-300 rounded-lg">
+              <p className="text-gray-700 font-medium">لا يوجد طلبة مسددون حالياً</p>
+              <p className="text-sm text-gray-500 mt-1">
+                يظهر هنا الطلبة بعد تأكيد الدفع من صفحة الأقساط.
               </p>
             </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button
-                type="button"
-                onClick={() => setModal(false)}
-                className="px-3 py-2 text-sm border rounded-md"
-              >
-                إلغاء
-              </button>
-              <button
-                type="button"
-                disabled={saving || !form.student_id || !form.receivable_gl_account_id}
-                onClick={() => void createAccount()}
-                className="px-3 py-2 text-sm bg-red-900 text-white rounded-md disabled:opacity-40"
-              >
-                {saving ? 'جاري الحفظ...' : 'إنشاء'}
-              </button>
+          ) : rows.length > 0 ? (
+            <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+              <table className="min-w-full text-sm">
+                <thead className="bg-red-950 text-white">
+                  <tr>
+                    <th className="px-3 py-2.5 text-right font-medium">التسلسل</th>
+                    <th className="px-3 py-2.5 text-right font-medium">اسم الطالب</th>
+                    <th className="px-3 py-2.5 text-right font-medium">المرحلة</th>
+                    <th className="px-3 py-2.5 text-right font-medium">القسم</th>
+                    <th className="px-3 py-2.5 text-right font-medium">نوع الدراسة</th>
+                    <th className="px-3 py-2.5 text-right font-medium">رقم الطالب</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {rows.map((row, index) => (
+                    <tr key={row.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2.5 text-gray-700">{index + 1}</td>
+                      <td className="px-3 py-2.5 font-medium text-gray-900">
+                        {row.name?.trim() || '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-700">
+                        {formatStage(row.admission_type)}
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-700">
+                        {row.department?.trim() || '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-700">
+                        {formatStudyType(row.study_type)}
+                      </td>
+                      <td
+                        className="px-3 py-2.5 font-mono text-xs text-gray-800"
+                        dir="ltr"
+                      >
+                        {row.university_id?.trim() || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-        </div>
+          ) : null}
+        </>
       )}
     </div>
   );

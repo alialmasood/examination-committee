@@ -628,9 +628,9 @@ async function main() {
     // 9.B.1: CALCULATED ليس جاهزاً للترحيل دون اعتماد
     assert(
       !isPayrollRunReadyForPosting({
-        status: result.run.status,
-        error_count: result.run.error_count,
-        snapshot_hash: result.run.snapshot_hash,
+      status: result.run.status,
+      error_count: result.run.error_count,
+      snapshot_hash: result.run.snapshot_hash,
       }),
       'calculated not ready for posting'
     );

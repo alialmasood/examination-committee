@@ -154,12 +154,12 @@ export default function AccountsStudentsPage() {
             <SummaryCard
               title="إجمالي الذمم"
               value={formatMoney(summary.totalReceivables)}
-              href="/accounts/students/charges?status=POSTED"
+              href="/accounts/students/accounts"
             />
             <SummaryCard
               title="إجمالي المحصل"
               value={formatMoney(summary.totalCollected)}
-              href="/accounts/students/collections?status=POSTED"
+              href="/accounts/students/accounts"
             />
             <SummaryCard
               title="المتبقي"
@@ -169,34 +169,28 @@ export default function AccountsStudentsPage() {
             <SummaryCard
               title="أقساط مستحقة"
               value={String(summary.dueInstallments)}
-              href="/accounts/students/installments"
+              href="/accounts/students/payment-schedules"
             />
             <SummaryCard
               title="متأخرة"
               value={String(summary.overdueInstallments)}
-              href="/accounts/students/installments"
+              href="/accounts/students/payment-schedules"
             />
             <SummaryCard
               title="تحصيل نقدي"
               value={formatMoney(summary.cashCollected)}
-              href="/accounts/students/collections?payment_method=CASH"
+              href="/accounts/students/accounts"
             />
             <SummaryCard
               title="تحصيل مصرفي"
               value={formatMoney(summary.bankCollected)}
-              href="/accounts/students/collections?payment_method=BANK"
+              href="/accounts/students/accounts"
             />
           </div>
 
           <div className="rounded-lg border border-gray-200 bg-white p-4 mb-6">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-medium text-gray-900">آخر التحصيلات</h2>
-              <Link
-                href="/accounts/students/collections"
-                className="text-sm text-red-900 hover:underline"
-              >
-                عرض الكل
-              </Link>
             </div>
             {summary.recentCollections.length === 0 ? (
               <p className="text-sm text-gray-500">لا توجد تحصيلات بعد</p>
@@ -215,14 +209,7 @@ export default function AccountsStudentsPage() {
                   <tbody>
                     {summary.recentCollections.map((c) => (
                       <tr key={c.id} className="border-t border-gray-100">
-                        <td className="py-2">
-                          <Link
-                            href={`/accounts/students/collections/${c.id}`}
-                            className="text-red-900 hover:underline"
-                          >
-                            {c.collection_number}
-                          </Link>
-                        </td>
+                        <td className="py-2 font-mono">{c.collection_number}</td>
                         <td className="py-2">{c.student_full_name_ar || '—'}</td>
                         <td className="py-2">{formatDateOnly(c.collection_date)}</td>
                         <td className="py-2">{formatMoney(c.amount)}</td>
@@ -241,19 +228,19 @@ export default function AccountsStudentsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <QuickLink
-          href="/accounts/students/billing-plans"
-          title="خطط الرسوم"
-          desc="إنشاء وتفعيل جداول الأقساط"
+          href="/accounts/students/payment-schedules"
+          title="خطة التسديدات"
+          desc="جدولة تسديد مستحقات الطلبة"
         />
         <QuickLink
-          href="/accounts/students/collections"
-          title="التحصيلات"
-          desc="قبض نقدي/مصرفي وتخصيص المطالبات"
+          href="/accounts/students/department-installments"
+          title="أقساط الأقسام"
+          desc="إدارة أقساط الرسوم حسب الأقسام"
         />
         <QuickLink
-          href="/accounts/students/installments"
-          title="الأقساط"
-          desc="متابعة الاستحقاق والسداد"
+          href="/accounts/students/accounts"
+          title="الحسابات"
+          desc="الحسابات المالية للطلبة ومتابعة الأرصدة"
         />
       </div>
     </div>

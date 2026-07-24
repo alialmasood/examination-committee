@@ -1,9 +1,12 @@
 /**
- * مصادقة مسارات إدارة الأنظمة — تتطلب دخول + صلاحية شؤون الطلبة.
+ * مصادقة مسارات إدارة المنصة (سوبر أدمن فقط).
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAccessToken, validateUser, getUserSystems } from '@/src/lib/auth';
+import { verifyAccessToken, validateUser } from '@/src/lib/auth';
+import { isPlatformSuperAdminUsername } from '@/src/lib/platform-superadmin';
 import type { AuthUser } from '@/src/lib/types';
+
+export { isPlatformSuperAdminUsername as isPlatformAdminUsername } from '@/src/lib/platform-superadmin';
 
 export type AdminAuthOk = {
   ok: true;
@@ -15,7 +18,10 @@ export type AdminAuthFail = {
   response: NextResponse;
 };
 
-export async function requireStudentAffairsAdmin(
+/**
+ * حارس بوابة السوبر أدمن — حساب مستقل فقط، بلا أنظمة تشغيلية.
+ */
+export async function requirePlatformAdmin(
   request: NextRequest
 ): Promise<AdminAuthOk | AdminAuthFail> {
   const accessToken = request.cookies.get('access_token')?.value;
@@ -51,21 +57,22 @@ export async function requireStudentAffairsAdmin(
     };
   }
 
-  const systems = await getUserSystems(user.id);
-  const hasStudentAffairs = systems.some((s) => s.code === 'STUDENT_AFFAIRS');
-  const isAdminUser =
-    user.username === 'admin' ||
-    user.username.toLowerCase() === 'administrator';
-
-  if (!hasStudentAffairs && !isAdminUser) {
+  if (!isPlatformSuperAdminUsername(user.username)) {
     return {
       ok: false,
       response: NextResponse.json(
-        { success: false, message: 'ليس لديك صلاحية إدارة أنظمة المنصة' },
+        { success: false, message: 'هذه البوابة مخصّصة لحساب السوبر أدمن فقط' },
         { status: 403 }
       ),
     };
   }
 
   return { ok: true, user };
+}
+
+/** @deprecated استخدم requirePlatformAdmin */
+export async function requireStudentAffairsAdmin(
+  request: NextRequest
+): Promise<AdminAuthOk | AdminAuthFail> {
+  return requirePlatformAdmin(request);
 }

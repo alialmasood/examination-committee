@@ -6,15 +6,11 @@ import { usePathname } from 'next/navigation';
 const TABS: Array<{ href: string; label: string; exact?: boolean }> = [
   { href: '/accounts/students', label: 'الملخص', exact: true },
   { href: '/accounts/students/accounts', label: 'الحسابات' },
-  { href: '/accounts/students/billing-plans', label: 'خطط الرسوم' },
-  { href: '/accounts/students/installments', label: 'الأقساط' },
-  { href: '/accounts/students/collections', label: 'التحصيلات' },
-  { href: '/accounts/students/charges', label: 'المطالبات' },
-  { href: '/accounts/students/reliefs', label: 'الخصومات والمنح' },
-  { href: '/accounts/students/credit-notes', label: 'الإشعارات الدائنة' },
-  { href: '/accounts/students/refunds', label: 'الاستردادات' },
-  { href: '/accounts/students/fee-types', label: 'أنواع الرسوم' },
-  { href: '/accounts/students/relief-types', label: 'أنواع التخفيضات' },
+  { href: '/accounts/students/aggregate-accounts', label: 'حسابات إجمالية' },
+  { href: '/accounts/students/payment-schedules', label: 'خطة التسديدات' },
+  { href: '/accounts/students/department-installments', label: 'أقساط الأقسام' },
+  { href: '/accounts/students/student-fees', label: 'رسوم الطلبة' },
+  { href: '/accounts/students/discounts', label: 'تخفيضات وخصومات' },
 ];
 
 export default function StudentsNav() {

@@ -67,6 +67,29 @@ function optText(value: unknown, max: number): string | null {
   return s || null;
 }
 
+/** حساب إيراد افتراضي لرسوم الطلبة — مرتبط بدليل الحسابات */
+export const DEFAULT_FEE_REVENUE_GL_CODE = '4111';
+
+/** ربط فئة الرسم بحساب إيراد مفضل في الدليل */
+export const FEE_CATEGORY_REVENUE_GL_CODES: Record<StudentFeeCategory, string[]> = {
+  TUITION: ['4111', '4112', '4113'],
+  REGISTRATION: ['4120'],
+  EXAM: ['4130'],
+  LAB: ['4160'],
+  SERVICE: ['4140', '4150', '4210'],
+  TRANSPORT: ['4170'],
+  ACCOMMODATION: ['4190'],
+  OTHER: ['4190', '4180'],
+};
+
+function preferredRevenueCodesForCategory(
+  category: StudentFeeCategory | null | undefined
+): string[] {
+  const preferred = category ? FEE_CATEGORY_REVENUE_GL_CODES[category] ?? [] : [];
+  const fallback = [DEFAULT_FEE_REVENUE_GL_CODE, '4190', '4120'];
+  return [...new Set([...preferred, ...fallback])];
+}
+
 function requireCode(value: unknown): string {
   const s = String(value ?? '').trim().toUpperCase();
   if (!s) throw new AccountsHttpError('رمز نوع الرسم مطلوب', 400);
@@ -75,6 +98,41 @@ function requireCode(value: unknown): string {
     throw new AccountsHttpError('رمز نوع الرسم يحتوي محارف غير مسموحة', 400);
   }
   return s;
+}
+
+/** رمز تلقائي بسيط وفريد: FT-001, FT-002, … */
+export async function suggestNextFeeTypeCode(client: TxClient): Promise<string> {
+  const r = await txQuery<{ next_num: number }>(
+    client,
+    `SELECT COALESCE(MAX(
+       CASE
+         WHEN code ~ '^FT-[0-9]+$'
+           THEN NULLIF(substring(code from 4), '')::int
+         ELSE NULL
+       END
+     ), 0) + 1 AS next_num
+     FROM accounts.student_fee_types`
+  );
+  let n = Number(r.rows[0]?.next_num ?? 1);
+  for (let i = 0; i < 100; i++) {
+    const code = `FT-${String(n + i).padStart(3, '0')}`;
+    const exists = await txQuery<{ ok: number }>(
+      client,
+      `SELECT 1 AS ok FROM accounts.student_fee_types WHERE code = $1 LIMIT 1`,
+      [code]
+    );
+    if (!exists.rows[0]) return code;
+  }
+  throw new AccountsHttpError('تعذر توليد رمز فريد لنوع الرسم', 500);
+}
+
+async function resolveFeeTypeCode(
+  client: TxClient,
+  value: unknown
+): Promise<string> {
+  const raw = String(value ?? '').trim();
+  if (!raw) return suggestNextFeeTypeCode(client);
+  return requireCode(raw);
 }
 
 function requireNameAr(value: unknown): string {
@@ -235,6 +293,166 @@ export async function listEligibleRevenueGlAccounts(
   }>;
 }
 
+async function findRevenueGlByCode(
+  client: TxClient,
+  code: string
+): Promise<{ id: string; code: string; name_ar: string } | null> {
+  const r = await txQuery<{ id: string; code: string; name_ar: string }>(
+    client,
+    `SELECT a.id, a.code, a.name_ar
+     FROM accounts.chart_of_accounts a
+     JOIN accounts.account_types t ON t.id = a.account_type_id
+     WHERE UPPER(a.code) = UPPER($1)
+       AND t.code = 'REVENUE'
+       AND NOT a.is_group
+       AND a.allow_posting
+       AND a.is_active
+     LIMIT 1`,
+    [code]
+  );
+  return r.rows[0] ?? null;
+}
+
+/**
+ * يضمن وجود حساب إيراد افتراضي لرسوم الطلبة في دليل الحسابات.
+ */
+export async function ensureDefaultFeeRevenueGlAccount(
+  client: TxClient,
+  createdBy: string,
+  preferredCode: string = DEFAULT_FEE_REVENUE_GL_CODE
+): Promise<{ id: string; code: string; name_ar: string }> {
+  const existing = await findRevenueGlByCode(client, preferredCode);
+  if (existing) {
+    await assertValidRevenueGlAccount(client, existing.id);
+    return existing;
+  }
+
+  const revenueType = await txQuery<{ id: string; normal_balance: string }>(
+    client,
+    `SELECT id, normal_balance FROM accounts.account_types WHERE code = 'REVENUE' LIMIT 1`
+  );
+  if (!revenueType.rows[0]) {
+    throw new AccountsHttpError(
+      'نوع حساب الإيرادات غير موجود — شغّل migrations أو seed دليل الحسابات',
+      400
+    );
+  }
+
+  const parentCandidates = ['4110', '4100', '4000'];
+  let parentId: string | null = null;
+  let level = 1;
+  for (const pCode of parentCandidates) {
+    const parent = await txQuery<{ id: string; level: number }>(
+      client,
+      `SELECT id, level FROM accounts.chart_of_accounts WHERE code = $1 LIMIT 1`,
+      [pCode]
+    );
+    if (parent.rows[0]) {
+      parentId = parent.rows[0].id;
+      level = Number(parent.rows[0].level) + 1;
+      break;
+    }
+  }
+
+  const sort = await txQuery<{ n: number }>(
+    client,
+    `SELECT COALESCE(MAX(sort_order), 0) + 1 AS n
+     FROM accounts.chart_of_accounts
+     WHERE parent_id IS NOT DISTINCT FROM $1::uuid`,
+    [parentId]
+  );
+
+  const ins = await txQuery<{ id: string; code: string; name_ar: string }>(
+    client,
+    `INSERT INTO accounts.chart_of_accounts (
+       code, name_ar, name_en, account_type_id, parent_id, level,
+       is_group, allow_posting, normal_balance, requires_cost_center,
+       is_active, sort_order, source, created_by, updated_by, description
+     ) VALUES (
+       $1, $2, $3, $4::uuid, $5::uuid, $6,
+       FALSE, TRUE, $7, FALSE,
+       TRUE, $8, 'SYSTEM', $9::uuid, $9::uuid, $10
+     )
+     RETURNING id, code, name_ar`,
+    [
+      preferredCode || DEFAULT_FEE_REVENUE_GL_CODE,
+      'أقساط الدراسة الصباحية',
+      'Morning Tuition',
+      revenueType.rows[0].id,
+      parentId,
+      level,
+      revenueType.rows[0].normal_balance,
+      sort.rows[0]?.n ?? 1,
+      createdBy,
+      'حساب إيراد افتراضي لترحيل رسوم وأنواع رسوم الطلبة',
+    ]
+  );
+  return ins.rows[0];
+}
+
+/** يختار حساب الإيراد: المُمرَّر أو حسب الفئة أو أول حساب صالح أو إنشاء افتراضي */
+export async function resolveRevenueGlAccount(
+  client: TxClient,
+  value: unknown,
+  createdBy: string,
+  category?: StudentFeeCategory | null
+): Promise<string> {
+  const raw = String(value ?? '').trim();
+  if (raw) {
+    await assertValidRevenueGlAccount(client, raw);
+    return raw;
+  }
+
+  for (const code of preferredRevenueCodesForCategory(category)) {
+    const found = await findRevenueGlByCode(client, code);
+    if (found) {
+      await assertValidRevenueGlAccount(client, found.id);
+      return found.id;
+    }
+  }
+
+  const eligible = await listEligibleRevenueGlAccounts(client);
+  if (eligible.length > 0) {
+    return eligible[0].id;
+  }
+
+  const preferred =
+    preferredRevenueCodesForCategory(category)[0] || DEFAULT_FEE_REVENUE_GL_CODE;
+  const created = await ensureDefaultFeeRevenueGlAccount(
+    client,
+    createdBy,
+    preferred
+  );
+  return created.id;
+}
+
+export async function getDefaultFeeRevenueGlAccount(
+  client: TxClient,
+  createdBy: string,
+  category?: StudentFeeCategory | null
+): Promise<{ id: string; code: string; name_ar: string }> {
+  for (const code of preferredRevenueCodesForCategory(category)) {
+    const found = await findRevenueGlByCode(client, code);
+    if (found) {
+      await assertValidRevenueGlAccount(client, found.id);
+      return found;
+    }
+  }
+
+  const eligible = await listEligibleRevenueGlAccounts(client);
+  if (eligible.length > 0) {
+    return {
+      id: eligible[0].id,
+      code: eligible[0].code,
+      name_ar: eligible[0].name_ar,
+    };
+  }
+
+  const preferred =
+    preferredRevenueCodesForCategory(category)[0] || DEFAULT_FEE_REVENUE_GL_CODE;
+  return ensureDefaultFeeRevenueGlAccount(client, createdBy, preferred);
+}
+
 async function assertCostCenter(
   client: TxClient,
   costCenterId: string | null
@@ -270,11 +488,11 @@ export async function loadStudentFeeType(
 export async function createStudentFeeType(
   client: TxClient,
   input: {
-    code: unknown;
+    code?: unknown;
     name_ar: unknown;
     name_en?: unknown;
     category: unknown;
-    revenue_gl_account_id: unknown;
+    revenue_gl_account_id?: unknown;
     default_amount?: unknown;
     currency_code?: unknown;
     requires_cost_center?: unknown;
@@ -286,10 +504,14 @@ export async function createStudentFeeType(
   }
 ): Promise<StudentFeeTypeRow> {
   const currency = assertIqdOnly(input.currency_code);
-  await assertValidRevenueGlAccount(
+  const category = parseCategory(input.category);
+  const revenueGlId = await resolveRevenueGlAccount(
     client,
-    String(input.revenue_gl_account_id ?? '')
+    input.revenue_gl_account_id,
+    input.created_by,
+    category
   );
+  await assertValidRevenueGlAccount(client, revenueGlId);
 
   let defaultAmount: string | null = null;
   if (input.default_amount != null && input.default_amount !== '') {
@@ -323,16 +545,16 @@ export async function createStudentFeeType(
        $1,$2,$3,$4,$5::uuid,$6::numeric,$7,$8,$9::uuid,$10,$11,TRUE,$12,$13::uuid,$13::uuid
      ) RETURNING *`,
     [
-      requireCode(input.code),
+      await resolveFeeTypeCode(client, input.code),
       requireNameAr(input.name_ar),
       optText(input.name_en, 200),
-      parseCategory(input.category),
-      String(input.revenue_gl_account_id).trim(),
+      category,
+      revenueGlId,
       defaultAmount,
       currency,
       requiresCc,
       defaultCc,
-      bool(input.is_tuition, parseCategory(input.category) === 'TUITION'),
+      bool(input.is_tuition, category === 'TUITION'),
       bool(input.is_refundable, false),
       optText(input.description, 4000),
       input.created_by,

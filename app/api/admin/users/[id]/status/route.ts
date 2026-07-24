@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import bcrypt from 'bcrypt';
 import { query } from '@/src/lib/db';
 import { requirePlatformAdmin } from '@/src/lib/admin-systems-access';
+import { isPlatformSuperAdminUsername } from '@/src/lib/platform-superadmin';
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -9,9 +9,9 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
- * POST /api/admin/users/[id]/password
- * Body: { password: string, confirm_password: string }
- * يحدّث كلمة المرور المركزية للمستخدم دون الحاجة للدخول إلى نظامه.
+ * POST /api/admin/users/[id]/status
+ * Body: { is_active: boolean }
+ * تفعيل أو تعطيل حساب مستخدم من بوابة إدارة المنصة.
  */
 export async function POST(request: NextRequest, context: Ctx) {
   const auth = await requirePlatformAdmin(request);
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest, context: Ctx) {
     );
   }
 
-  let body: { password?: unknown; confirm_password?: unknown };
+  let body: { is_active?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -35,24 +35,18 @@ export async function POST(request: NextRequest, context: Ctx) {
     );
   }
 
-  const password = String(body.password ?? '');
-  const confirm = String(body.confirm_password ?? '');
+  if (typeof body.is_active !== 'boolean') {
+    return NextResponse.json(
+      { success: false, message: 'قيمة الحالة مطلوبة (true أو false)' },
+      { status: 400 }
+    );
+  }
 
-  if (password.length < 6) {
+  const isActive = body.is_active;
+
+  if (userId === auth.user.id && !isActive) {
     return NextResponse.json(
-      { success: false, message: 'كلمة المرور يجب ألا تقل عن 6 أحرف' },
-      { status: 400 }
-    );
-  }
-  if (password.length > 128) {
-    return NextResponse.json(
-      { success: false, message: 'كلمة المرور طويلة جداً' },
-      { status: 400 }
-    );
-  }
-  if (password !== confirm) {
-    return NextResponse.json(
-      { success: false, message: 'تأكيد كلمة المرور غير مطابق' },
+      { success: false, message: 'لا يمكنك تعطيل حسابك الحالي' },
       { status: 400 }
     );
   }
@@ -69,26 +63,36 @@ export async function POST(request: NextRequest, context: Ctx) {
       );
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const username = existing.rows[0].username as string;
+    if (isPlatformSuperAdminUsername(username) && !isActive) {
+      return NextResponse.json(
+        { success: false, message: 'لا يمكن تعطيل حساب السوبر أدمن' },
+        { status: 400 }
+      );
+    }
+
     await query(
       `UPDATE student_affairs.users
-       SET password_hash = $2, is_active = TRUE
+       SET is_active = $2
        WHERE id = $1::uuid`,
-      [userId, passwordHash]
+      [userId, isActive]
     );
 
     return NextResponse.json({
       success: true,
-      message: `تم تحديث كلمة مرور المستخدم «${existing.rows[0].username}» بنجاح`,
+      message: isActive
+        ? `تم تنشيط حساب «${username}» بنجاح`
+        : `تم تعطيل حساب «${username}» بنجاح`,
       data: {
         user_id: userId,
-        username: existing.rows[0].username,
+        username,
+        is_active: isActive,
       },
     });
   } catch (error) {
-    console.error('خطأ في تحديث كلمة المرور:', error);
+    console.error('خطأ في تحديث حالة الحساب:', error);
     return NextResponse.json(
-      { success: false, message: 'تعذر تحديث كلمة المرور' },
+      { success: false, message: 'تعذر تحديث حالة الحساب' },
       { status: 500 }
     );
   }
