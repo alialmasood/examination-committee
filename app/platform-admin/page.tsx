@@ -53,6 +53,17 @@ export default function PlatformSuperAdminLoginPage() {
         await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
         return;
       }
+
+      // تأكيد أن الكوكي وصل للمتصفح قبل التوجيه (مهم في الإنتاج على HTTP)
+      const meRes = await fetch('/api/auth/me', { credentials: 'include', cache: 'no-store' });
+      const meBody = await meRes.json().catch(() => ({}));
+      if (!meRes.ok || !meBody.success || !meBody.is_platform_admin) {
+        setError(
+          'تم التحقق من البيانات لكن تعذر حفظ الجلسة. إن كان الموقع على HTTP في الإنتاج فاضبط COOKIE_SECURE=false'
+        );
+        return;
+      }
+
       router.replace('/platform-admin/systems');
     } catch {
       setError('تعذر الاتصال بالخادم');
