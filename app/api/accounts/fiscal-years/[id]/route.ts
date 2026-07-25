@@ -150,20 +150,92 @@ export async function DELETE(request: NextRequest, context: Ctx) {
         throw new AccountsHttpError('السنة المالية غير موجودة', 404);
       }
       const year = existing.rows[0];
-      if (year.status !== 'DRAFT') {
-        throw new AccountsHttpError('يمكن حذف السنة المالية فقط وهي في حالة مسودة', 409);
+
+      const tableExists = async (table: string) => {
+        const r = await txQuery<{ ok: boolean }>(
+          client,
+          `SELECT to_regclass($1) IS NOT NULL AS ok`,
+          [`accounts.${table}`]
+        );
+        return Boolean(r.rows[0]?.ok);
+      };
+
+      const countOf = async (sql: string) => {
+        const r = await txQuery<{ c: number }>(client, sql, [id]);
+        return Number(r.rows[0]?.c || 0);
+      };
+
+      const blockers: string[] = [];
+
+      if (await tableExists('journal_entries')) {
+        const n = await countOf(
+          `SELECT COUNT(*)::int AS c FROM accounts.journal_entries WHERE fiscal_year_id = $1`
+        );
+        if (n > 0) blockers.push(`${n} قيد يومية`);
       }
 
-      const periods = await txQuery(
-        client,
-        `SELECT COUNT(*)::int AS c FROM accounts.fiscal_periods WHERE fiscal_year_id = $1`,
-        [id]
-      );
-      if (periods.rows[0].c > 0) {
-        throw new AccountsHttpError('لا يمكن حذف سنة مالية تحتوي على فترات محاسبية', 409);
+      if (await tableExists('cash_box_sessions')) {
+        const n = await countOf(
+          `SELECT COUNT(*)::int AS c FROM accounts.cash_box_sessions WHERE fiscal_year_id = $1`
+        );
+        if (n > 0) blockers.push(`${n} جلسة صندوق`);
+      }
+
+      if (await tableExists('cash_vouchers')) {
+        const n = await countOf(
+          `SELECT COUNT(*)::int AS c FROM accounts.cash_vouchers WHERE fiscal_year_id = $1`
+        );
+        if (n > 0) blockers.push(`${n} سند نقدي`);
+      }
+
+      if (await tableExists('bank_vouchers')) {
+        const n = await countOf(
+          `SELECT COUNT(*)::int AS c FROM accounts.bank_vouchers WHERE fiscal_year_id = $1`
+        );
+        if (n > 0) blockers.push(`${n} سند بنكي`);
+      }
+
+      if (await tableExists('payroll_runs') && (await tableExists('payroll_periods'))) {
+        const n = await countOf(
+          `SELECT COUNT(*)::int AS c
+           FROM accounts.payroll_runs r
+           JOIN accounts.payroll_periods p ON p.id = r.payroll_period_id
+           WHERE p.fiscal_year_id = $1`
+        );
+        if (n > 0) blockers.push(`${n} تشغيل رواتب`);
+      }
+
+      if (blockers.length > 0) {
+        throw new AccountsHttpError(
+          `لا يمكن حذف السنة ${year.code} لوجود بيانات مرتبطة: ${blockers.join('، ')}. احذفها أولاً ثم أعد المحاولة.`,
+          409
+        );
+      }
+
+      // فك ارتباط فترات الرواتب ثم حذفها إن لم تكن لها تشغيلات
+      if (await tableExists('payroll_periods')) {
+        await txQuery(
+          client,
+          `UPDATE accounts.payroll_periods
+           SET fiscal_period_id = NULL
+           WHERE fiscal_period_id IN (
+             SELECT id FROM accounts.fiscal_periods WHERE fiscal_year_id = $1
+           )`,
+          [id]
+        );
+        await txQuery(client, `DELETE FROM accounts.payroll_periods WHERE fiscal_year_id = $1`, [
+          id,
+        ]);
+      }
+
+      if (await tableExists('gl_account_balances')) {
+        await txQuery(client, `DELETE FROM accounts.gl_account_balances WHERE fiscal_year_id = $1`, [
+          id,
+        ]);
       }
 
       await txQuery(client, `DELETE FROM accounts.document_sequences WHERE fiscal_year_id = $1`, [id]);
+      await txQuery(client, `DELETE FROM accounts.fiscal_periods WHERE fiscal_year_id = $1`, [id]);
       await txQuery(client, `DELETE FROM accounts.fiscal_years WHERE id = $1`, [id]);
 
       await writeFinancialAudit(client, {
@@ -172,13 +244,13 @@ export async function DELETE(request: NextRequest, context: Ctx) {
         entityType: 'fiscal_year',
         entityId: id,
         oldValues: year,
-        description: `حذف السنة المالية المسودة ${year.code}`,
+        description: `حذف السنة المالية ${year.code} (الحالة: ${year.status})`,
         ipAddress: auth.ipAddress,
         userAgent: auth.userAgent,
       });
     });
 
-    return jsonSuccess({ message: 'تم حذف السنة المالية' });
+    return jsonSuccess({ message: 'تم حذف السنة المالية وفتراتها' });
   } catch (error) {
     if (error instanceof AccountsHttpError) return jsonError(error.message, error.status);
     return mapPgError(error);

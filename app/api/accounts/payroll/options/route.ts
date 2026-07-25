@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { AccountsHttpError, isAuthFailure, jsonError, jsonSuccess, mapPgError, requireAccountsAccess } from '@/src/lib/accounts/auth';
+import { listSystemDepartments } from '@/src/lib/accounts/departments';
 import { PAYROLL_CAPABILITIES, assertPayrollCapability, getPayrollCapabilities } from '@/src/lib/accounts/payroll-access';
 import { PAYROLL_ENUMS } from '@/src/lib/accounts/payroll-validation';
 import { query } from '@/src/lib/db';
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
          ORDER BY a.code`
       ),
       query(`SELECT id, code, name_ar FROM accounts.cost_centers WHERE is_active = TRUE ORDER BY code`),
-      query(`SELECT id, name_ar FROM student_affairs.departments ORDER BY name_ar`),
+      listSystemDepartments(),
       query(
         `SELECT id, code, name_ar, calendar_type, currency_code
          FROM accounts.payroll_calendars WHERE is_active = TRUE ORDER BY code`
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
         expense_accounts: gl.filter((a) => a.account_type_code === 'EXPENSE'),
         liability_accounts: gl.filter((a) => a.account_type_code === 'LIABILITY'),
         cost_centers: costCenters.rows,
-        departments: departments.rows,
+        departments,
         calendars: calendars.rows,
         components: components.rows,
         fiscal_years: fiscalYears.rows,

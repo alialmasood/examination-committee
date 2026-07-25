@@ -1,23 +1,34 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import StudentsNav from '../components/StudentsNav';
+import SettlementModal, {
+  type SettlementStudent,
+} from '../components/SettlementModal';
+import YearStatusBoxes, {
+  YearStatusLegend,
+} from '../components/YearStatusBoxes';
+import {
+  printStudentAccountsTable,
+  type StudentAccountsExportData,
+} from '../components/printStudentAccountsTable';
+import type { YearVisualEntry } from '../lib/settlementYearLedger';
 
-type PaidStudentRow = {
-  id: string;
-  university_id: string | null;
-  name: string | null;
-  department: string | null;
-  study_type: string | null;
-  admission_type: string | null;
-};
+type PaidStudentRow = SettlementStudent;
 
 type DepartmentStat = {
   id: string;
   name: string;
   total: number;
   totalAmount: number;
+};
+
+type StudentYearStatus = {
+  current_year: number | null;
+  all_completed: boolean;
+  years: YearVisualEntry[];
 };
 
 function formatStage(admissionType?: string | null): string {
@@ -61,16 +72,27 @@ function money(n: number): string {
 }
 
 export default function StudentAccountsPage() {
+  const router = useRouter();
   const [rows, setRows] = useState<PaidStudentRow[]>([]);
   const [departments, setDepartments] = useState<DepartmentStat[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [settlementStudent, setSettlementStudent] =
+    useState<SettlementStudent | null>(null);
+  const [yearStatusByStudent, setYearStatusByStudent] = useState<
+    Record<string, StudentYearStatus>
+  >({});
+  const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterDepartment, setFilterDepartment] = useState('');
+  const [filterStage, setFilterStage] = useState('');
+  const [filterStudyType, setFilterStudyType] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [paidRes, deptRes] = await Promise.all([
+      const [paidRes, deptRes, yearRes] = await Promise.all([
         fetch('/api/accounts/installments/paid/list', {
           credentials: 'include',
           cache: 'no-store',
@@ -79,10 +101,15 @@ export default function StudentAccountsPage() {
           credentials: 'include',
           cache: 'no-store',
         }),
+        fetch('/api/accounts/student-settlements/year-status', {
+          credentials: 'include',
+          cache: 'no-store',
+        }),
       ]);
 
       const paidBody = await paidRes.json().catch(() => ({}));
       const deptBody = await deptRes.json().catch(() => ({}));
+      const yearBody = await yearRes.json().catch(() => ({}));
 
       if (!paidRes.ok || !paidBody.success) {
         setError(
@@ -98,10 +125,17 @@ export default function StudentAccountsPage() {
       } else {
         setDepartments([]);
       }
+
+      if (yearRes.ok && yearBody.success && yearBody.data) {
+        setYearStatusByStudent(yearBody.data as Record<string, StudentYearStatus>);
+      } else {
+        setYearStatusByStudent({});
+      }
     } catch {
       setError('تعذر الاتصال بالخادم');
       setRows([]);
       setDepartments([]);
+      setYearStatusByStudent({});
     } finally {
       setLoading(false);
     }
@@ -123,8 +157,105 @@ export default function StudentAccountsPage() {
     return map;
   }, [departments, rows]);
 
+  const departmentOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const row of rows) {
+      const name = row.department?.trim();
+      if (name) names.add(name);
+    }
+    for (const dept of departments) {
+      if (dept.name?.trim()) names.add(dept.name.trim());
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b, 'ar'));
+  }, [rows, departments]);
+
+  const filteredRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (filterDepartment && row.department?.trim() !== filterDepartment) {
+        return false;
+      }
+      if (filterStage && String(row.admission_type || '') !== filterStage) {
+        return false;
+      }
+      if (filterStudyType) {
+        const st = String(row.study_type || '').toLowerCase();
+        if (filterStudyType === 'morning') {
+          if (st !== 'morning' && st !== 'صباحي') return false;
+        } else if (filterStudyType === 'evening') {
+          if (st !== 'evening' && st !== 'مسائي') return false;
+        }
+      }
+      if (!q) return true;
+      const name = (row.name || '').toLowerCase();
+      const uni = (row.university_id || '').toLowerCase();
+      const dept = (row.department || '').toLowerCase();
+      return name.includes(q) || uni.includes(q) || dept.includes(q);
+    });
+  }, [rows, searchQuery, filterDepartment, filterStage, filterStudyType]);
+
+  const hasActiveFilters =
+    !!searchQuery.trim() ||
+    !!filterDepartment ||
+    !!filterStage ||
+    !!filterStudyType;
+
+  function resetFilters() {
+    setSearchQuery('');
+    setFilterDepartment('');
+    setFilterStage('');
+    setFilterStudyType('');
+  }
+
+  async function handleExportExcel() {
+    setExporting('excel');
+    try {
+      const res = await fetch('/api/accounts/students/export/excel', {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        alert('تعذر تصدير ملف الإكسل');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `حسابات-الطلبة-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('تعذر الاتصال بالخادم لتصدير الإكسل');
+    } finally {
+      setExporting(null);
+    }
+  }
+
+  async function handleExportPdf() {
+    setExporting('pdf');
+    try {
+      const res = await fetch('/api/accounts/students/export/data', {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.success || !body.data) {
+        alert(body.error || 'تعذر تحميل بيانات التقرير');
+        return;
+      }
+      printStudentAccountsTable(body.data as StudentAccountsExportData);
+    } catch {
+      alert('تعذر الاتصال بالخادم لتوليد التقرير');
+    } finally {
+      setExporting(null);
+    }
+  }
+
   return (
-    <div className="p-6" dir="rtl">
+    <div className="p-6 max-w-7xl mx-auto" dir="rtl">
       <div className="mb-4">
         <h1 className="text-xl font-semibold text-gray-900">الحسابات</h1>
         <p className="text-sm text-gray-600 mt-1">
@@ -194,48 +325,195 @@ export default function StudentAccountsPage() {
               </p>
             </div>
           ) : rows.length > 0 ? (
-            <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-              <table className="min-w-full text-sm">
-                <thead className="bg-red-950 text-white">
-                  <tr>
-                    <th className="px-3 py-2.5 text-right font-medium">التسلسل</th>
-                    <th className="px-3 py-2.5 text-right font-medium">اسم الطالب</th>
-                    <th className="px-3 py-2.5 text-right font-medium">المرحلة</th>
-                    <th className="px-3 py-2.5 text-right font-medium">القسم</th>
-                    <th className="px-3 py-2.5 text-right font-medium">نوع الدراسة</th>
-                    <th className="px-3 py-2.5 text-right font-medium">رقم الطالب</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {rows.map((row, index) => (
-                    <tr key={row.id} className="hover:bg-gray-50">
-                      <td className="px-3 py-2.5 text-gray-700">{index + 1}</td>
-                      <td className="px-3 py-2.5 font-medium text-gray-900">
-                        {row.name?.trim() || '—'}
-                      </td>
-                      <td className="px-3 py-2.5 text-gray-700">
-                        {formatStage(row.admission_type)}
-                      </td>
-                      <td className="px-3 py-2.5 text-gray-700">
-                        {row.department?.trim() || '—'}
-                      </td>
-                      <td className="px-3 py-2.5 text-gray-700">
-                        {formatStudyType(row.study_type)}
-                      </td>
-                      <td
-                        className="px-3 py-2.5 font-mono text-xs text-gray-800"
-                        dir="ltr"
-                      >
-                        {row.university_id?.trim() || '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-3">
+              <div className="rounded-lg border border-gray-200 bg-white overflow-hidden shadow-sm">
+                <div className="bg-red-950 text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs text-red-100/80">بحث وفلترة</p>
+                    <p className="text-sm font-semibold">قائمة الطلبة المسددين</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-xs text-red-100/90 ml-2">
+                      النتائج: {filteredRows.length} من {rows.length}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void handleExportExcel()}
+                      disabled={exporting !== null}
+                      className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                    >
+                      {exporting === 'excel' ? 'جارٍ التصدير…' : 'تصدير Excel'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleExportPdf()}
+                      disabled={exporting !== null}
+                      className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-red-950 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      {exporting === 'pdf' ? 'جارٍ التجهيز…' : 'تصدير PDF'}
+                    </button>
+                  </div>
+                </div>
+                <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 items-end">
+                  <div className="xl:col-span-2">
+                    <label className="block text-xs text-gray-500 mb-1">
+                      بحث
+                    </label>
+                    <input
+                      type="search"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="اسم الطالب أو رقم الطالب أو القسم…"
+                      className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      القسم
+                    </label>
+                    <select
+                      value={filterDepartment}
+                      onChange={(e) => setFilterDepartment(e.target.value)}
+                      className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
+                    >
+                      <option value="">الكل</option>
+                      {departmentOptions.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      المرحلة
+                    </label>
+                    <select
+                      value={filterStage}
+                      onChange={(e) => setFilterStage(e.target.value)}
+                      className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
+                    >
+                      <option value="">الكل</option>
+                      <option value="first">الأولى</option>
+                      <option value="second">الثانية</option>
+                      <option value="third">الثالثة</option>
+                      <option value="fourth">الرابعة</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      نوع الدراسة
+                    </label>
+                    <select
+                      value={filterStudyType}
+                      onChange={(e) => setFilterStudyType(e.target.value)}
+                      className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
+                    >
+                      <option value="">الكل</option>
+                      <option value="morning">صباحي</option>
+                      <option value="evening">مسائي</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="px-4 pb-4 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3">
+                  <YearStatusLegend />
+                  <button
+                    type="button"
+                    onClick={resetFilters}
+                    disabled={!hasActiveFilters}
+                    className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    إعادة تعيين
+                  </button>
+                </div>
+              </div>
+
+              {filteredRows.length === 0 ? (
+                <div className="py-10 text-center border border-dashed border-gray-300 rounded-lg bg-white">
+                  <p className="text-gray-700 font-medium">لا توجد نتائج مطابقة</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    عدّل البحث أو الفلاتر ثم أعد المحاولة.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-red-950 text-white">
+                      <tr>
+                        <th className="px-3 py-2.5 text-right font-medium">التسلسل</th>
+                        <th className="px-3 py-2.5 text-right font-medium">اسم الطالب</th>
+                        <th className="px-3 py-2.5 text-right font-medium">المرحلة</th>
+                        <th className="px-3 py-2.5 text-right font-medium">القسم</th>
+                        <th className="px-3 py-2.5 text-right font-medium">نوع الدراسة</th>
+                        <th className="px-3 py-2.5 text-right font-medium">رقم الطالب</th>
+                        <th className="px-3 py-2.5 text-right font-medium">إجراء</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredRows.map((row, index) => (
+                        <tr key={row.id} className="hover:bg-gray-50">
+                          <td className="px-3 py-2.5 text-gray-700">{index + 1}</td>
+                          <td className="px-3 py-2.5 font-medium text-gray-900">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <YearStatusBoxes
+                                years={yearStatusByStudent[row.id]?.years}
+                              />
+                              {row.name?.trim() ? (
+                                <Link
+                                  href={`/accounts/students/accounts/student/${row.id}`}
+                                  className="text-red-900 hover:underline truncate"
+                                >
+                                  {row.name.trim()}
+                                </Link>
+                              ) : (
+                                <span>—</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 text-gray-700">
+                            {formatStage(row.admission_type)}
+                          </td>
+                          <td className="px-3 py-2.5 text-gray-700">
+                            {row.department?.trim() || '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-gray-700">
+                            {formatStudyType(row.study_type)}
+                          </td>
+                          <td
+                            className="px-3 py-2.5 font-mono text-xs text-gray-800"
+                            dir="ltr"
+                          >
+                            {row.university_id?.trim() || '—'}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <button
+                              type="button"
+                              onClick={() => setSettlementStudent(row)}
+                              className="inline-flex items-center rounded-md bg-red-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
+                            >
+                              تسديد
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           ) : null}
         </>
       )}
+
+      <SettlementModal
+        open={!!settlementStudent}
+        student={settlementStudent}
+        onClose={() => setSettlementStudent(null)}
+        onSaved={(receipt) => {
+          setSettlementStudent(null);
+          router.push(`/accounts/students/accounts/student/${receipt.student_id}`);
+        }}
+      />
     </div>
   );
 }

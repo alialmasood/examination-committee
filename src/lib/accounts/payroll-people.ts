@@ -38,6 +38,14 @@ export type PayrollPersonRow = {
   payment_method: string | null;
   bank_account_name: string | null;
   bank_account_identifier_masked: string | null;
+  academic_title: string | null;
+  degree: string | null;
+  phone: string | null;
+  job_title: string | null;
+  university_id: string | null;
+  affiliation: string | null;
+  job_classification: string | null;
+  workplace: string | null;
   status: string;
   effective_from: string | Date;
   effective_to: string | Date | null;
@@ -46,6 +54,7 @@ export type PayrollPersonRow = {
   updated_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  department_name_ar?: string | null;
 };
 
 /** إخفاء المعرّف المصرفي: يُبقى آخر 4 خانات فقط */
@@ -130,6 +139,20 @@ function optionalUuid(v: unknown): string | null {
   return s;
 }
 
+export const ACADEMIC_TITLES = ['مدرس', 'مدرس مساعد', 'استاذ', 'استاذ مساعد'] as const;
+export const DEGREES = [
+  'يقرأ ويكتب',
+  'ابتدائية',
+  'متوسطة',
+  'اعدادية',
+  'دبلوم',
+  'دبلوم عالي',
+  'بكالوريوس',
+  'ماجستير',
+  'دكتوراه',
+] as const;
+export const JOB_CLASSIFICATIONS = ['فني', 'اداري', 'خدمي', 'حرفي'] as const;
+
 export async function createPayrollPerson(
   client: TxClient,
   input: {
@@ -146,12 +169,23 @@ export async function createPayrollPerson(
     bank_account_name?: unknown;
     bank_account_identifier?: unknown;
     bank_account_identifier_masked?: unknown;
-    effective_from: unknown;
+    academic_title?: unknown;
+    degree?: unknown;
+    phone?: unknown;
+    job_title?: unknown;
+    university_id?: unknown;
+    affiliation?: unknown;
+    job_classification?: unknown;
+    workplace?: unknown;
+    effective_from?: unknown;
     effective_to?: unknown;
     created_by: string;
   }
 ): Promise<PayrollPersonRow> {
-  const from = requiredDate(input.effective_from, 'تاريخ بداية السريان');
+  const from = requiredDate(
+    input.effective_from ?? new Date().toISOString().slice(0, 10),
+    'تاريخ بداية السريان'
+  );
   const to = optionalDate(input.effective_to, 'تاريخ نهاية السريان');
   assertEffectiveRange(from, to);
 
@@ -172,9 +206,12 @@ export async function createPayrollPerson(
     `INSERT INTO accounts.payroll_people
        (person_code, full_name_ar, full_name_en, person_type, hr_person_id, user_id,
         department_id, default_cost_center_id, default_currency_code, payment_method,
-        bank_account_name, bank_account_identifier_masked, effective_from, effective_to,
-        created_by, updated_by)
-     VALUES ($1,$2,$3,$4,$5::uuid,$6::uuid,$7::uuid,$8::uuid,$9,$10,$11,$12,$13::date,$14::date,$15::uuid,$15::uuid)
+        bank_account_name, bank_account_identifier_masked,
+        academic_title, degree, phone, job_title, university_id, affiliation,
+        job_classification, workplace,
+        effective_from, effective_to, created_by, updated_by)
+     VALUES ($1,$2,$3,$4,$5::uuid,$6::uuid,$7::uuid,$8::uuid,$9,$10,$11,$12,
+             $13,$14,$15,$16,$17,$18,$19,$20,$21::date,$22::date,$23::uuid,$23::uuid)
      RETURNING *`,
     [
       code,
@@ -189,6 +226,14 @@ export async function createPayrollPerson(
       optionalOneOf(input.payment_method, PAYROLL_ENUMS.PAYMENT_METHOD, 'طريقة الدفع'),
       textOrNull(input.bank_account_name, 200),
       masked,
+      optionalOneOf(input.academic_title, ACADEMIC_TITLES, 'اللقب العلمي'),
+      optionalOneOf(input.degree, DEGREES, 'الشهادة'),
+      textOrNull(input.phone, 40),
+      textOrNull(input.job_title, 200),
+      textOrNull(input.university_id, 64),
+      textOrNull(input.affiliation, 200),
+      optionalOneOf(input.job_classification, JOB_CLASSIFICATIONS, 'التوصيف الوظيفي'),
+      textOrNull(input.workplace, 200),
       from,
       to,
       input.created_by,
@@ -216,6 +261,14 @@ export async function updatePayrollPerson(
     bank_account_name?: unknown;
     bank_account_identifier?: unknown;
     bank_account_identifier_masked?: unknown;
+    academic_title?: unknown;
+    degree?: unknown;
+    phone?: unknown;
+    job_title?: unknown;
+    university_id?: unknown;
+    affiliation?: unknown;
+    job_classification?: unknown;
+    workplace?: unknown;
     effective_from?: unknown;
     effective_to?: unknown;
   }
@@ -245,8 +298,11 @@ export async function updatePayrollPerson(
        full_name_ar=$2, full_name_en=$3, person_type=$4, hr_person_id=$5::uuid,
        user_id=$6::uuid, department_id=$7::uuid, default_cost_center_id=$8::uuid,
        default_currency_code=$9, payment_method=$10, bank_account_name=$11,
-       bank_account_identifier_masked=$12, effective_from=$13::date, effective_to=$14::date,
-       updated_by=$15::uuid, updated_at=NOW(), version=version+1
+       bank_account_identifier_masked=$12,
+       academic_title=$13, degree=$14, phone=$15, job_title=$16, university_id=$17,
+       affiliation=$18, job_classification=$19, workplace=$20,
+       effective_from=$21::date, effective_to=$22::date,
+       updated_by=$23::uuid, updated_at=NOW(), version=version+1
      WHERE id=$1::uuid RETURNING *`,
     [
       row.id,
@@ -261,12 +317,90 @@ export async function updatePayrollPerson(
       p.payment_method === undefined ? row.payment_method : optionalOneOf(p.payment_method, PAYROLL_ENUMS.PAYMENT_METHOD, 'طريقة الدفع'),
       p.bank_account_name === undefined ? row.bank_account_name : textOrNull(p.bank_account_name, 200),
       masked,
+      p.academic_title === undefined ? row.academic_title : optionalOneOf(p.academic_title, ACADEMIC_TITLES, 'اللقب العلمي'),
+      p.degree === undefined ? row.degree : optionalOneOf(p.degree, DEGREES, 'الشهادة'),
+      p.phone === undefined ? row.phone : textOrNull(p.phone, 40),
+      p.job_title === undefined ? row.job_title : textOrNull(p.job_title, 200),
+      p.university_id === undefined ? row.university_id : textOrNull(p.university_id, 64),
+      p.affiliation === undefined ? row.affiliation : textOrNull(p.affiliation, 200),
+      p.job_classification === undefined
+        ? row.job_classification
+        : optionalOneOf(p.job_classification, JOB_CLASSIFICATIONS, 'التوصيف الوظيفي'),
+      p.workplace === undefined ? row.workplace : textOrNull(p.workplace, 200),
       from,
       to,
       p.userId,
     ]
   );
   return r.rows[0];
+}
+
+/** حذف شخص رواتب — يُمنع عند وجود تشغيلات؛ يُنظَّف إسناد المكوّنات غير التشغيلي تلقائياً */
+export async function deletePayrollPerson(
+  client: TxClient,
+  p: { id: string; userId: string; version: unknown; updated_at: unknown }
+): Promise<PayrollPersonRow> {
+  await acquirePayrollLocks(client, [payrollPersonLock(p.id)]);
+  const row = await loadPayrollPerson(client, p.id, true);
+  assertPayrollConcurrency(row, p.version, p.updated_at);
+
+  const refs = await txQuery<{ src: string; n: number }>(
+    client,
+    `SELECT 'contracts' AS src, COUNT(*)::int AS n FROM accounts.payroll_contracts WHERE payroll_person_id=$1::uuid
+     UNION ALL
+     SELECT 'assignments', COUNT(*)::int FROM accounts.payroll_assignments WHERE payroll_person_id=$1::uuid
+     UNION ALL
+     SELECT 'component_assignments', COUNT(*)::int FROM accounts.payroll_component_assignments WHERE payroll_person_id=$1::uuid
+     UNION ALL
+     SELECT 'run_people', COUNT(*)::int FROM accounts.payroll_run_people WHERE payroll_person_id=$1::uuid
+     UNION ALL
+     SELECT 'run_scope', COUNT(*)::int FROM accounts.payroll_run_scope_members WHERE payroll_person_id=$1::uuid`,
+    [p.id]
+  );
+  const countOf = (src: string) => refs.rows.find((x) => x.src === src)?.n ?? 0;
+
+  const hasRuns = countOf('run_people') > 0 || countOf('run_scope') > 0;
+  if (hasRuns) {
+    const kindLabel: Record<string, string> = {
+      TEACHING_STAFF: 'التدريسي',
+      EXTERNAL_LECTURER: 'المحاضر',
+      EMPLOYEE: 'الموظف',
+      DAILY_WORKER: 'العامل اليومي',
+      SERVICE_WORKER: 'عامل الخدمة',
+    };
+    const who = kindLabel[row.person_type] ?? 'الشخص';
+    throw new AccountsHttpError(
+      `لا يمكن حذف ${who} لوجود تشغيلات رواتب مرتبطة به. استخدم إنهاء الخدمة بدلاً من الحذف.`,
+      409
+    );
+  }
+
+  // لا توجد تشغيلات تاريخية: تنظيف إعدادات الرواتب التابعة قبل حذف الشخص.
+  // الترتيب مهم بسبب مفاتيح FK: المكوّنات ← التكليفات ← العقود ← الشخص.
+  if (countOf('component_assignments') > 0) {
+    await txQuery(
+      client,
+      `DELETE FROM accounts.payroll_component_assignments WHERE payroll_person_id=$1::uuid`,
+      [p.id]
+    );
+  }
+  if (countOf('assignments') > 0) {
+    await txQuery(
+      client,
+      `DELETE FROM accounts.payroll_assignments WHERE payroll_person_id=$1::uuid`,
+      [p.id]
+    );
+  }
+  if (countOf('contracts') > 0) {
+    await txQuery(
+      client,
+      `DELETE FROM accounts.payroll_contracts WHERE payroll_person_id=$1::uuid`,
+      [p.id]
+    );
+  }
+
+  await txQuery(client, `DELETE FROM accounts.payroll_people WHERE id=$1::uuid`, [p.id]);
+  return row;
 }
 
 /** انتقالات الحالة المسموح بها */
@@ -324,18 +458,24 @@ export async function listPayrollPeople(
   const type = (p.person_type ?? '').trim().toUpperCase();
   const status = (p.status ?? '').trim().toUpperCase();
   const values: unknown[] = [q, type, status, p.active_only ?? false];
-  const where = `WHERE ($1='' OR person_code ILIKE '%'||$1||'%' OR full_name_ar ILIKE '%'||$1||'%')
-     AND ($2='' OR person_type=$2)
-     AND ($3='' OR status=$3)
-     AND (NOT $4::boolean OR status='ACTIVE')`;
+  const where = `WHERE ($1='' OR p.person_code ILIKE '%'||$1||'%' OR p.full_name_ar ILIKE '%'||$1||'%'
+        OR COALESCE(p.university_id,'') ILIKE '%'||$1||'%' OR COALESCE(p.phone,'') ILIKE '%'||$1||'%')
+     AND ($2='' OR p.person_type=$2)
+     AND ($3='' OR p.status=$3)
+     AND (NOT $4::boolean OR p.status='ACTIVE')`;
   const n = await txQuery<{ total: number }>(
     client,
-    `SELECT COUNT(*)::int total FROM accounts.payroll_people ${where}`,
+    `SELECT COUNT(*)::int total FROM accounts.payroll_people p ${where}`,
     values
   );
   const r = await txQuery<PayrollPersonRow>(
     client,
-    `SELECT * FROM accounts.payroll_people ${where} ORDER BY person_code LIMIT $5 OFFSET $6`,
+    `SELECT p.*, d.name_ar AS department_name_ar
+     FROM accounts.payroll_people p
+     LEFT JOIN student_affairs.departments d ON d.id = p.department_id
+     ${where}
+     ORDER BY p.created_at DESC, p.person_code
+     LIMIT $5 OFFSET $6`,
     [...values, page_size, (page - 1) * page_size]
   );
   return { rows: r.rows, total: n.rows[0]?.total ?? 0, page, page_size };

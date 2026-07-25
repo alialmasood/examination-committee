@@ -60,17 +60,35 @@ export async function GET(request: NextRequest) {
       params
     );
 
+    const settlementTableRes = await query(
+      `SELECT to_regclass('accounts.student_settlement_receipts') IS NOT NULL AS ok`
+    ).catch(() => ({ rows: [{ ok: false }] }));
+    const hasSettlementTable = Boolean(settlementTableRes.rows[0]?.ok);
+
+    const settlementJoin = hasSettlementTable
+      ? `LEFT JOIN accounts.student_settlement_receipts ssr
+           ON e.source_type = 'STUDENT_SETTLEMENT_RECEIPT' AND ssr.id = e.source_id`
+      : '';
+    const settlementSelect = hasSettlementTable
+      ? `ssr.student_id::text AS source_student_id,
+         ssr.student_name AS source_student_name,`
+      : `NULL::text AS source_student_id,
+         NULL::text AS source_student_name,`;
+
     const rows = await query(
       `SELECT e.entry_date, e.entry_number, e.description AS entry_description, e.entry_type,
+              e.source_type, e.source_id::text AS source_id, e.reference_number,
+              ${settlementSelect}
               a.code AS account_code, a.name_ar AS account_name_ar,
               cc.code AS cost_center_code, cc.name_ar AS cost_center_name_ar,
-              l.description AS line_description,
+              l.description AS line_description, l.line_number,
               l.debit_amount, l.credit_amount,
               e.id AS journal_entry_id, l.id AS line_id
        FROM accounts.journal_entry_lines l
        JOIN accounts.journal_entries e ON e.id = l.journal_entry_id
        JOIN accounts.chart_of_accounts a ON a.id = l.account_id
        LEFT JOIN accounts.cost_centers cc ON cc.id = l.cost_center_id
+       ${settlementJoin}
        ${where}
        ORDER BY e.entry_date ASC, e.entry_number ASC, l.line_number ASC
        LIMIT $9 OFFSET $10`,

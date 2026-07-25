@@ -133,9 +133,28 @@ export default function FiscalPeriodsPanel() {
             required
           />
         </div>
-        <button type="submit" className="bg-red-900 text-white px-4 py-2 rounded-md hover:bg-red-800">
-          إضافة فترة
-        </button>
+        <div className="flex gap-2">
+          <button type="submit" className="bg-red-900 text-white px-4 py-2 rounded-md hover:bg-red-800">
+            إضافة فترة
+          </button>
+          <button
+            type="button"
+            className="bg-gray-200 px-4 py-2 rounded-md hover:bg-gray-300"
+            onClick={() => {
+              setForm({
+                period_number: 1,
+                code: '',
+                name_ar: '',
+                start_date: '',
+                end_date: '',
+              });
+              setMessage(null);
+              setError(null);
+            }}
+          >
+            مسح الحقول
+          </button>
+        </div>
       </form>
 
       {message && <p className="text-green-700 text-sm">{message}</p>}

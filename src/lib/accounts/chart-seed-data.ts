@@ -56,8 +56,8 @@ const COLLEGE_CHART_SEED_RAW: SeedAccountDef[] = [
   },
   {
     code: '1111',
-    name_ar: 'الصندوق الرئيسي',
-    name_en: 'Main Cash Box',
+    name_ar: 'الصندوق',
+    name_en: 'Cash Box',
     type: 'ASSET',
     parent_code: '1110',
     is_group: false,
@@ -730,7 +730,8 @@ const COLLEGE_CHART_SEED_RAW: SeedAccountDef[] = [
     name_en: 'Student Revenue',
     type: 'REVENUE',
     parent_code: '4000',
-    is_group: true,
+    // قابل للترحيل: تسديد أقساط الطلبة يُرحَّل مباشرة على هذا الحساب
+    is_group: false,
     requires_cost_center: false,
   },
   {

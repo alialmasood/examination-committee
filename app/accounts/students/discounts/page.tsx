@@ -4,7 +4,7 @@ import StudentsNav from '../components/StudentsNav';
 
 export default function StudentDiscountsPage() {
   return (
-    <div className="p-6" dir="rtl">
+    <div className="p-6 max-w-7xl mx-auto" dir="rtl">
       <div className="mb-4">
         <h1 className="text-xl font-semibold text-gray-900">تخفيضات وخصومات</h1>
         <p className="text-sm text-gray-600 mt-1">

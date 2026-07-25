@@ -366,7 +366,8 @@ async function getDefaultActiveFiscalYear(
 
 /**
  * يخصّص رقماً تسلسلياً لكيان رواتب داخل المعاملة (FOR UPDATE عبر nextDocumentNumber).
- * لا يستخدم COUNT+1. يضمن وجود تسلسل السنة الحالية دفاعياً.
+ * لا يستخدم COUNT+1. يضمن وجود تسلسل السنة الحالية دفاعياً،
+ * ويُزامن العدّاد مع أعلى رمز مستخدم فعلياً لتفادي التعارض بعد بيانات الاختبار/الحذف.
  */
 export async function nextPayrollNumber(
   client: TxClient,
@@ -390,6 +391,46 @@ export async function nextPayrollNumber(
      )`,
     [year.id, documentType, prefix]
   );
+
+  // مزامنة العدّاد مع أعلى رقم مستخدم لنفس البادئة (مثل PYP-2026-011493)
+  if (documentType === 'PAYROLL_PERSON') {
+    await txQuery(
+      client,
+      `UPDATE accounts.document_sequences ds
+       SET current_number = GREATEST(
+         ds.current_number,
+         COALESCE((
+           SELECT MAX(
+             NULLIF(regexp_replace(pp.person_code, '^' || ds.prefix || '-[0-9]{4}-', ''), '')::int
+           )
+           FROM accounts.payroll_people pp
+           WHERE pp.person_code ~ ('^' || ds.prefix || '-[0-9]{4}-[0-9]+$')
+         ), 0)
+       ),
+       updated_at = NOW()
+       WHERE ds.document_type = $1 AND ds.fiscal_year_id = $2::uuid`,
+      [documentType, year.id]
+    );
+  } else if (documentType === 'PAYROLL_ASSIGNMENT') {
+    await txQuery(
+      client,
+      `UPDATE accounts.document_sequences ds
+       SET current_number = GREATEST(
+         ds.current_number,
+         COALESCE((
+           SELECT MAX(
+             NULLIF(regexp_replace(a.assignment_code, '^' || ds.prefix || '-[0-9]{4}-', ''), '')::int
+           )
+           FROM accounts.payroll_assignments a
+           WHERE a.assignment_code ~ ('^' || ds.prefix || '-[0-9]{4}-[0-9]+$')
+         ), 0)
+       ),
+       updated_at = NOW()
+       WHERE ds.document_type = $1 AND ds.fiscal_year_id = $2::uuid`,
+      [documentType, year.id]
+    );
+  }
+
   try {
     const seq = await nextDocumentNumber(client, {
       documentType,

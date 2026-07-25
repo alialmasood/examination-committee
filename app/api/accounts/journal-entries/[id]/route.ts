@@ -18,7 +18,6 @@ import {
   parseEntryType,
   replaceJournalLines,
 } from '@/src/lib/accounts/journal-entries';
-import { canDeleteJournal } from '@/src/lib/accounts/journal-transitions';
 import { normalizeMoneyInput } from '@/src/lib/accounts/money';
 import {
   acquireJournalEntriesLock,
@@ -215,14 +214,44 @@ export async function DELETE(request: NextRequest, context: Ctx) {
     await withTransaction(async (client) => {
       await acquireJournalEntriesLock(client);
       const current = await loadJournalEntry(client, id, true);
-      if (!canDeleteJournal(current.status, current.source_id)) {
-        throw new AccountsHttpError(
-          'لا يمكن حذف هذا القيد. يمكن حذف المسودات غير المرتبطة بمصدر فقط',
-          409
+      const lines = await loadJournalLines(client, id);
+
+      // فك روابط العكس حتى لا تمنع الحذف
+      await txQuery(
+        client,
+        `UPDATE accounts.journal_entries
+         SET reversal_entry_id = NULL
+         WHERE reversal_entry_id = $1::uuid`,
+        [id]
+      );
+      await txQuery(
+        client,
+        `UPDATE accounts.journal_entries
+         SET reverses_entry_id = NULL
+         WHERE reverses_entry_id = $1::uuid`,
+        [id]
+      );
+
+      // فك ربط وصل التسديد إن وُجد العمود
+      const hasSettlementLink = await txQuery<{ ok: boolean }>(
+        client,
+        `SELECT EXISTS (
+           SELECT 1
+           FROM information_schema.columns
+           WHERE table_schema = 'accounts'
+             AND table_name = 'student_settlement_receipts'
+             AND column_name = 'journal_entry_id'
+         ) AS ok`
+      );
+      if (hasSettlementLink.rows[0]?.ok) {
+        await txQuery(
+          client,
+          `UPDATE accounts.student_settlement_receipts
+           SET journal_entry_id = NULL
+           WHERE journal_entry_id = $1::uuid`,
+          [id]
         );
       }
-
-      const lines = await loadJournalLines(client, id);
 
       await writeFinancialAudit(client, {
         userId: auth.user.id,
@@ -232,15 +261,18 @@ export async function DELETE(request: NextRequest, context: Ctx) {
         oldValues: {
           entry_number: current.entry_number,
           status: current.status,
+          source_type: current.source_type,
+          source_id: current.source_id,
           total_debit: current.total_debit,
           total_credit: current.total_credit,
           lines,
         },
-        description: `حذف مسودة القيد ${current.entry_number}`,
+        description: `حذف القيد ${current.entry_number} (الحالة: ${current.status})`,
         ipAddress: auth.ipAddress,
         userAgent: auth.userAgent,
       });
 
+      // السطور تُحذف تلقائياً عبر ON DELETE CASCADE
       await txQuery(client, `DELETE FROM accounts.journal_entries WHERE id = $1`, [id]);
     });
 

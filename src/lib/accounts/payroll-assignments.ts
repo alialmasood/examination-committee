@@ -44,6 +44,9 @@ export type PayrollAssignmentRow = {
   updated_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  person_code?: string;
+  person_name_ar?: string;
+  person_type?: string;
 };
 
 export function serializePayrollAssignment(row: PayrollAssignmentRow) {
@@ -299,6 +302,68 @@ export async function transitionPayrollAssignment(
   return r.rows[0];
 }
 
+export async function endPayrollAssignment(
+  client: TxClient,
+  p: { id: string; userId: string; version: unknown; updated_at: unknown }
+): Promise<PayrollAssignmentRow> {
+  const existing = await loadPayrollAssignment(client, p.id);
+  await acquirePayrollLocks(client, [
+    payrollPersonLock(existing.payroll_person_id),
+    payrollAssignmentLock(p.id),
+  ]);
+  const row = await loadPayrollAssignment(client, p.id, true);
+  assertPayrollConcurrency(row, p.version, p.updated_at);
+  if (row.status === 'ENDED') return row;
+  const r = await txQuery<PayrollAssignmentRow>(
+    client,
+    `UPDATE accounts.payroll_assignments
+     SET status='ENDED', updated_by=$2::uuid, updated_at=NOW(), version=version+1
+     WHERE id=$1::uuid RETURNING *`,
+    [row.id, p.userId]
+  );
+  return r.rows[0];
+}
+
+export async function deletePayrollAssignment(
+  client: TxClient,
+  p: { id: string; version: unknown; updated_at: unknown }
+): Promise<PayrollAssignmentRow> {
+  await acquirePayrollLocks(client, [payrollAssignmentLock(p.id)]);
+  const row = await loadPayrollAssignment(client, p.id, true);
+  assertPayrollConcurrency(row, p.version, p.updated_at);
+
+  // منع الحذف إن وُجدت بنود تشغيلات مرتبطة بهذا التكليف أو بإسناداته
+  const runRefs = await txQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int AS n
+     FROM (
+       SELECT 1 FROM accounts.payroll_run_lines WHERE payroll_assignment_id=$1::uuid
+       UNION ALL
+       SELECT 1
+       FROM accounts.payroll_run_lines rl
+       JOIN accounts.payroll_component_assignments ca
+         ON ca.id = rl.payroll_component_assignment_id
+       WHERE ca.payroll_assignment_id = $1::uuid
+     ) x`,
+    [p.id]
+  );
+  if ((runRefs.rows[0]?.n ?? 0) > 0) {
+    throw new AccountsHttpError(
+      'لا يمكن حذف التكليف لوجود تشغيلات رواتب مرتبطة به. استخدم إنهاء التكليف بدلاً من الحذف.',
+      409
+    );
+  }
+
+  // إزالة إسنادات المكوّنات اليتيمة (غالباً من بيانات اختبار) ثم حذف التكليف
+  await txQuery(
+    client,
+    `DELETE FROM accounts.payroll_component_assignments WHERE payroll_assignment_id=$1::uuid`,
+    [p.id]
+  );
+  await txQuery(client, `DELETE FROM accounts.payroll_assignments WHERE id=$1::uuid`, [p.id]);
+  return row;
+}
+
 export async function listPayrollAssignments(
   client: TxClient,
   p: {
@@ -319,19 +384,28 @@ export async function listPayrollAssignments(
   const status = (p.status ?? '').trim().toUpperCase();
   const q = (p.q ?? '').trim();
   const values: unknown[] = [person, contract, type, status, q];
-  const where = `WHERE ($1='' OR payroll_person_id=$1::uuid)
-     AND ($2='' OR payroll_contract_id=$2::uuid)
-     AND ($3='' OR assignment_type=$3)
-     AND ($4='' OR status=$4)
-     AND ($5='' OR assignment_code ILIKE '%'||$5||'%' OR title_ar ILIKE '%'||$5||'%')`;
+  const where = `WHERE ($1='' OR a.payroll_person_id=$1::uuid)
+     AND ($2='' OR a.payroll_contract_id=$2::uuid)
+     AND ($3='' OR a.assignment_type=$3)
+     AND ($4='' OR a.status=$4)
+     AND ($5='' OR a.assignment_code ILIKE '%'||$5||'%' OR a.title_ar ILIKE '%'||$5||'%'
+       OR p.full_name_ar ILIKE '%'||$5||'%' OR p.person_code ILIKE '%'||$5||'%')`;
   const n = await txQuery<{ total: number }>(
     client,
-    `SELECT COUNT(*)::int total FROM accounts.payroll_assignments ${where}`,
+    `SELECT COUNT(*)::int total
+     FROM accounts.payroll_assignments a
+     JOIN accounts.payroll_people p ON p.id=a.payroll_person_id
+     ${where}`,
     values
   );
   const r = await txQuery<PayrollAssignmentRow>(
     client,
-    `SELECT * FROM accounts.payroll_assignments ${where} ORDER BY assignment_code LIMIT $6 OFFSET $7`,
+    `SELECT a.*, p.person_code, p.full_name_ar AS person_name_ar, p.person_type
+     FROM accounts.payroll_assignments a
+     JOIN accounts.payroll_people p ON p.id=a.payroll_person_id
+     ${where}
+     ORDER BY a.created_at DESC, a.assignment_code
+     LIMIT $6 OFFSET $7`,
     [...values, page_size, (page - 1) * page_size]
   );
   return { rows: r.rows, total: n.rows[0]?.total ?? 0, page, page_size };

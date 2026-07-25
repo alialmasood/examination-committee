@@ -55,6 +55,8 @@ export default function FiscalYearsPanel() {
       notes: '',
       create_monthly_periods: true,
     });
+    setMessage(null);
+    setError(null);
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -103,11 +105,20 @@ export default function FiscalYearsPanel() {
     if (res.success) await load();
   };
 
-  const remove = async (id: string) => {
-    if (!confirm('هل تريد حذف هذه السنة المالية المسودة؟')) return;
-    const res = await accountsFetch(`/api/accounts/fiscal-years/${id}`, { method: 'DELETE' });
-    notify(Boolean(res.success), res.message);
-    if (res.success) await load();
+  const remove = async (year: FiscalYear) => {
+    const statusText = statusLabel(year.status);
+    const ok = confirm(
+      `هل تريد حذف السنة المالية «${year.code}» (${statusText})؟\n` +
+        `سيتم حذف الفترات المحاسبية وتسلسلات المستندات المرتبطة بها أيضاً.\n` +
+        `لا يمكن التراجع عن هذه العملية.`
+    );
+    if (!ok) return;
+    const res = await accountsFetch(`/api/accounts/fiscal-years/${year.id}`, { method: 'DELETE' });
+    notify(Boolean(res.success), res.message || (res.success ? 'تم الحذف' : 'تعذر حذف السنة المالية'));
+    if (res.success) {
+      resetForm();
+      await load();
+    }
   };
 
   return (
@@ -175,11 +186,13 @@ export default function FiscalYearsPanel() {
           <button type="submit" className="bg-red-900 text-white px-4 py-2 rounded-md hover:bg-red-800">
             {editingId ? 'حفظ التعديل' : 'إضافة'}
           </button>
-          {editingId && (
-            <button type="button" onClick={resetForm} className="bg-gray-200 px-4 py-2 rounded-md">
-              إلغاء
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={resetForm}
+            className="bg-gray-200 px-4 py-2 rounded-md hover:bg-gray-300"
+          >
+            {editingId ? 'إلغاء' : 'مسح الحقول'}
+          </button>
         </div>
       </form>
 
@@ -261,11 +274,13 @@ export default function FiscalYearsPanel() {
                           </button>
                         </>
                       )}
-                      {year.status === 'DRAFT' && (
-                        <button className="text-red-700 hover:underline" onClick={() => remove(year.id)}>
-                          حذف
-                        </button>
-                      )}
+                      <button
+                        className="text-red-700 hover:underline font-medium"
+                        onClick={() => remove(year)}
+                        title="حذف السنة المالية وفتراتها"
+                      >
+                        حذف
+                      </button>
                     </div>
                   </td>
                 </tr>

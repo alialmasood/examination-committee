@@ -491,7 +491,7 @@ export default function AccountsDashboard() {
           </div>
         </Panel>
 
-        <Panel title="تشغيلات الرواتب حسب الحالة" link="/accounts/payroll/runs">
+        <Panel title="تشغيلات الرواتب حسب الحالة" link="/accounts/payroll">
           <div className="h-[260px]">
             {payrollBars.every((d) => d.value === 0) ? (
               <EmptyChart text="لا توجد تشغيلات رواتب بعد" />

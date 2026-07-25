@@ -7,9 +7,18 @@ type Props = {
   loading: boolean;
   onOpen: (id: string) => void;
   onEdit: (id: string) => void;
+  onDelete: (row: JournalEntryListItem) => void;
+  deletingId?: string | null;
 };
 
-export default function EntriesTable({ rows, loading, onOpen, onEdit }: Props) {
+export default function EntriesTable({
+  rows,
+  loading,
+  onOpen,
+  onEdit,
+  onDelete,
+  deletingId,
+}: Props) {
   if (loading) {
     return <div className="py-12 text-center text-gray-500">جاري تحميل القيود...</div>;
   }
@@ -67,12 +76,21 @@ export default function EntriesTable({ rows, loading, onOpen, onEdit }: Props) {
                 {r.status === 'DRAFT' && (
                   <button
                     type="button"
-                    className="text-blue-700 hover:underline"
+                    className="text-blue-700 hover:underline ml-2"
                     onClick={() => onEdit(r.id)}
                   >
                     تعديل
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="text-red-700 hover:underline font-medium"
+                  disabled={deletingId === r.id}
+                  onClick={() => onDelete(r)}
+                  title="حذف القيد"
+                >
+                  {deletingId === r.id ? 'جارٍ الحذف…' : 'حذف'}
+                </button>
               </td>
             </tr>
           ))}

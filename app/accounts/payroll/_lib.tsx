@@ -5,15 +5,34 @@ import type { ReactNode } from 'react';
 export const API = {
   options: '/api/accounts/payroll/options',
   people: '/api/accounts/payroll/people',
+  departments: '/api/accounts/departments',
   contracts: '/api/accounts/payroll/contracts',
   assignments: '/api/accounts/payroll/assignments',
   components: '/api/accounts/payroll/components',
   componentAssignments: '/api/accounts/payroll/component-assignments',
   calendars: '/api/accounts/payroll/calendars',
-  accountMappings: '/api/accounts/payroll/account-mappings',
   periods: '/api/accounts/payroll/periods',
   runs: '/api/accounts/payroll/runs',
+  disbursement: '/api/accounts/payroll/disbursement',
+  disbursementSheets: '/api/accounts/payroll/disbursement/sheets',
+  disbursementMonthReport: '/api/accounts/payroll/disbursement/month-report',
+  dashboard: '/api/accounts/payroll/dashboard',
 } as const;
+
+export const personUrl = (id: string) => `/api/accounts/payroll/people/${id}`;
+export const personTerminateUrl = (id: string) => `/api/accounts/payroll/people/${id}/terminate`;
+export const personNextCodeUrl = '/api/accounts/payroll/people/next-code';
+export const assignmentUrl = (id: string) => `/api/accounts/payroll/assignments/${id}`;
+export const assignmentEndUrl = (id: string) => `/api/accounts/payroll/assignments/${id}/end`;
+export const disbursementSheetUrl = (id: string) => `/api/accounts/payroll/disbursement/sheets/${id}`;
+export const disbursementSheetLockUrl = (id: string) =>
+  `/api/accounts/payroll/disbursement/sheets/${id}/lock`;
+export const disbursementSheetUnlockUrl = (id: string) =>
+  `/api/accounts/payroll/disbursement/sheets/${id}/unlock`;
+export const disbursementSheetDisburseUrl = (id: string) =>
+  `/api/accounts/payroll/disbursement/sheets/${id}/disburse`;
+export const disbursementSheetCopyPreviousUrl = (id: string) =>
+  `/api/accounts/payroll/disbursement/sheets/${id}/copy-previous`;
 
 /** مسارات ديناميكية لطبقة الفترات/التشغيلات — 9.A.2.1 */
 export const periodUrl = (id: string) => `/api/accounts/payroll/periods/${id}`;

@@ -38,6 +38,7 @@ export default function AccountsEntriesPage() {
   const [years, setYears] = useState<Array<{ id: string; code: string }>>([]);
   const [fiscalYearId, setFiscalYearId] = useState('');
   const [urlQReady, setUrlQReady] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     const fromUrl = new URLSearchParams(window.location.search).get('q');
@@ -233,10 +234,30 @@ export default function AccountsEntriesPage() {
         <EntriesTable
           rows={rows}
           loading={loading}
+          deletingId={deletingId}
           onOpen={(id) => setDetailId(id)}
           onEdit={(id) => {
             setEditId(id);
             setFormOpen(true);
+          }}
+          onDelete={async (row) => {
+            const statusText = STATUS_LABEL[row.status] || row.status;
+            const ok = confirm(
+              `هل تريد حذف القيد «${row.entry_number}» (${statusText})؟\nلا يمكن التراجع عن هذه العملية.`
+            );
+            if (!ok) return;
+            setDeletingId(row.id);
+            const res = await accountsApi(`/api/accounts/journal-entries/${row.id}`, {
+              method: 'DELETE',
+            });
+            setDeletingId(null);
+            if (!res.success) {
+              setError(res.message || 'تعذر حذف القيد');
+              return;
+            }
+            if (detailId === row.id) setDetailId(null);
+            setError(null);
+            await load();
           }}
         />
 

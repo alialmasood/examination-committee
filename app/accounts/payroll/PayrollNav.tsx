@@ -5,14 +5,12 @@ import { usePathname } from 'next/navigation';
 
 const tabs = [
   ['/accounts/payroll', 'لوحة'],
-  ['/accounts/payroll/people', 'الأشخاص'],
-  ['/accounts/payroll/contracts', 'العقود'],
+  ['/accounts/payroll/teaching-staff', 'الكادر التدريسي'],
+  ['/accounts/payroll/lecturers', 'المحاضرين'],
+  ['/accounts/payroll/admin-staff', 'الكادر الوظيفي'],
+  ['/accounts/payroll/daily-wages', 'الأجور اليومية'],
   ['/accounts/payroll/assignments', 'التكليفات'],
-  ['/accounts/payroll/components', 'المكوّنات'],
-  ['/accounts/payroll/calendars', 'التقويمات'],
-  ['/accounts/payroll/periods', 'الفترات'],
-  ['/accounts/payroll/runs', 'التشغيلات'],
-  ['/accounts/payroll/account-mappings', 'خرائط الحسابات'],
+  ['/accounts/payroll/disbursement', 'صرف الرواتب'],
 ] as const;
 
 export default function PayrollNav() {
