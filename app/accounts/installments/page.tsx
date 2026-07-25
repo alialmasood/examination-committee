@@ -57,6 +57,7 @@ export default function AccountsInstallmentsPage() {
   const [newStudentsNeedingReceipt, setNewStudentsNeedingReceipt] = useState<number>(0);
   const [pendingStudents, setPendingStudents] = useState<PendingStudent[]>([]);
   const [marking, setMarking] = useState<string | null>(null);
+  const [markingAllPaid, setMarkingAllPaid] = useState(false);
   const [paidStudents, setPaidStudents] = useState<Array<{id:string;university_id:string;name:string;nickname?:string;department:string;payment_amount:number|null;payment_date:string|null;study_type?:string;admission_channel?:string;admission_type?:string;discount_percentage?:number|null;discount_amount?:number|null;final_fee?:number|null}>>([]);
   const [showModal, setShowModal] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<PendingStudent | null>(null);
@@ -454,6 +455,64 @@ export default function AccountsInstallmentsPage() {
       alert('خطأ في الاتصال بالخادم');
     } finally {
       setMarking(null);
+    }
+  };
+
+  const handleMarkAllPaidWithoutReceipt = async () => {
+    if (markingAllPaid || marking) return;
+
+    const scopeName = pendingDepartmentFilter
+      ? `قسم ${pendingDepartmentFilter}`
+      : 'جميع الأقسام';
+    const confirmed = confirm(
+      `هل أنت متأكد من تأكيد الدفع لجميع الطلبة بانتظار وصل القبض ضمن ${scopeName}؟\n\nسيتم تحويل حالتهم إلى «تم الدفع» دون إصدار وصل قبض.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setMarkingAllPaid(true);
+      const res = await fetch('/api/accounts/installments/mark-paid', {
+        method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          department: pendingDepartmentFilter || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({
+        success: false,
+        error: 'استجابة غير صالحة من الخادم',
+      }));
+
+      if (!res.ok || !data.success) {
+        alert(data.error || 'تعذر تأكيد الدفع للجميع');
+        return;
+      }
+
+      alert(data.message || 'تم تأكيد الدفع بنجاح');
+
+      await Promise.all([
+        fetchDepartmentStats(),
+        fetchPendingSummary(),
+        fetchPendingList(),
+        fetchPaidList(),
+      ]);
+
+      try {
+        const ch = new BroadcastChannel('payments');
+        ch.postMessage({
+          type: 'payment-updated',
+          bulk: true,
+          department: pendingDepartmentFilter || null,
+          updated_count: data.updated_count || 0,
+        });
+        ch.close();
+      } catch {}
+    } catch {
+      alert('خطأ في الاتصال بالخادم');
+    } finally {
+      setMarkingAllPaid(false);
     }
   };
 
@@ -1154,6 +1213,36 @@ export default function AccountsInstallmentsPage() {
         </div>
             </div>
             <div className="flex flex-col gap-2 w-full sm:flex-row sm:items-center sm:gap-3 md:w-auto">
+              <button
+                type="button"
+                onClick={() => void handleMarkAllPaidWithoutReceipt()}
+                disabled={
+                  markingAllPaid ||
+                  marking !== null ||
+                  pendingStudents.length === 0 ||
+                  (Boolean(pendingDepartmentFilter) &&
+                    pendingStudents.every(
+                      (student) => student.department !== pendingDepartmentFilter
+                    ))
+                }
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-emerald-700 bg-emerald-700 px-3 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                title={
+                  pendingDepartmentFilter
+                    ? `تأكيد الدفع لطلبة قسم ${pendingDepartmentFilter} دون إصدار وصل`
+                    : 'تأكيد الدفع لجميع الطلبة بانتظار وصل القبض دون إصدار وصل'
+                }
+              >
+                {markingAllPaid ? (
+                  <>
+                    <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-200 border-t-white" />
+                    جارٍ التأكيد...
+                  </>
+                ) : pendingDepartmentFilter ? (
+                  'تأكيد الدفع للقسم'
+                ) : (
+                  'تأكيد الدفع للجميع'
+                )}
+              </button>
               {pendingDepartments.length > 1 && (
                 <div className="w-full sm:w-48 md:w-52">
                   <label htmlFor="pending-department-filter" className="sr-only">تصفية حسب القسم</label>
@@ -1283,7 +1372,7 @@ export default function AccountsInstallmentsPage() {
                     setDiscountPercentage(String(defaultDiscount));
                     setShowModal(true); 
                   }}
-                  disabled={marking === s.id}
+                  disabled={marking === s.id || markingAllPaid}
                       className="w-full sm:w-auto sm:min-w-[160px] rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {marking === s.id ? 'جاري الإصدار...' : 'تأكيد الدفع وإصدار وصل'}

@@ -204,7 +204,7 @@ export default function AccountsDashboard() {
           <button
             type="button"
             onClick={() => void load()}
-            className="text-xs px-3 py-1.5 rounded-lg bg-white text-[#16324f] font-semibold"
+            className="text-xs px-3 py-1.5 rounded-lg bg-white text-[#16324f] font-semibold transition-colors hover:bg-slate-100"
           >
             تحديث
           </button>
