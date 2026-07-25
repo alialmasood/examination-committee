@@ -87,6 +87,8 @@ export default function StudentAccountsPage() {
   const [filterDepartment, setFilterDepartment] = useState('');
   const [filterStage, setFilterStage] = useState('');
   const [filterStudyType, setFilterStudyType] = useState('');
+  const [tablePage, setTablePage] = useState(1);
+  const PAGE_SIZE = 50;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -194,6 +196,32 @@ export default function StudentAccountsPage() {
     });
   }, [rows, searchQuery, filterDepartment, filterStage, filterStudyType]);
 
+  const totalTablePages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+
+  const pagedRows = useMemo(() => {
+    const safePage = Math.min(Math.max(tablePage, 1), totalTablePages);
+    const start = (safePage - 1) * PAGE_SIZE;
+    return filteredRows.slice(start, start + PAGE_SIZE);
+  }, [filteredRows, tablePage, totalTablePages]);
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [searchQuery, filterDepartment, filterStage, filterStudyType]);
+
+  useEffect(() => {
+    if (tablePage > totalTablePages) {
+      setTablePage(totalTablePages);
+    }
+  }, [tablePage, totalTablePages]);
+
+  const pageRangeLabel = useMemo(() => {
+    if (filteredRows.length === 0) return '0';
+    const safePage = Math.min(Math.max(tablePage, 1), totalTablePages);
+    const start = (safePage - 1) * PAGE_SIZE + 1;
+    const end = Math.min(safePage * PAGE_SIZE, filteredRows.length);
+    return `${start}–${end}`;
+  }, [filteredRows.length, tablePage, totalTablePages]);
+
   const hasActiveFilters =
     !!searchQuery.trim() ||
     !!filterDepartment ||
@@ -205,6 +233,7 @@ export default function StudentAccountsPage() {
     setFilterDepartment('');
     setFilterStage('');
     setFilterStudyType('');
+    setTablePage(1);
   }
 
   async function handleExportExcel() {
@@ -335,6 +364,9 @@ export default function StudentAccountsPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-xs text-red-100/90 ml-2">
                       النتائج: {filteredRows.length} من {rows.length}
+                      {filteredRows.length > 0
+                        ? ` · عرض ${pageRangeLabel}`
+                        : ''}
                     </p>
                     <button
                       type="button"
@@ -436,68 +468,110 @@ export default function StudentAccountsPage() {
                   </p>
                 </div>
               ) : (
-                <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-red-950 text-white">
-                      <tr>
-                        <th className="px-3 py-2.5 text-right font-medium">التسلسل</th>
-                        <th className="px-3 py-2.5 text-right font-medium">اسم الطالب</th>
-                        <th className="px-3 py-2.5 text-right font-medium">المرحلة</th>
-                        <th className="px-3 py-2.5 text-right font-medium">القسم</th>
-                        <th className="px-3 py-2.5 text-right font-medium">نوع الدراسة</th>
-                        <th className="px-3 py-2.5 text-right font-medium">رقم الطالب</th>
-                        <th className="px-3 py-2.5 text-right font-medium">إجراء</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {filteredRows.map((row, index) => (
-                        <tr key={row.id} className="hover:bg-gray-50">
-                          <td className="px-3 py-2.5 text-gray-700">{index + 1}</td>
-                          <td className="px-3 py-2.5 font-medium text-gray-900">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <YearStatusBoxes
-                                years={yearStatusByStudent[row.id]?.years}
-                              />
-                              {row.name?.trim() ? (
-                                <Link
-                                  href={`/accounts/students/accounts/student/${row.id}`}
-                                  className="text-red-900 hover:underline truncate"
-                                >
-                                  {row.name.trim()}
-                                </Link>
-                              ) : (
-                                <span>—</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2.5 text-gray-700">
-                            {formatStage(row.admission_type)}
-                          </td>
-                          <td className="px-3 py-2.5 text-gray-700">
-                            {row.department?.trim() || '—'}
-                          </td>
-                          <td className="px-3 py-2.5 text-gray-700">
-                            {formatStudyType(row.study_type)}
-                          </td>
-                          <td
-                            className="px-3 py-2.5 font-mono text-xs text-gray-800"
-                            dir="ltr"
-                          >
-                            {row.university_id?.trim() || '—'}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <button
-                              type="button"
-                              onClick={() => setSettlementStudent(row)}
-                              className="inline-flex items-center rounded-md bg-red-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
-                            >
-                              تسديد
-                            </button>
-                          </td>
+                <div className="space-y-3">
+                  <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-red-950 text-white">
+                        <tr>
+                          <th className="px-3 py-2.5 text-right font-medium">التسلسل</th>
+                          <th className="px-3 py-2.5 text-right font-medium">اسم الطالب</th>
+                          <th className="px-3 py-2.5 text-right font-medium">المرحلة</th>
+                          <th className="px-3 py-2.5 text-right font-medium">القسم</th>
+                          <th className="px-3 py-2.5 text-right font-medium">نوع الدراسة</th>
+                          <th className="px-3 py-2.5 text-right font-medium">رقم الطالب</th>
+                          <th className="px-3 py-2.5 text-right font-medium">إجراء</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {pagedRows.map((row, index) => {
+                          const rowNumber =
+                            (Math.min(Math.max(tablePage, 1), totalTablePages) - 1) *
+                              PAGE_SIZE +
+                            index +
+                            1;
+                          return (
+                          <tr key={row.id} className="hover:bg-gray-50">
+                            <td className="px-3 py-2.5 text-gray-700">{rowNumber}</td>
+                            <td className="px-3 py-2.5 font-medium text-gray-900">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <YearStatusBoxes
+                                  years={yearStatusByStudent[row.id]?.years}
+                                />
+                                {row.name?.trim() ? (
+                                  <Link
+                                    href={`/accounts/students/accounts/student/${row.id}`}
+                                    className="text-red-900 hover:underline truncate"
+                                  >
+                                    {row.name.trim()}
+                                  </Link>
+                                ) : (
+                                  <span>—</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2.5 text-gray-700">
+                              {formatStage(row.admission_type)}
+                            </td>
+                            <td className="px-3 py-2.5 text-gray-700">
+                              {row.department?.trim() || '—'}
+                            </td>
+                            <td className="px-3 py-2.5 text-gray-700">
+                              {formatStudyType(row.study_type)}
+                            </td>
+                            <td
+                              className="px-3 py-2.5 font-mono text-xs text-gray-800"
+                              dir="ltr"
+                            >
+                              {row.university_id?.trim() || '—'}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <button
+                                type="button"
+                                onClick={() => setSettlementStudent(row)}
+                                className="inline-flex items-center rounded-md bg-red-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
+                              >
+                                تسديد
+                              </button>
+                            </td>
+                          </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3">
+                    <p className="text-sm text-gray-600">
+                      عرض {pageRangeLabel} من {filteredRows.length} طالب
+                      <span className="mx-1 text-gray-400">·</span>
+                      الصفحة {Math.min(tablePage, totalTablePages)} من {totalTablePages}
+                      <span className="mx-1 text-gray-400">·</span>
+                      50 صف لكل صفحة
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTablePage((page) => Math.max(1, page - 1))}
+                        disabled={tablePage <= 1}
+                        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        السابق
+                      </button>
+                      <span className="inline-flex min-w-10 items-center justify-center rounded-md bg-red-900 px-3 py-1.5 text-sm font-semibold text-white">
+                        {Math.min(tablePage, totalTablePages)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setTablePage((page) => Math.min(totalTablePages, page + 1))
+                        }
+                        disabled={tablePage >= totalTablePages}
+                        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        التالي
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

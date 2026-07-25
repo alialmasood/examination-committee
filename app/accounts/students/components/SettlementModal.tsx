@@ -9,6 +9,13 @@ import {
   type SettlementHistoryRow,
   type YearLedger,
 } from '../lib/settlementYearLedger';
+import {
+  ADMISSION_CHANNEL_DEFS,
+  formatAdmissionChannelLabel,
+  getAdmissionChannelDef,
+  parseDiscountFeeYears,
+  type AdmissionChannelKey,
+} from '../lib/admissionChannels';
 
 export type SettlementStudent = {
   id: string;
@@ -17,11 +24,13 @@ export type SettlementStudent = {
   department: string | null;
   study_type: string | null;
   admission_type: string | null;
+  admission_channel?: string | null;
   payment_amount?: number | string | null;
   final_fee?: number | string | null;
 };
 
 type DiscountMode = 'none' | 'amount' | 'percent';
+type DeanValueMode = 'percent' | 'amount';
 
 type Props = {
   open: boolean;
@@ -113,7 +122,10 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const [payAmount, setPayAmount] = useState('');
   const [settlementDate, setSettlementDate] = useState(todayInputDate);
   const [periods, setPeriods] = useState(2);
-  const [discountMode, setDiscountMode] = useState<DiscountMode>('none');
+  const [discountEnabled, setDiscountEnabled] = useState(false);
+  const [selectedChannel, setSelectedChannel] = useState<AdmissionChannelKey | ''>('');
+  const [discountFeeYears, setDiscountFeeYears] = useState<number[]>([1]);
+  const [deanValueMode, setDeanValueMode] = useState<DeanValueMode>('percent');
   const [discountValue, setDiscountValue] = useState('');
   const [formMessage, setFormMessage] = useState('');
   const [formError, setFormError] = useState('');
@@ -122,6 +134,21 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const [historyReady, setHistoryReady] = useState(false);
   const [historyRows, setHistoryRows] = useState<SettlementHistoryRow[]>([]);
   const [yearLocked, setYearLocked] = useState(false);
+
+  const registeredChannel = String(student?.admission_channel || '').trim();
+  const registeredChannelDef = getAdmissionChannelDef(registeredChannel);
+  const hasRegisteredChannel = Boolean(
+    registeredChannelDef && registeredChannelDef.key !== 'general'
+  );
+
+  const activeChannelKey = (
+    hasRegisteredChannel
+      ? registeredChannel
+      : discountEnabled
+        ? selectedChannel
+        : ''
+  ) as AdmissionChannelKey | '';
+  const activeChannelDef = getAdmissionChannelDef(activeChannelKey);
 
   const baseTotal = useMemo(() => {
     if (!student) return 0;
@@ -154,7 +181,9 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       setPayAmount('');
       setSettlementDate(todayInputDate());
       setPeriods(2);
-      setDiscountMode('none');
+      setDiscountEnabled(false);
+      setSelectedChannel('');
+      setDeanValueMode('percent');
       setDiscountValue('');
       setFormMessage('');
       setFormError('');
@@ -163,6 +192,19 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       setHistoryReady(false);
       setYearLocked(false);
       setLoadingHistory(true);
+
+      const existingChannel = String(student!.admission_channel || '').trim();
+      const existingDef = getAdmissionChannelDef(existingChannel);
+      const hasExistingDiscountChannel = Boolean(
+        existingDef && existingDef.key !== 'general'
+      );
+      if (hasExistingDiscountChannel && existingDef) {
+        setDiscountEnabled(true);
+        setSelectedChannel(existingDef.key);
+        if (existingDef.fixedPercent != null) {
+          setDiscountValue(String(existingDef.fixedPercent));
+        }
+      }
 
       try {
         const res = await fetch(
@@ -190,14 +232,47 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
         })();
 
         const state = getOpenYearState(rows, annual);
+        const openYear = state.feeYear || 1;
+        setDiscountFeeYears([openYear]);
+
+        // استرجاع خطة تخفيض سابقة إن وُجدت على أي وصل
+        const planReceipt = rows.find(
+          (r) =>
+            String(r.discount_channel || '').trim() ||
+            parseDiscountFeeYears(r.discount_fee_years).length > 0
+        );
+
+        if (planReceipt) {
+          const years = parseDiscountFeeYears(planReceipt.discount_fee_years);
+          if (years.length > 0) setDiscountFeeYears(years);
+          const ch = String(planReceipt.discount_channel || '').trim();
+          const chDef = getAdmissionChannelDef(ch);
+          if (chDef && !hasExistingDiscountChannel) {
+            setDiscountEnabled(true);
+            setSelectedChannel(chDef.key);
+          }
+        }
+
         if (state.firstReceipt && state.receiptsCount > 0) {
           setYearLocked(true);
-          const mode = String(state.firstReceipt.discount_mode || 'none');
-          if (mode === 'amount' || mode === 'percent' || mode === 'none') {
-            setDiscountMode(mode);
+          const first = state.firstReceipt;
+          const mode = String(first.discount_mode || 'none');
+          const years = parseDiscountFeeYears(first.discount_fee_years);
+          if (years.length > 0) setDiscountFeeYears(years);
+          const ch = String(first.discount_channel || existingChannel || '').trim();
+          const chDef = getAdmissionChannelDef(ch);
+          if (mode === 'none' || !chDef) {
+            setDiscountEnabled(false);
+            setDiscountValue('');
+          } else {
+            setDiscountEnabled(true);
+            setSelectedChannel(chDef.key);
+            if (chDef.allowAmountOrPercent) {
+              setDeanValueMode(mode === 'amount' ? 'amount' : 'percent');
+            }
+            const input = toNumber(first.discount_input, 0);
+            setDiscountValue(input > 0 ? String(input) : '');
           }
-          const input = toNumber(state.firstReceipt.discount_input, 0);
-          setDiscountValue(input > 0 ? String(input) : '');
           setPeriods(
             Math.max(1, Math.min(10, toNumber(state.firstReceipt.periods, 2)))
           );
@@ -218,17 +293,59 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
     };
   }, [open, student]);
 
+  const resolvedDiscount = useMemo(() => {
+    const annual = Math.max(0, baseTotal);
+    const currentYearNum = currentYear || 1;
+    const appliesToCurrentYear = discountFeeYears.includes(currentYearNum);
+
+    let mode: DiscountMode = 'none';
+    let input = 0;
+    let amount = 0;
+
+    const shouldApply =
+      appliesToCurrentYear &&
+      Boolean(activeChannelDef) &&
+      (hasRegisteredChannel || discountEnabled);
+
+    if (shouldApply && activeChannelDef) {
+      if (activeChannelDef.allowAmountOrPercent) {
+        mode = deanValueMode === 'amount' ? 'amount' : 'percent';
+        input = toNumber(discountValue, 0);
+        if (mode === 'amount') {
+          amount = Math.max(0, Math.min(input, annual));
+        } else {
+          const pct = Math.max(0, Math.min(input, 100));
+          amount = (annual * pct) / 100;
+          input = pct;
+        }
+      } else if (activeChannelDef.fixedPercent != null) {
+        mode = 'percent';
+        input = activeChannelDef.fixedPercent;
+        amount = (annual * input) / 100;
+      } else {
+        mode = 'percent';
+        input = Math.max(0, Math.min(toNumber(discountValue, 0), 100));
+        amount = (annual * input) / 100;
+      }
+    }
+
+    return { mode, input, amount, appliesToCurrentYear };
+  }, [
+    baseTotal,
+    currentYear,
+    discountFeeYears,
+    activeChannelDef,
+    hasRegisteredChannel,
+    discountEnabled,
+    deanValueMode,
+    discountValue,
+  ]);
+
   const calc = useMemo(() => {
     const annual = Math.max(0, baseTotal);
     const discountBase = annual;
-    const discountInput = toNumber(discountValue, 0);
-    let discountAmount = 0;
-    if (discountMode === 'amount') {
-      discountAmount = Math.max(0, Math.min(discountInput, discountBase));
-    } else if (discountMode === 'percent') {
-      const pct = Math.max(0, Math.min(discountInput, 100));
-      discountAmount = (discountBase * pct) / 100;
-    }
+    const discountMode = resolvedDiscount.mode;
+    const discountAmount = resolvedDiscount.amount;
 
     // مصدر الحقيقة: مجموع المدفوع السابق للسنة من الوصولات المحفوظة
     let yearTarget = openState.yearTarget;
@@ -246,7 +363,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       yearTarget = openState.yearTarget;
       yearPaidBefore = openState.yearPaidBefore;
       outstandingBefore = openState.outstandingBefore;
-      discountAmount = Math.max(0, annual - yearTarget);
     }
 
     const maxPay = Math.min(
@@ -262,8 +378,13 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
 
     return {
       feeYear: currentYear,
+      discountMode,
+      discountInput: resolvedDiscount.input,
       discountBase,
-      discountAmount,
+      discountAmount:
+        openState.receiptsCount > 0
+          ? Math.max(0, annual - yearTarget)
+          : discountAmount,
       yearTarget,
       yearPaidBefore,
       outstandingBefore,
@@ -274,11 +395,11 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       perPeriod,
       exceedsMax: rawPay > maxPay + 0.0001,
       historyCount: historyRows.length,
+      appliesDiscount: resolvedDiscount.appliesToCurrentYear && discountMode !== 'none',
     };
   }, [
     baseTotal,
-    discountMode,
-    discountValue,
+    resolvedDiscount,
     payAmount,
     periods,
     currentYear,
@@ -320,6 +441,35 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       return;
     }
 
+    const wantsDiscount =
+      (hasRegisteredChannel || discountEnabled) && discountFeeYears.length > 0;
+    if (wantsDiscount && !activeChannelDef) {
+      setFormError('يرجى اختيار قناة التخفيض');
+      return;
+    }
+    if (wantsDiscount && discountFeeYears.length === 0) {
+      setFormError('يرجى تحديد السنوات التي يسري عليها التخفيض');
+      return;
+    }
+    if (
+      wantsDiscount &&
+      activeChannelDef &&
+      !activeChannelDef.allowAmountOrPercent &&
+      activeChannelDef.fixedPercent == null &&
+      toNumber(discountValue, 0) <= 0
+    ) {
+      setFormError('يرجى إدخال نسبة التخفيض لهذه القناة');
+      return;
+    }
+    if (
+      wantsDiscount &&
+      activeChannelDef?.allowAmountOrPercent &&
+      toNumber(discountValue, 0) <= 0
+    ) {
+      setFormError('يرجى إدخال قيمة تخفيض موافقة السيد العميد');
+      return;
+    }
+
     setSaving(true);
     try {
       const res = await fetch('/api/accounts/student-settlements', {
@@ -337,10 +487,14 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
           annual_fee: baseTotal,
           four_years_total: fourYearsTotal,
           fee_year: calc.feeYear,
-          discount_mode: discountMode,
-          discount_years: 1,
+          discount_mode: calc.discountMode,
+          discount_years: Math.max(1, discountFeeYears.length),
+          discount_fee_years: discountFeeYears,
+          discount_channel: activeChannelDef?.key || null,
+          assign_admission_channel:
+            !hasRegisteredChannel && discountEnabled && Boolean(activeChannelDef),
           discount_base: calc.discountBase,
-          discount_input: toNumber(discountValue, 0),
+          discount_input: calc.discountInput,
           discount_amount: calc.discountAmount,
           after_discount: calc.yearTarget,
           pay_amount: calc.paid,
@@ -583,7 +737,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
 
             <div className="rounded-lg border border-gray-200 p-3 space-y-3">
               <p className="text-sm font-medium text-gray-800">
-                خصم / تخفيض على قسط السنة الحالية فقط
+                خصم / تخفيض على قسط السنوات المحددة
               </p>
               {yearLocked && (
                 <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-md px-2 py-1.5">
@@ -591,61 +745,207 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                   الحسابات.
                 </p>
               )}
-              <div className="flex flex-wrap gap-3 text-sm">
-                <label className="inline-flex items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="discountMode"
-                    checked={discountMode === 'none'}
-                    disabled={yearLocked}
-                    onChange={() => {
-                      setDiscountMode('none');
-                      setDiscountValue('');
-                    }}
-                  />
-                  بدون خصم
-                </label>
-                <label className="inline-flex items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="discountMode"
-                    checked={discountMode === 'amount'}
-                    disabled={yearLocked}
-                    onChange={() => setDiscountMode('amount')}
-                  />
-                  خصم بمبلغ
-                </label>
-                <label className="inline-flex items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="discountMode"
-                    checked={discountMode === 'percent'}
-                    disabled={yearLocked}
-                    onChange={() => setDiscountMode('percent')}
-                  />
-                  خصم بنسبة مئوية
-                </label>
-              </div>
-              {discountMode !== 'none' && (
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">
-                    {discountMode === 'amount'
-                      ? 'مبلغ الخصم (IQD)'
-                      : 'نسبة الخصم (%)'}
+
+              {hasRegisteredChannel && registeredChannelDef ? (
+                <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
+                  <p className="font-semibold">
+                    الطالب مشمول بتخفيض:{' '}
+                    {formatAdmissionChannelLabel(registeredChannelDef.key)}
+                  </p>
+                  <p className="text-xs text-indigo-800/80 mt-0.5">
+                    {registeredChannelDef.fixedPercent != null
+                      ? `نسبة التخفيض الثابتة: ${registeredChannelDef.fixedPercent}%`
+                      : registeredChannelDef.allowAmountOrPercent
+                        ? 'تخفيض موافقة السيد العميد — نسبة أو مبلغ'
+                        : 'أدخل نسبة التخفيض يدوياً لهذه القناة'}
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-3 text-sm">
+                  <label className="inline-flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="discountToggle"
+                      checked={!discountEnabled}
+                      disabled={yearLocked}
+                      onChange={() => {
+                        setDiscountEnabled(false);
+                        setSelectedChannel('');
+                        setDiscountValue('');
+                      }}
+                    />
+                    بدون خصم / تخفيض
                   </label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={discountMode === 'percent' ? 100 : baseTotal || undefined}
-                    step={discountMode === 'percent' ? '0.1' : '1000'}
-                    value={discountValue}
-                    disabled={yearLocked}
-                    onChange={(e) => setDiscountValue(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
-                    dir="ltr"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    قيمة الخصم: {money(calc.discountAmount)} IQD من القسط السنوي
+                  <label className="inline-flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="discountToggle"
+                      checked={discountEnabled}
+                      disabled={yearLocked}
+                      onChange={() => setDiscountEnabled(true)}
+                    />
+                    إضافة تخفيض حسب قناة القبول
+                  </label>
+                </div>
+              )}
+
+              {(hasRegisteredChannel || discountEnabled) && (
+                <div className="space-y-3">
+                  {!hasRegisteredChannel && (
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1">
+                        قناة التخفيض
+                      </label>
+                      <select
+                        value={selectedChannel}
+                        disabled={yearLocked}
+                        onChange={(e) => {
+                          const key = e.target.value as AdmissionChannelKey | '';
+                          setSelectedChannel(key);
+                          const def = getAdmissionChannelDef(key);
+                          if (def?.fixedPercent != null) {
+                            setDiscountValue(String(def.fixedPercent));
+                          } else {
+                            setDiscountValue('');
+                          }
+                          if (def?.allowAmountOrPercent) {
+                            setDeanValueMode('percent');
+                          }
+                        }}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
+                      >
+                        <option value="">اختر قناة التخفيض</option>
+                        {ADMISSION_CHANNEL_DEFS.filter((c) => c.key !== 'general').map(
+                          (channel) => (
+                            <option key={channel.key} value={channel.key}>
+                              {channel.label}
+                              {channel.fixedPercent != null
+                                ? ` (${channel.fixedPercent}%)`
+                                : channel.allowAmountOrPercent
+                                  ? ' (نسبة أو مبلغ)'
+                                  : ' (نسبة يدوية)'}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </div>
+                  )}
+
+                  <div>
+                    <p className="text-sm text-gray-700 mb-1.5">
+                      السنوات التي يسري عليها التخفيض
+                    </p>
+                    <div className="flex flex-wrap gap-3 text-sm">
+                      {([1, 2, 3, 4] as FeeYear[]).map((year) => (
+                        <label key={year} className="inline-flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={discountFeeYears.includes(year)}
+                            disabled={yearLocked}
+                            onChange={(e) => {
+                              setDiscountFeeYears((prev) => {
+                                if (e.target.checked) {
+                                  return [...prev, year].sort((a, b) => a - b);
+                                }
+                                return prev.filter((y) => y !== year);
+                              });
+                            }}
+                          />
+                          {feeYearLabel(year)}
+                        </label>
+                      ))}
+                    </div>
+                    {calc.feeYear && !discountFeeYears.includes(calc.feeYear) && (
+                      <p className="text-xs text-amber-700 mt-1">
+                        السنة الجارية ({feeYearLabel(calc.feeYear)}) غير مشمولة
+                        بالتخفيض — سيُحتسب القسط كاملاً لهذه السنة.
+                      </p>
+                    )}
+                  </div>
+
+                  {activeChannelDef?.allowAmountOrPercent && (
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap gap-3 text-sm">
+                        <label className="inline-flex items-center gap-1.5">
+                          <input
+                            type="radio"
+                            name="deanMode"
+                            checked={deanValueMode === 'percent'}
+                            disabled={yearLocked}
+                            onChange={() => {
+                              setDeanValueMode('percent');
+                              setDiscountValue('');
+                            }}
+                          />
+                          نسبة مئوية
+                        </label>
+                        <label className="inline-flex items-center gap-1.5">
+                          <input
+                            type="radio"
+                            name="deanMode"
+                            checked={deanValueMode === 'amount'}
+                            disabled={yearLocked}
+                            onChange={() => {
+                              setDeanValueMode('amount');
+                              setDiscountValue('');
+                            }}
+                          />
+                          مبلغ (IQD)
+                        </label>
+                      </div>
+                      <input
+                        type="number"
+                        min={0}
+                        max={deanValueMode === 'percent' ? 100 : baseTotal || undefined}
+                        step={deanValueMode === 'percent' ? '0.1' : '1000'}
+                        value={discountValue}
+                        disabled={yearLocked}
+                        onChange={(e) => setDiscountValue(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
+                        dir="ltr"
+                        placeholder={
+                          deanValueMode === 'percent'
+                            ? 'أدخل نسبة التخفيض'
+                            : 'أدخل مبلغ التخفيض'
+                        }
+                      />
+                    </div>
+                  )}
+
+                  {activeChannelDef &&
+                    !activeChannelDef.allowAmountOrPercent &&
+                    activeChannelDef.fixedPercent == null && (
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-1">
+                          نسبة التخفيض (%)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step="0.1"
+                          value={discountValue}
+                          disabled={yearLocked}
+                          onChange={(e) => setDiscountValue(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
+                          dir="ltr"
+                          placeholder="أدخل نسبة التخفيض"
+                        />
+                      </div>
+                    )}
+
+                  {activeChannelDef?.fixedPercent != null && (
+                    <p className="text-xs text-gray-600">
+                      نسبة القناة الثابتة: {activeChannelDef.fixedPercent}%
+                    </p>
+                  )}
+
+                  <p className="text-xs text-gray-500">
+                    قيمة الخصم على السنة الحالية:{' '}
+                    {money(calc.discountAmount)} IQD من القسط السنوي
+                    {activeChannelDef
+                      ? ` · ${formatAdmissionChannelLabel(activeChannelDef.key)}`
+                      : ''}
                   </p>
                 </div>
               )}

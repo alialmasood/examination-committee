@@ -11,6 +11,8 @@ export type SettlementHistoryRow = {
   discount_mode?: string | null;
   discount_input?: number | string | null;
   discount_amount?: number | string | null;
+  discount_channel?: string | null;
+  discount_fee_years?: string | number[] | null;
   periods?: number | string | null;
   settlement_date?: string | null;
   created_at?: string | null;

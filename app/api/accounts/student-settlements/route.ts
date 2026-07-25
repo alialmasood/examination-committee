@@ -9,6 +9,10 @@ import {
   recalculateRemainingByReceipt,
   type SettlementHistoryRow,
 } from '@/app/accounts/students/lib/settlementYearLedger';
+import {
+  parseDiscountFeeYears,
+  serializeDiscountFeeYears,
+} from '@/app/accounts/students/lib/admissionChannels';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
 import {
   postStudentSettlementJournalEntry,
@@ -62,6 +66,16 @@ async function ensureSettlementReceiptsTable() {
   await query(`
     ALTER TABLE accounts.student_settlement_receipts
       ADD COLUMN IF NOT EXISTS journal_entry_id UUID NULL
+  `).catch(() => undefined);
+
+  await query(`
+    ALTER TABLE accounts.student_settlement_receipts
+      ADD COLUMN IF NOT EXISTS discount_channel VARCHAR(50)
+  `).catch(() => undefined);
+
+  await query(`
+    ALTER TABLE accounts.student_settlement_receipts
+      ADD COLUMN IF NOT EXISTS discount_fee_years VARCHAR(20)
   `).catch(() => undefined);
 
   await query(`
@@ -143,6 +157,8 @@ export async function GET(request: NextRequest) {
          periods,
          per_period_amount,
          COALESCE(fee_year, 1) AS fee_year,
+         discount_channel,
+         discount_fee_years,
          notes,
          created_at
        FROM accounts.student_settlement_receipts
@@ -337,9 +353,24 @@ export async function POST(request: NextRequest) {
       discountModeRaw === 'amount' || discountModeRaw === 'percent'
         ? discountModeRaw
         : 'none';
-    const discountYears = 1;
+    const discountChannel =
+      typeof body?.discount_channel === 'string'
+        ? body.discount_channel.trim()
+        : '';
+    const discountFeeYearsUnique: number[] = parseDiscountFeeYears(
+      body?.discount_fee_years
+    );
+    const discountYears = Math.max(
+      1,
+      Math.min(4, discountFeeYearsUnique.length || Number(body?.discount_years) || 1)
+    );
+    const discountFeeYearsText =
+      discountFeeYearsUnique.length > 0
+        ? serializeDiscountFeeYears(discountFeeYearsUnique)
+        : String(feeYear);
     const periods = Math.max(1, Math.min(10, Number(body?.periods) || 1));
     const fourYearsTotal = toMoney(body?.four_years_total) || annualFee * 4;
+    const assignAdmissionChannel = Boolean(body?.assign_admission_channel);
 
     // إذا كانت السنة قد بدأت: ثبّت المستحق من أول وصل
     let discountBase = annualFee;
@@ -409,10 +440,12 @@ export async function POST(request: NextRequest) {
          periods,
          per_period_amount,
          fee_year,
+         discount_channel,
+         discount_fee_years,
          created_by
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8::date,
-         $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
+         $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
        )
        RETURNING *`,
       [
@@ -437,9 +470,61 @@ export async function POST(request: NextRequest) {
         periods,
         Math.round(perPeriodAmount * 100) / 100,
         feeYear,
+        discountChannel || null,
+        discountFeeYearsText,
         createdBy,
       ]
     );
+
+    // تسجيل قناة التخفيض على ملف الطالب لتظهر في إحصائيات شؤون الطلبة
+    if (assignAdmissionChannel && discountChannel) {
+      try {
+        await query(`
+          ALTER TABLE student_affairs.students
+            ADD COLUMN IF NOT EXISTS admission_channel VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS discount_percentage DECIMAL(5,2) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS discount_amount DECIMAL(12,2) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS final_fee_after_discount DECIMAL(12,2) DEFAULT 0
+        `);
+      } catch {
+        // العمود موجود
+      }
+
+      await query(
+        `UPDATE student_affairs.students
+         SET admission_channel = COALESCE(NULLIF(TRIM(admission_channel), ''), $2),
+             discount_percentage = CASE
+               WHEN $3 = 'percent' THEN $4
+               ELSE COALESCE(discount_percentage, 0)
+             END,
+             discount_amount = CASE
+               WHEN $3 = 'amount' THEN $5
+               WHEN $3 = 'percent' THEN $5
+               ELSE COALESCE(discount_amount, 0)
+             END,
+             final_fee_after_discount = CASE
+               WHEN $3 IN ('amount', 'percent') THEN $6
+               ELSE COALESCE(final_fee_after_discount, 0)
+             END,
+             updated_at = NOW()
+         WHERE id = $1
+           AND (
+             admission_channel IS NULL
+             OR TRIM(admission_channel) = ''
+             OR TRIM(admission_channel) = 'general'
+           )`,
+        [
+          studentId,
+          discountChannel,
+          discountMode,
+          discountInput,
+          discountAmount,
+          afterDiscount,
+        ]
+      ).catch((err) => {
+        console.error('تعذر تحديث قناة القبول للطالب بعد التسديد:', err);
+      });
+    }
 
     // إصلاح متبقيات الوصولات السابقة لنفس الطالب بعد الحفظ
     const allRes = await query(
