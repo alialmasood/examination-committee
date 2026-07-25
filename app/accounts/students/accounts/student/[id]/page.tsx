@@ -178,7 +178,15 @@ function MoneyCard({
   );
 }
 
-function OfficialReceiptCard({ receipt }: { receipt: SettlementReceipt }) {
+function OfficialReceiptCard({
+  receipt,
+  deleting,
+  onRequestDelete,
+}: {
+  receipt: SettlementReceipt;
+  deleting: boolean;
+  onRequestDelete: (receipt: SettlementReceipt) => void;
+}) {
   const periods = toNumber(receipt.periods, 1);
   const discountYears = toNumber(receipt.discount_years, 1);
   const hasDiscount = receipt.discount_mode !== 'none' && toNumber(receipt.discount_amount) > 0;
@@ -203,9 +211,18 @@ function OfficialReceiptCard({ receipt }: { receipt: SettlementReceipt }) {
           <button
             type="button"
             onClick={() => printSettlementReceipt(receipt, 'A5')}
-            className="rounded-md bg-white text-red-950 hover:bg-red-50 px-3 py-1.5 text-xs font-semibold"
+            disabled={deleting}
+            className="rounded-md bg-white text-red-950 hover:bg-red-50 px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
           >
             طباعة A5
+          </button>
+          <button
+            type="button"
+            onClick={() => onRequestDelete(receipt)}
+            disabled={deleting}
+            className="rounded-md border border-red-200 bg-red-50 text-red-800 hover:bg-red-100 px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+          >
+            {deleting ? 'جارٍ المسح…' : 'مسح الوصل'}
           </button>
         </div>
       </div>
@@ -316,6 +333,10 @@ export default function StudentAccountsStudentPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [receiptsError, setReceiptsError] = useState('');
+  const [receiptPendingDeletion, setReceiptPendingDeletion] =
+    useState<SettlementReceipt | null>(null);
+  const [deletingReceiptId, setDeletingReceiptId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState('');
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -443,6 +464,37 @@ export default function StudentAccountsStudentPage() {
       ledger: view.ledger,
       receipts,
     });
+  }
+
+  async function handleConfirmDeleteReceipt() {
+    if (!receiptPendingDeletion || deletingReceiptId) return;
+    const target = receiptPendingDeletion;
+    setDeletingReceiptId(target.id);
+    setDeleteError('');
+    try {
+      const res = await fetch(
+        `/api/accounts/student-settlements/${encodeURIComponent(target.id)}`,
+        {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reason: 'مسح وصل القبض من بطاقة حساب الطالب',
+          }),
+        }
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.success) {
+        setDeleteError(body.error || 'تعذر مسح وصل القبض');
+        return;
+      }
+      setReceiptPendingDeletion(null);
+      await load();
+    } catch {
+      setDeleteError('تعذر الاتصال بالخادم أثناء مسح الوصل');
+    } finally {
+      setDeletingReceiptId(null);
+    }
   }
 
   return (
@@ -634,7 +686,15 @@ export default function StudentAccountsStudentPage() {
                     <div className="space-y-4 p-4">
                       {group.items.length > 0 ? (
                         group.items.map((receipt) => (
-                          <OfficialReceiptCard key={receipt.id} receipt={receipt} />
+                          <OfficialReceiptCard
+                            key={receipt.id}
+                            receipt={receipt}
+                            deleting={deletingReceiptId === receipt.id}
+                            onRequestDelete={(r) => {
+                              setDeleteError('');
+                              setReceiptPendingDeletion(r);
+                            }}
+                          />
                         ))
                       ) : (
                         <div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-sm text-gray-500">
@@ -649,6 +709,76 @@ export default function StudentAccountsStudentPage() {
           </section>
         </div>
       )}
+
+      {receiptPendingDeletion ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            className="w-full max-w-md rounded-xl bg-white shadow-xl border border-gray-200"
+            dir="rtl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-receipt-title"
+          >
+            <div className="border-b border-gray-100 px-5 py-4">
+              <h3 id="delete-receipt-title" className="text-base font-semibold text-gray-900">
+                تأكيد مسح وصل القبض
+              </h3>
+              <p className="mt-1 text-sm text-gray-600">
+                سيتم مسح الوصل وإرجاع احتساب المدفوع والمتبقي للسنوات، مع عكس قيد اليومية إن وُجد.
+              </p>
+            </div>
+            <div className="space-y-2 px-5 py-4 text-sm text-gray-800">
+              <p>
+                رقم الوصل:{' '}
+                <span className="font-semibold font-mono" dir="ltr">
+                  {receiptPendingDeletion.receipt_number}
+                </span>
+              </p>
+              <p>
+                السنة:{' '}
+                <span className="font-semibold">
+                  {feeYearLabel(
+                    Math.max(1, Math.min(4, toNumber(receiptPendingDeletion.fee_year, 1)))
+                  )}
+                </span>
+              </p>
+              <p>
+                المبلغ المدفوع:{' '}
+                <span className="font-semibold" dir="ltr">
+                  {money(toNumber(receiptPendingDeletion.pay_amount))} IQD
+                </span>
+              </p>
+              {deleteError ? (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                  {deleteError}
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 px-5 py-4">
+              <button
+                type="button"
+                disabled={!!deletingReceiptId}
+                onClick={() => {
+                  if (deletingReceiptId) return;
+                  setReceiptPendingDeletion(null);
+                  setDeleteError('');
+                }}
+                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                disabled={!!deletingReceiptId}
+                onClick={() => void handleConfirmDeleteReceipt()}
+                className="rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-60"
+              >
+                {deletingReceiptId ? 'جارٍ المسح…' : 'تأكيد المسح'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
