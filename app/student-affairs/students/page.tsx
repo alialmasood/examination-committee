@@ -204,6 +204,9 @@ export default function StudentsPage() {
   const [openStatusDropdown, setOpenStatusDropdown] = useState<string | null>(null);
   const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number } | null>(null);
   const [printStudent, setPrintStudent] = useState<Student | null>(null);
+  const [studentPendingDeletion, setStudentPendingDeletion] = useState<Student | null>(null);
+  const [deletingStudentId, setDeletingStudentId] = useState<string | null>(null);
+  const [isCompletingRegistrations, setIsCompletingRegistrations] = useState(false);
 
   // قائمة حالات الطالب
   const studentStatuses = [
@@ -1644,27 +1647,82 @@ export default function StudentsPage() {
     }
   };
 
-  const handleDeleteStudent = async (studentId: string) => {
-    if (confirm('هل أنت متأكد من حذف هذا الطالب؟')) {
-      try {
-        const response = await fetch(`/api/students/${studentId}`, {
-          method: 'DELETE',
-        });
-        
-        const result = await response.json();
-        
-        if (result.success) {
-          alert('تم حذف الطالب بنجاح');
-          // إعادة جلب قائمة الطلاب وإحصائيات الأقسام
-          await fetchStudents();
-          await fetchDepartmentCounts();
-        } else {
-          alert('خطأ في حذف الطالب: ' + result.error);
-        }
-      } catch (error) {
-        console.error('خطأ في حذف الطالب:', error);
-        alert('خطأ في حذف الطالب');
+  const handleDeleteStudent = async () => {
+    if (!studentPendingDeletion || deletingStudentId) return;
+
+    const studentId = studentPendingDeletion.id;
+    try {
+      setDeletingStudentId(studentId);
+      const response = await fetch(`/api/students/${studentId}`, {
+        method: 'DELETE',
+      });
+
+      const result = await response.json().catch(() => ({
+        success: false,
+        error: 'استجابة غير صالحة من الخادم',
+      }));
+
+      if (!response.ok || !result.success) {
+        alert(result.error || 'تعذر حذف الطالب');
+        return;
       }
+
+      setStudentPendingDeletion(null);
+      setStudents((currentStudents) =>
+        currentStudents.filter((student) => student.id !== studentId)
+      );
+      alert(result.message || 'تم حذف الطالب بنجاح');
+
+      // إعادة جلب القائمة والإحصائيات لضمان تطابق الصفحة مع قاعدة البيانات.
+      await Promise.all([fetchStudents(), fetchDepartmentCounts()]);
+    } catch (error) {
+      console.error('خطأ في حذف الطالب:', error);
+      alert('تعذر الاتصال بالخادم لحذف الطالب');
+    } finally {
+      setDeletingStudentId(null);
+    }
+  };
+
+  const handleCompleteRegistrations = async () => {
+    if (isCompletingRegistrations) return;
+
+    const scopeName = selectedDepartment
+      ? `قسم ${selectedDepartment}`
+      : 'جميع الأقسام';
+    const confirmed = confirm(
+      `هل أنت متأكد من إتمام تسجيل جميع الطلبة قيد التسجيل ضمن ${scopeName}؟\n\nسيتم ترحيلهم إلى صفحة الحسابات.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setIsCompletingRegistrations(true);
+      const response = await fetch('/api/students/complete-registration', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          department: selectedDepartment || undefined,
+        }),
+      });
+      const result = await response.json().catch(() => ({
+        success: false,
+        error: 'استجابة غير صالحة من الخادم',
+      }));
+
+      if (!response.ok || !result.success) {
+        alert(result.error || 'تعذر إتمام تسجيل الطلبة');
+        return;
+      }
+
+      alert(result.message);
+      await Promise.all([fetchStudents(), fetchDepartmentCounts()]);
+    } catch (error) {
+      console.error('خطأ في إتمام تسجيل الطلبة:', error);
+      alert('تعذر الاتصال بالخادم لإتمام تسجيل الطلبة');
+    } finally {
+      setIsCompletingRegistrations(false);
     }
   };
 
@@ -3256,9 +3314,33 @@ export default function StudentsPage() {
 
       {/* جدول الطلاب */}
       <div className="bg-white rounded-xl shadow-lg p-6">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
           <h2 className="text-xl font-bold text-gray-800">قائمة الطلاب المسجلين</h2>
-          <div className="flex items-center space-x-4 space-x-reverse">
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              onClick={handleCompleteRegistrations}
+              disabled={isCompletingRegistrations}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
+              title={
+                selectedDepartment
+                  ? `إتمام تسجيل طلبة قسم ${selectedDepartment}`
+                  : 'إتمام تسجيل جميع الطلبة قيد التسجيل'
+              }
+            >
+              {isCompletingRegistrations ? (
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-200 border-t-white" />
+              ) : (
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              )}
+              {isCompletingRegistrations
+                ? 'جارٍ الإتمام...'
+                : selectedDepartment
+                  ? 'إتمام تسجيل القسم'
+                  : 'إتمام تسجيل الكل'}
+            </button>
             <div className="relative">
               <input
                 type="text"
@@ -3519,14 +3601,24 @@ export default function StudentsPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
                         </button>
-                        <button 
-                          onClick={() => handleDeleteStudent(student.id)}
-                          className="text-red-600 hover:text-red-800 text-sm"
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setStudentPendingDeletion(student);
+                          }}
+                          disabled={deletingStudentId !== null}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-600 hover:bg-red-50 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-50"
                           title="حذف"
+                          aria-label={`حذف الطالب ${student.full_name_ar || student.full_name || student.university_id}`}
                         >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
+                          {deletingStudentId === student.id ? (
+                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-red-200 border-t-red-600" />
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          )}
                         </button>
                         </div>
                       </div>
@@ -3564,6 +3656,70 @@ export default function StudentsPage() {
           </div>
         </div>
       </div>
+
+      {/* نافذة تأكيد حذف الطالب */}
+      {studentPendingDeletion && (
+        <div
+          className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-student-title"
+          onClick={() => {
+            if (!deletingStudentId) setStudentPendingDeletion(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600">
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+              </svg>
+            </div>
+            <h2 id="delete-student-title" className="text-lg font-bold text-gray-900">
+              تأكيد حذف الطالب
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-gray-600">
+              هل تريد حذف الطالب{' '}
+              <strong className="text-gray-900">
+                {studentPendingDeletion.full_name_ar ||
+                  studentPendingDeletion.full_name ||
+                  studentPendingDeletion.university_id}
+              </strong>
+              ؟ لا يمكن التراجع عن هذه العملية.
+            </p>
+            <p className="mt-2 text-xs text-amber-700">
+              لن يسمح النظام بالحذف إذا كانت للطالب سجلات مالية يجب الاحتفاظ بها.
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setStudentPendingDeletion(null)}
+                disabled={deletingStudentId !== null}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteStudent}
+                disabled={deletingStudentId !== null}
+                className="inline-flex min-w-24 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-60"
+              >
+                {deletingStudentId ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-red-200 border-t-white" />
+                    جارٍ الحذف
+                  </>
+                ) : (
+                  'حذف'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* القائمة المنسدلة لحالات الطالب - خارج الجدول */}
       {openStatusDropdown && dropdownPosition && (

@@ -642,8 +642,47 @@ export async function DELETE(
     const studentFullName = `${studentData.first_name || ''} ${studentData.last_name || ''}`.trim();
     
     // حذف الطالب
-    const deleteResult = await query('DELETE FROM student_affairs.students WHERE id = $1', [studentId]);
+    let deleteResult;
+    try {
+      deleteResult = await query(
+        'DELETE FROM student_affairs.students WHERE id = $1',
+        [studentId]
+      );
+    } catch (error) {
+      const databaseError = error as {
+        code?: string;
+        constraint?: string;
+        table?: string;
+      };
+
+      // لا يجوز حذف السجلات المالية أو الأكاديمية التابعة للطالب قسرياً.
+      if (databaseError.code === '23503') {
+        console.warn('تعذر حذف الطالب لوجود سجلات مرتبطة:', {
+          studentId,
+          table: databaseError.table,
+          constraint: databaseError.constraint,
+        });
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              'لا يمكن حذف هذا الطالب لارتباطه بسجلات مالية أو أكاديمية محفوظة. يمكنك تغيير حالته الأكاديمية بدلاً من الحذف.',
+            code: 'STUDENT_HAS_RELATED_RECORDS',
+          },
+          { status: 409 }
+        );
+      }
+
+      throw error;
+    }
     console.log('نتيجة الحذف:', deleteResult.rowCount);
+
+    if (deleteResult.rowCount !== 1) {
+      return NextResponse.json(
+        { success: false, error: 'لم يتم حذف الطالب، يرجى تحديث الصفحة والمحاولة مجدداً' },
+        { status: 409 }
+      );
+    }
     
     // تسجيل العملية في سجل العمليات
     try {
