@@ -71,6 +71,31 @@ function money(n: number): string {
   return new Intl.NumberFormat('en-US').format(Math.round(n || 0));
 }
 
+/** مقارن أبجدي عربي يتجاهل فروق الهمزات والتاء المربوطة */
+const arabicNameCollator = new Intl.Collator('ar', { sensitivity: 'base' });
+
+function normalizeArabicName(value?: string | null): string {
+  return String(value || '')
+    .trim()
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/\s+/g, ' ');
+}
+
+function compareStudentsByName(
+  a: { name?: string | null },
+  b: { name?: string | null }
+): number {
+  const nameA = normalizeArabicName(a.name);
+  const nameB = normalizeArabicName(b.name);
+  // الأسماء الفارغة في نهاية القائمة
+  if (!nameA && !nameB) return 0;
+  if (!nameA) return 1;
+  if (!nameB) return -1;
+  return arabicNameCollator.compare(nameA, nameB);
+}
+
 export default function StudentAccountsPage() {
   const router = useRouter();
   const [rows, setRows] = useState<PaidStudentRow[]>([]);
@@ -171,9 +196,14 @@ export default function StudentAccountsPage() {
     return Array.from(names).sort((a, b) => a.localeCompare(b, 'ar'));
   }, [rows, departments]);
 
+  const sortedRows = useMemo(
+    () => [...rows].sort(compareStudentsByName),
+    [rows]
+  );
+
   const filteredRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return rows.filter((row) => {
+    return sortedRows.filter((row) => {
       if (filterDepartment && row.department?.trim() !== filterDepartment) {
         return false;
       }
@@ -194,7 +224,7 @@ export default function StudentAccountsPage() {
       const dept = (row.department || '').toLowerCase();
       return name.includes(q) || uni.includes(q) || dept.includes(q);
     });
-  }, [rows, searchQuery, filterDepartment, filterStage, filterStudyType]);
+  }, [sortedRows, searchQuery, filterDepartment, filterStage, filterStudyType]);
 
   const totalTablePages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
 
