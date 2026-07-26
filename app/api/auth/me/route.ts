@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAccessToken, validateUser, getUserSystems } from '@/src/lib/auth';
 import { isPlatformSuperAdminUsername } from '@/src/lib/platform-superadmin';
+import { isDeanUsername } from '@/src/lib/dean';
 
 export async function GET(request: NextRequest) {
   try {
@@ -40,12 +41,14 @@ export async function GET(request: NextRequest) {
 
     const systems = await getUserSystems(user.id);
     const is_platform_admin = isPlatformSuperAdminUsername(user.username);
+    const is_dean = isDeanUsername(user.username);
 
     return NextResponse.json({
       success: true,
       user,
       systems,
       is_platform_admin,
+      is_dean,
       message: 'تم جلب بيانات المستخدم بنجاح',
     });
   } catch (error) {

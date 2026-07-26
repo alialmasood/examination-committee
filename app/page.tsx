@@ -43,6 +43,12 @@ export default function LoginPage() {
           window.location.href = '/platform-admin/systems';
           return;
         }
+
+        // حساب العميد → صفحة المراقبة الخاصة بالعميد
+        if (result.is_dean) {
+          window.location.href = '/dean';
+          return;
+        }
         
         // توجيه المستخدم إلى النظام المناسب
         if (result.systems && result.systems.length > 0) {
@@ -127,9 +133,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 flex items-center justify-center p-4 relative">
-      {/* خلفية تعكس العلم والمعرفة */}
-      <div className="absolute inset-0 overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 flex items-center justify-center p-4 relative max-md:min-h-dvh max-md:items-stretch max-md:justify-start max-md:p-0 max-md:overflow-y-auto">
+      {/* خلفية تعكس العلم والمعرفة — مخفية على الموبايل للحفاظ على مظهر رسمي نظيف */}
+      <div className="absolute inset-0 overflow-hidden max-md:hidden" aria-hidden="true">
         {/* أشكال هندسية تعكس البنية الأكاديمية */}
         <div className="absolute top-20 right-20 w-32 h-32 bg-blue-200/30 rotate-45 rounded-lg transform animate-pulse"></div>
         <div className="absolute top-40 left-32 w-24 h-24 bg-indigo-200/40 rotate-12 rounded-lg transform animate-pulse"></div>
@@ -217,19 +223,26 @@ export default function LoginPage() {
         <div className="absolute bottom-1/5 left-1/4 w-28 h-0.5 bg-gradient-to-r from-purple-300/30 via-indigo-300/30 to-blue-300/30 transform -rotate-30"></div>
       </div>
 
+      {/* خلفية موبايل رسمية بسيطة */}
+      <div className="absolute inset-0 hidden max-md:block pointer-events-none" aria-hidden="true">
+        <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-l from-blue-700 via-indigo-600 to-blue-700"></div>
+        <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-72 h-72 rounded-full bg-blue-200/25 blur-3xl"></div>
+        <div className="absolute -bottom-20 right-0 w-56 h-56 rounded-full bg-indigo-200/20 blur-3xl"></div>
+      </div>
+
       {/* بطاقة تسجيل الدخول */}
-      <div className="relative w-full max-w-md">
-        <div className="bg-white/90 backdrop-blur-lg rounded-2xl shadow-2xl border border-white/30 p-6 hover:shadow-glow transition-all duration-300">
+      <div className="relative w-full max-w-md max-md:max-w-none max-md:flex max-md:min-h-dvh max-md:flex-col max-md:justify-center max-md:px-4 max-md:py-6 max-md:pt-[max(1.5rem,env(safe-area-inset-top))] max-md:pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+        <div className="bg-white/90 backdrop-blur-lg rounded-2xl shadow-2xl border border-white/30 p-6 hover:shadow-glow transition-all duration-300 max-md:bg-white max-md:rounded-xl max-md:border-slate-200/80 max-md:shadow-lg max-md:p-5 max-md:hover:shadow-lg">
           {/* شعار الكلية */}
-          <div className="text-center mb-6">
+          <div className="text-center mb-6 max-md:mb-5">
             {/* شعار الكلية */}
-            <div className="w-20 h-20 mx-auto mb-3 flex items-center justify-center">
+            <div className="w-20 h-20 mx-auto mb-3 flex items-center justify-center max-md:w-16 max-md:h-16 max-md:mb-2.5">
               <Image 
                 src="/logos/college-logo.png" 
                 alt="شعار كلية الشرق" 
                 width={80}
                 height={80}
-                className="w-full h-full object-contain hover:scale-105 transition-transform duration-300"
+                className="w-full h-full object-contain hover:scale-105 transition-transform duration-300 max-md:hover:scale-100"
                 onError={(e) => {
                   // في حالة عدم وجود الشعار، نعرض الشعار البديل
                   e.currentTarget.style.display = 'none';
@@ -237,14 +250,14 @@ export default function LoginPage() {
                 }}
               />
               {/* شعار بديل في حالة عدم وجود الصورة */}
-              <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-purple-600 rounded-full flex items-center justify-center shadow-lg hover:scale-105 transition-transform duration-300 hidden">
-                <span className="text-white text-2xl font-bold">ش</span>
+              <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-purple-600 rounded-full flex items-center justify-center shadow-lg hover:scale-105 transition-transform duration-300 hidden max-md:w-16 max-md:h-16">
+                <span className="text-white text-2xl font-bold max-md:text-xl">ش</span>
               </div>
             </div>
             
             {/* اسم النظام */}
-            <div className="mb-3">
-              <h1 className="text-4xl font-black mb-2" style={{ fontFamily: 'Segoe UI Black, system-ui, sans-serif' }}>
+            <div className="mb-3 max-md:mb-2">
+              <h1 className="text-4xl font-black mb-2 max-md:text-3xl max-md:mb-1.5" style={{ fontFamily: 'Segoe UI Black, system-ui, sans-serif' }}>
                 <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
                   S
                 </span>
@@ -253,7 +266,7 @@ export default function LoginPage() {
                   U
                 </span>
               </h1>
-              <div className="flex items-center justify-center space-x-1 space-x-reverse mb-2">
+              <div className="flex items-center justify-center space-x-1 space-x-reverse mb-2 max-md:mb-1.5">
                 <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
                 <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse" style={{animationDelay: '0.2s'}}></div>
                 <div className="w-1 h-1 bg-pink-500 rounded-full animate-pulse" style={{animationDelay: '0.4s'}}></div>
@@ -261,18 +274,18 @@ export default function LoginPage() {
             </div>
             
             {/* معلومات الكلية */}
-            <div className="mb-3">
-              <h2 className="text-xl font-semibold text-gray-800 mb-1">كلية الشرق</h2>
-              <p className="text-gray-600 text-sm">للعلوم التقنية التخصصية</p>
+            <div className="mb-3 max-md:mb-2.5">
+              <h2 className="text-xl font-semibold text-gray-800 mb-1 max-md:text-lg max-md:mb-0.5">كلية الشرق</h2>
+              <p className="text-gray-600 text-sm max-md:text-[13px] max-md:leading-5">للعلوم التقنية التخصصية</p>
             </div>
             
-            <div className="w-20 h-1 bg-gradient-to-r from-blue-600 to-purple-600 mx-auto rounded-full"></div>
+            <div className="w-20 h-1 bg-gradient-to-r from-blue-600 to-purple-600 mx-auto rounded-full max-md:w-16 max-md:h-0.5"></div>
           </div>
 
           {/* نموذج تسجيل الدخول */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4 max-md:space-y-3.5">
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2 max-md:mb-1.5">
                 اسم المستخدم
               </label>
               <input
@@ -281,14 +294,16 @@ export default function LoginPage() {
                 name="username"
                 value={formData.username}
                 onChange={handleInputChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white/70 backdrop-blur-sm hover:bg-white/80 focus:bg-white"
+                autoComplete="username"
+                inputMode="text"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white/70 backdrop-blur-sm hover:bg-white/80 focus:bg-white max-md:bg-white max-md:text-base max-md:min-h-11 max-md:rounded-md max-md:hover:bg-white"
                 placeholder="أدخل اسم المستخدم"
                 required
               />
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2 max-md:mb-1.5">
                 كلمة المرور
               </label>
               <div className="relative">
@@ -298,14 +313,16 @@ export default function LoginPage() {
                   name="password"
                   value={formData.password}
                   onChange={handleInputChange}
-                  className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white/70 backdrop-blur-sm hover:bg-white/80 focus:bg-white"
+                  autoComplete="current-password"
+                  className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white/70 backdrop-blur-sm hover:bg-white/80 focus:bg-white max-md:bg-white max-md:text-base max-md:min-h-11 max-md:rounded-md max-md:pr-4 max-md:pl-12 max-md:hover:bg-white"
                   placeholder="أدخل كلمة المرور"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                  aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors max-md:right-auto max-md:left-3 max-md:p-1 max-md:min-w-11 max-md:min-h-11 max-md:flex max-md:items-center max-md:justify-center"
                 >
                   {showPassword ? (
                     <EyeSlashIcon className="w-5 h-5" />
@@ -316,7 +333,7 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between max-md:gap-3">
               <div className="flex items-center">
                 <input
                   id="remember-me"
@@ -324,11 +341,11 @@ export default function LoginPage() {
                   type="checkbox"
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
-                <label htmlFor="remember-me" className="mr-2 block text-sm text-gray-700">
+                <label htmlFor="remember-me" className="mr-2 block text-sm text-gray-700 max-md:select-none">
                   تذكرني
                 </label>
               </div>
-              <a href="#" className="text-sm text-blue-600 hover:text-blue-500 transition-colors">
+              <a href="#" className="text-sm text-blue-600 hover:text-blue-500 transition-colors max-md:whitespace-nowrap max-md:py-1">
                 نسيت كلمة المرور؟
               </a>
             </div>
@@ -336,7 +353,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 px-4 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 px-4 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed max-md:min-h-12 max-md:rounded-md max-md:text-[15px] max-md:font-semibold max-md:mt-1 max-md:active:scale-[0.99]"
             >
               {isLoading ? (
                 <div className="flex items-center justify-center">
@@ -350,8 +367,8 @@ export default function LoginPage() {
           </form>
 
           {/* معلومات إضافية */}
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600 mb-2">
+          <div className="mt-6 text-center max-md:mt-5">
+            <p className="text-sm text-gray-600 mb-2 max-md:text-xs max-md:leading-5 max-md:mb-1.5 max-md:px-1">
               نظام إدارة شامل لكلية الشرق للعلوم التقنية التخصصية
             </p>
             <div className="flex items-center justify-center space-x-2 space-x-reverse">

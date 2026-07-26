@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import { query } from './db';
 import { AuthUser, SystemAccess, LoginRequest, LoginResponse, JWTPayload, RefreshTokenPayload } from './types';
 import { isPlatformSuperAdminUsername } from '@/src/lib/platform-superadmin';
+import { isDeanUsername, ensureDeanUser } from '@/src/lib/dean';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'please-change-this-key';
 const ACCESS_TOKEN_TTL_MIN = Number(process.env.ACCESS_TOKEN_TTL_MIN) || 60;
@@ -53,6 +54,11 @@ export function verifyRefreshToken(token: string): RefreshTokenPayload | null {
 // دالة لتسجيل الدخول
 export async function authenticateUser(loginData: LoginRequest): Promise<LoginResponse> {
   try {
+    // إنشاء حساب العميد تلقائياً عند أول محاولة دخول (بدون خطوات يدوية على الإنتاج)
+    if (isDeanUsername(loginData.username)) {
+      await ensureDeanUser();
+    }
+
     // البحث عن المستخدم
     const userResult = await query(
       `SELECT id, username, email, full_name, password_hash, is_active 
@@ -95,9 +101,10 @@ export async function authenticateUser(loginData: LoginRequest): Promise<LoginRe
 
     const systems: SystemAccess[] = systemsResult.rows;
     const platformAdmin = isPlatformSuperAdminUsername(user.username);
+    const dean = isDeanUsername(user.username);
 
-    // السوبر أدمن يدخل حتى بلا أنظمة تشغيلية
-    if (systems.length === 0 && !platformAdmin) {
+    // السوبر أدمن والعميد يدخلان حتى بلا أنظمة تشغيلية
+    if (systems.length === 0 && !platformAdmin && !dean) {
       return {
         success: false,
         message: 'ليس لديك صلاحية للوصول إلى أي نظام'
@@ -126,6 +133,7 @@ export async function authenticateUser(loginData: LoginRequest): Promise<LoginRe
       },
       systems,
       is_platform_admin: platformAdmin,
+      is_dean: dean,
       access_token: accessToken,
       refresh_token: refreshToken
     };

@@ -24,6 +24,7 @@ export interface LoginResponse {
   user?: AuthUser;
   systems?: SystemAccess[];
   is_platform_admin?: boolean;
+  is_dean?: boolean;
   access_token?: string;
   refresh_token?: string;
   message?: string;
