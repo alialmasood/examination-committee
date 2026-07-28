@@ -180,7 +180,18 @@ export async function GET(request: NextRequest) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
-    const data = await getStudentExportData();
+    const { searchParams } = new URL(request.url);
+    const data = await getStudentExportData({
+      search: searchParams.get('search') || undefined,
+      department: searchParams.get('department') || undefined,
+      stage: searchParams.get('stage') || undefined,
+      studyType: searchParams.get('study_type') || undefined,
+      paymentStatus: (searchParams.get('payment_status') || '') as
+        | 'settled'
+        | 'partial'
+        | 'unpaid'
+        | '',
+    });
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'نظام حسابات الكلية';
@@ -208,7 +219,9 @@ export async function GET(request: NextRequest) {
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
     const metaRow = ws.addRow([
-      `تاريخ التصدير: ${new Date(data.generated_at).toLocaleString('ar-IQ')} · عدد الطلبة: ${data.totals.students}`,
+      `تاريخ التصدير: ${new Date(data.generated_at).toLocaleString('ar-IQ')} · عدد الطلبة: ${data.totals.students}${
+        searchParams.toString() ? ' · وفق الفلاتر المحددة' : ''
+      }`,
     ]);
     ws.mergeCells(metaRow.number, 1, metaRow.number, COLUMNS.length);
     metaRow.height = 20;

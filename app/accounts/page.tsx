@@ -211,6 +211,23 @@ export default function AccountsDashboard() {
         </div>
       </header>
 
+      {stats.students.pending_stage_promotions > 0 && (
+        <Link
+          href="/accounts/promotion-approvals"
+          className="flex items-center justify-between gap-3 rounded-xl border border-amber-300/80 bg-amber-50 px-4 py-3 text-sm text-amber-950 shadow-sm transition hover:bg-amber-100/80"
+        >
+          <div>
+            <p className="font-semibold m-0">طلبات ترحيل من شؤون الطلبة</p>
+            <p className="text-xs text-amber-800/80 m-0 mt-0.5">
+              يوجد {num(stats.students.pending_stage_promotions)} طلباً معلّقاً يحتاج موافقة الحسابات
+            </p>
+          </div>
+          <span className="rounded-lg bg-amber-900 px-3 py-1.5 text-xs font-medium text-white">
+            مراجعة
+          </span>
+        </Link>
+      )}
+
       <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6 gap-3">
         <Kpi
           label="إجمالي الطلبة"

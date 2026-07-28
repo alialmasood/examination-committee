@@ -6,6 +6,12 @@ import { API, errMsg, fetchJson, personNextCodeUrl, personTerminateUrl, personUr
 
 const ACADEMIC_TITLES = ['مدرس', 'مدرس مساعد', 'استاذ', 'استاذ مساعد'] as const;
 const DEGREES = ['دبلوم', 'دبلوم عالي', 'بكالوريوس', 'ماجستير', 'دكتوراه'] as const;
+const MUAYID_DEGREES = new Set(['دبلوم', 'دبلوم عالي', 'بكالوريوس']);
+const MUAYID_TITLE = 'معيد';
+
+function isMuayidDegree(degree: string): boolean {
+  return MUAYID_DEGREES.has(degree);
+}
 
 type Department = { id: string; name_ar: string };
 
@@ -20,6 +26,8 @@ type LecturerRow = {
   affiliation: string | null;
   department_id: string | null;
   department_name_ar?: string | null;
+  commencement_order_no: string | null;
+  effective_from: string | null;
   status: string;
   version: number;
   updated_at: string;
@@ -33,7 +41,11 @@ type FormState = {
   phone: string;
   affiliation: string;
   department_id: string;
+  effective_from: string;
+  commencement_order_no: string;
 };
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
 
 const emptyForm = (): FormState => ({
   full_name_ar: '',
@@ -43,11 +55,15 @@ const emptyForm = (): FormState => ({
   phone: '',
   affiliation: '',
   department_id: '',
+  effective_from: todayIso(),
+  commencement_order_no: '',
 });
 
 const inputClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-red-900 focus:ring-1 focus:ring-red-900';
-const labelClass = 'mb-1 block text-xs font-semibold text-gray-700';
+  'box-border h-9 w-full rounded-md border border-gray-300 bg-white px-2.5 text-sm leading-none text-gray-900 outline-none focus:border-red-900 focus:ring-1 focus:ring-red-900';
+const readonlyFieldClass =
+  'box-border flex h-9 w-full items-center rounded-md border border-amber-200 bg-amber-50 px-2.5 text-sm font-semibold leading-none text-amber-950';
+const labelClass = 'mb-0.5 block text-xs font-semibold text-gray-700';
 
 const actionBtn =
   'rounded px-2 py-1 text-xs font-semibold border transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
@@ -110,7 +126,9 @@ export default function LecturersPage() {
   }, []);
 
   useEffect(() => {
-    void loadList('');
+    const fromUrl = new URLSearchParams(window.location.search).get('q') || '';
+    if (fromUrl) setQ(fromUrl);
+    void loadList(fromUrl);
     void loadDepartments();
   }, [loadList, loadDepartments]);
 
@@ -139,6 +157,8 @@ export default function LecturersPage() {
       phone: row.phone || '',
       affiliation: row.affiliation || '',
       department_id: row.department_id || '',
+      effective_from: (row.effective_from || '').slice(0, 10) || todayIso(),
+      commencement_order_no: row.commencement_order_no || '',
     });
     setFormError('');
     setModalMode('edit');
@@ -158,17 +178,25 @@ export default function LecturersPage() {
       setFormError('الاسم الكامل مع اللقب مطلوب');
       return;
     }
+    if (!form.effective_from.trim()) {
+      setFormError('تاريخ المباشرة مطلوب');
+      return;
+    }
     setSaving(true);
     setFormError('');
 
     const payload = {
       full_name_ar: form.full_name_ar.trim(),
       full_name_en: form.full_name_en.trim() || null,
-      academic_title: form.academic_title || null,
+      academic_title: isMuayidDegree(form.degree)
+        ? MUAYID_TITLE
+        : form.academic_title || null,
       degree: form.degree || null,
       phone: form.phone.trim() || null,
       affiliation: form.affiliation.trim() || null,
       department_id: form.department_id || null,
+      effective_from: form.effective_from.trim(),
+      commencement_order_no: form.commencement_order_no.trim() || null,
     };
 
     const r =
@@ -297,15 +325,15 @@ export default function LecturersPage() {
         <table className="min-w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-red-950 text-white">
-              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">#</th>
               <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">الرمز</th>
               <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">الاسم الكامل</th>
-              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">الاسم بالإنجليزية</th>
-              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">اللقب العلمي</th>
               <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">الشهادة</th>
-              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">الهاتف</th>
+              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">اللقب العلمي</th>
+              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">رقم الهاتف</th>
               <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">جهة الانتساب</th>
               <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">القسم</th>
+              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">تاريخ المباشرة</th>
+              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">رقم أمر المباشرة</th>
               <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">إجراء</th>
             </tr>
           </thead>
@@ -323,7 +351,7 @@ export default function LecturersPage() {
                 </td>
               </tr>
             ) : (
-              rows.map((row, idx) => {
+              rows.map((row) => {
                 const busy = actionBusyId === row.id;
                 const ended = isTerminated(row.status);
                 return (
@@ -331,9 +359,8 @@ export default function LecturersPage() {
                     key={row.id}
                     className="border-b border-gray-100 odd:bg-white even:bg-gray-50/70 hover:bg-red-50/40"
                   >
-                    <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{idx + 1}</td>
-                    <td className="px-3 py-2.5 font-mono text-xs text-gray-800 whitespace-nowrap" dir="ltr">
-                      {row.person_code}
+                    <td className="px-3 py-2.5 font-mono text-xs text-gray-600 whitespace-nowrap" dir="ltr">
+                      {row.person_code || '—'}
                     </td>
                     <td className="px-3 py-2.5 font-medium text-gray-900 whitespace-nowrap">
                       {row.full_name_ar}
@@ -343,13 +370,10 @@ export default function LecturersPage() {
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">
-                      {row.full_name_en || '—'}
-                    </td>
+                    <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">{row.degree || '—'}</td>
                     <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">
                       {row.academic_title || '—'}
                     </td>
-                    <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">{row.degree || '—'}</td>
                     <td className="px-3 py-2.5 font-mono text-xs text-gray-800 whitespace-nowrap" dir="ltr">
                       {row.phone || '—'}
                     </td>
@@ -358,6 +382,12 @@ export default function LecturersPage() {
                     </td>
                     <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">
                       {row.department_name_ar || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-gray-800 whitespace-nowrap" dir="ltr">
+                      {(row.effective_from || '').slice(0, 10) || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">
+                      {row.commencement_order_no || '—'}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <div className="flex items-center justify-center gap-1.5">
@@ -410,10 +440,10 @@ export default function LecturersPage() {
           onClick={closeFormModal}
         >
           <div
-            className="w-full max-w-xl max-h-[92vh] overflow-y-auto rounded-lg bg-white shadow-xl"
+            className="w-full max-w-3xl max-h-[80vh] overflow-y-auto rounded-lg bg-white shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-gray-200 bg-red-950 px-4 py-3 text-white">
+            <div className="flex items-center justify-between border-b border-gray-200 bg-red-950 px-4 py-2 text-white">
               <h2 className="text-base font-bold">
                 {modalMode === 'edit' ? 'تعديل بيانات محاضر' : 'إضافة محاضر جديد'}
               </h2>
@@ -427,7 +457,7 @@ export default function LecturersPage() {
               </button>
             </div>
 
-            <form onSubmit={onSubmit} className="space-y-3 p-4">
+            <form onSubmit={onSubmit} className="space-y-2 p-3 sm:p-4">
               <div>
                 <label className={labelClass}>الرمز (يولّده النظام تلقائياً)</label>
                 <input
@@ -445,51 +475,48 @@ export default function LecturersPage() {
                 />
               </div>
 
-              <div>
-                <label className={labelClass}>
-                  الاسم الكامل مع اللقب <span className="text-red-700">*</span>
-                </label>
-                <input
-                  className={inputClass}
-                  value={form.full_name_ar}
-                  onChange={(e) => setForm({ ...form, full_name_ar: e.target.value })}
-                  required
-                  autoFocus
-                />
-              </div>
-
-              <div>
-                <label className={labelClass}>الاسم باللغة الإنجليزية (اختياري)</label>
-                <input
-                  className={inputClass}
-                  dir="ltr"
-                  value={form.full_name_en}
-                  onChange={(e) => setForm({ ...form, full_name_en: e.target.value })}
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div>
-                  <label className={labelClass}>اللقب العلمي</label>
-                  <select
+                  <label className={labelClass}>
+                    الاسم الكامل مع اللقب <span className="text-red-700">*</span>
+                  </label>
+                  <input
                     className={inputClass}
-                    value={form.academic_title}
-                    onChange={(e) => setForm({ ...form, academic_title: e.target.value })}
-                  >
-                    <option value="">— اختر —</option>
-                    {ACADEMIC_TITLES.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
+                    value={form.full_name_ar}
+                    onChange={(e) => setForm({ ...form, full_name_ar: e.target.value })}
+                    required
+                    autoFocus
+                  />
                 </div>
+                <div>
+                  <label className={labelClass}>الاسم باللغة الإنجليزية (اختياري)</label>
+                  <input
+                    className={inputClass}
+                    dir="ltr"
+                    value={form.full_name_en}
+                    onChange={(e) => setForm({ ...form, full_name_en: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div>
                   <label className={labelClass}>الشهادة</label>
                   <select
                     className={inputClass}
                     value={form.degree}
-                    onChange={(e) => setForm({ ...form, degree: e.target.value })}
+                    onChange={(e) => {
+                      const degree = e.target.value;
+                      setForm((prev) => ({
+                        ...prev,
+                        degree,
+                        academic_title: isMuayidDegree(degree)
+                          ? MUAYID_TITLE
+                          : prev.academic_title === MUAYID_TITLE
+                            ? ''
+                            : prev.academic_title,
+                      }));
+                    }}
                   >
                     <option value="">— اختر —</option>
                     {DEGREES.map((d) => (
@@ -499,9 +526,29 @@ export default function LecturersPage() {
                     ))}
                   </select>
                 </div>
+                <div>
+                  <label className={labelClass}>اللقب العلمي</label>
+                  {isMuayidDegree(form.degree) ? (
+                    <div className={readonlyFieldClass}>معيد</div>
+                  ) : (
+                    <select
+                      className={inputClass}
+                      value={form.academic_title}
+                      onChange={(e) => setForm({ ...form, academic_title: e.target.value })}
+                      disabled={!form.degree}
+                    >
+                      <option value="">— اختر —</option>
+                      {ACADEMIC_TITLES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div>
                   <label className={labelClass}>رقم الهاتف</label>
                   <input
@@ -544,29 +591,71 @@ export default function LecturersPage() {
                   ))}
                 </select>
                 {departmentsError && (
-                  <p className="mt-1 text-xs text-red-700">{departmentsError}</p>
+                  <p className="mt-0.5 text-xs text-red-700">{departmentsError}</p>
                 )}
               </div>
 
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div>
+                  <label className={labelClass}>
+                    تاريخ المباشرة <span className="text-red-700">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    className={`${inputClass} cursor-pointer`}
+                    dir="ltr"
+                    value={form.effective_from}
+                    onChange={(e) => setForm({ ...form, effective_from: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Tab' || e.key === 'Escape') return;
+                      e.preventDefault();
+                    }}
+                    onPaste={(e) => e.preventDefault()}
+                    onClick={(e) => {
+                      const el = e.currentTarget;
+                      if (typeof el.showPicker === 'function') {
+                        try {
+                          el.showPicker();
+                        } catch {
+                          /* يفتح التقويم بالنقر العادي إن لم يُدعم showPicker */
+                        }
+                      }
+                    }}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>رقم أمر المباشرة</label>
+                  <input
+                    className={inputClass}
+                    value={form.commencement_order_no}
+                    onChange={(e) =>
+                      setForm({ ...form, commencement_order_no: e.target.value })
+                    }
+                    placeholder="مثال: 123 / 2026"
+                  />
+                </div>
+              </div>
+
               {formError && (
-                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-900">
                   {formError}
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
+              <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-2">
                 <button
                   type="button"
                   onClick={closeFormModal}
                   disabled={saving}
-                  className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  className="rounded-md border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   إلغاء
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-md bg-red-950 px-5 py-2 text-sm font-semibold text-white hover:bg-red-900 disabled:opacity-50"
+                  className="rounded-md bg-red-950 px-5 py-1.5 text-sm font-semibold text-white hover:bg-red-900 disabled:opacity-50"
                 >
                   {saving
                     ? 'جاري الحفظ…'
@@ -606,7 +695,7 @@ export default function LecturersPage() {
                   سبب إنهاء الخدمة <span className="text-red-700">*</span>
                 </label>
                 <textarea
-                  className={inputClass}
+                  className={`${inputClass} h-auto py-2`}
                   rows={3}
                   value={terminateReason}
                   onChange={(e) => setTerminateReason(e.target.value)}

@@ -14,6 +14,7 @@ import {
   fetchJson,
 } from '../../../_lib';
 import { printDisbursementSheet } from '../../printDisbursementSheet';
+import { printSocialSecurityAnnex } from '../../printSocialSecurityAnnex';
 
 type AssignmentLine = {
   id: string;
@@ -30,10 +31,13 @@ type Line = {
   person_code_snapshot: string;
   person_name_snapshot: string;
   base_amount: string;
+  allowances_amount: string;
+  deductions_amount: string;
   notes: string | null;
   line_status: string;
   academic_title: string | null;
   degree: string | null;
+  job_title: string | null;
   department_name: string | null;
   assignments: AssignmentLine[];
   assignments_total: string;
@@ -45,6 +49,8 @@ type PreviousMonthLine = {
   person_name: string;
   base_amount: string;
   assignments_total: string;
+  allowances_amount: string;
+  deductions_amount: string;
 };
 
 type SheetDetail = {
@@ -58,6 +64,7 @@ type SheetDetail = {
     month_number: number;
     month_label: string;
     month_status: string;
+    lecturer_hour_rate?: string;
   };
   lines: Line[];
   summary: {
@@ -65,11 +72,15 @@ type SheetDetail = {
     entered_count: number;
     base_total: string;
     assignments_total: string;
+    allowances_total: string;
+    deductions_total: string;
     grand_total: string;
+    hours_total?: string | null;
   };
   previous_month: {
     month_number: number;
     month_label: string;
+    lecturer_hour_rate?: string;
     lines: PreviousMonthLine[];
   } | null;
 };
@@ -83,6 +94,13 @@ type ComparisonChange = {
   diff: number;
 };
 
+type LineDraft = {
+  base_amount: string;
+  allowances_amount: string;
+  deductions_amount: string;
+  assignments: Record<string, string>;
+};
+
 const STATUS_LABEL: Record<string, string> = {
   EMPTY: 'فارغ',
   DRAFT: 'مسودة',
@@ -92,8 +110,19 @@ const STATUS_LABEL: Record<string, string> = {
   ENTERED: 'مُدخل',
 };
 
+const CATEGORY_SHORT: Record<string, string> = {
+  TEACHING_STAFF: 'التدريسيين',
+  EXTERNAL_LECTURER: 'المحاضرين',
+  EMPLOYEE: 'الموظفين',
+  DAILY_WORKER: 'الأجور اليومية',
+};
+
 function money(v: string | number) {
   return Number(v || 0);
+}
+
+function lineNet(base: number, asg: number, allowances: number, deductions: number) {
+  return base + asg + allowances - deductions;
 }
 
 function formatMoney(v: string | number) {
@@ -110,9 +139,8 @@ export default function DisbursementSheetPage() {
   const params = useParams<{ id: string }>();
   const sheetId = params?.id;
   const [detail, setDetail] = useState<SheetDetail | null>(null);
-  const [draft, setDraft] = useState<Record<string, { base_amount: string; assignments: Record<string, string> }>>(
-    {}
-  );
+  const [draft, setDraft] = useState<Record<string, LineDraft>>({});
+  const [lecturerHourRate, setLecturerHourRate] = useState('0');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [q, setQ] = useState('');
   const [incompleteOnly, setIncompleteOnly] = useState(false);
@@ -125,12 +153,20 @@ export default function DisbursementSheetPage() {
   const [reasonsOpen, setReasonsOpen] = useState(false);
 
   const readOnly = detail?.sheet.status === 'LOCKED' || detail?.sheet.status === 'DISBURSED';
+  const isLecturerSheet = detail?.sheet.person_category === 'EXTERNAL_LECTURER';
+
+  function lineSalary(hoursOrBase: number): number {
+    if (!isLecturerSheet) return hoursOrBase;
+    return hoursOrBase * money(lecturerHourRate);
+  }
 
   const hydrateDraft = useCallback((lines: Line[]) => {
-    const next: typeof draft = {};
+    const next: Record<string, LineDraft> = {};
     for (const line of lines) {
       next[line.id] = {
         base_amount: line.base_amount,
+        allowances_amount: line.allowances_amount || '0',
+        deductions_amount: line.deductions_amount || '0',
         assignments: Object.fromEntries(line.assignments.map((a) => [a.id, a.amount])),
       };
     }
@@ -150,6 +186,7 @@ export default function DisbursementSheetPage() {
     }
     setDetail(r.data);
     hydrateDraft(r.data.lines || []);
+    setLecturerHourRate(r.data?.sheet?.lecturer_hour_rate ?? '0');
     setLoading(false);
   }, [sheetId, hydrateDraft]);
 
@@ -166,56 +203,92 @@ export default function DisbursementSheetPage() {
         const d = draft[line.id];
         const base = money(d?.base_amount ?? line.base_amount);
         const asg = Object.values(d?.assignments || {}).reduce((s, a) => s + money(a), 0);
-        if (base > 0 || asg > 0) return false;
+        const allowances = money(d?.allowances_amount ?? line.allowances_amount);
+        const deductions = money(d?.deductions_amount ?? line.deductions_amount);
+        if (base > 0 || asg > 0 || allowances > 0 || deductions > 0) return false;
       }
       return true;
     });
   }, [detail, draft, q, incompleteOnly]);
 
   const liveSummary = useMemo(() => {
-    if (!detail) return { people: 0, entered: 0, base: 0, asg: 0, grand: 0 };
+    if (!detail) {
+      return { people: 0, entered: 0, hours: 0, base: 0, asg: 0, allowances: 0, deductions: 0, grand: 0 };
+    }
+    const rate = money(lecturerHourRate);
     let entered = 0;
+    let hours = 0;
     let base = 0;
     let asg = 0;
+    let allowances = 0;
+    let deductions = 0;
     for (const line of detail.lines) {
       const d = draft[line.id];
       const b = money(d?.base_amount ?? line.base_amount);
+      const salary = isLecturerSheet ? b * rate : b;
       const a = Object.values(d?.assignments || {}).reduce((s, x) => s + money(x), 0);
-      base += b;
+      const all = money(d?.allowances_amount ?? line.allowances_amount);
+      const ded = money(d?.deductions_amount ?? line.deductions_amount);
+      hours += b;
+      base += salary;
       asg += a;
-      if (b > 0 || a > 0) entered += 1;
+      allowances += all;
+      deductions += ded;
+      if (b > 0 || a > 0 || all > 0 || ded > 0) entered += 1;
     }
     return {
       people: detail.lines.length,
       entered,
+      hours,
       base,
       asg,
-      grand: base + asg,
+      allowances,
+      deductions,
+      grand: lineNet(base, asg, allowances, deductions),
     };
-  }, [detail, draft]);
+  }, [detail, draft, isLecturerSheet, lecturerHourRate]);
 
   // مقارنة حية مع الشهر السابق تعتمد قيم الإدخال الحالية قبل الحفظ
   const comparison = useMemo(() => {
     if (!detail?.previous_month) return null;
     const EPS = 0.0005;
-    const prevBy = new Map(detail.previous_month.lines.map((l) => [l.payroll_person_id, l]));
+    const prevByPerson = new Map(
+      detail.previous_month.lines.map((p) => [p.payroll_person_id, p])
+    );
     const seen = new Set<string>();
     const changes: ComparisonChange[] = [];
-    let currentTotal = 0;
     let previousTotal = 0;
+    let currentTotal = 0;
+    const prevRate = money(
+      detail.previous_month.lecturer_hour_rate ?? detail.sheet.lecturer_hour_rate ?? 0
+    );
+    const curRate = money(lecturerHourRate);
+
+    const prevSalary = (hoursOrBase: number) =>
+      isLecturerSheet ? hoursOrBase * prevRate : hoursOrBase;
+    const curSalary = (hoursOrBase: number) =>
+      isLecturerSheet ? hoursOrBase * curRate : hoursOrBase;
+
     for (const p of detail.previous_month.lines) {
-      previousTotal += money(p.base_amount) + money(p.assignments_total);
+      previousTotal += lineNet(
+        prevSalary(money(p.base_amount)),
+        money(p.assignments_total),
+        money(p.allowances_amount),
+        money(p.deductions_amount)
+      );
     }
+
     for (const line of detail.lines) {
       const d = draft[line.id];
-      const base = money(d?.base_amount ?? line.base_amount);
-      const asg = d
-        ? Object.values(d.assignments).reduce((s, x) => s + money(x), 0)
-        : money(line.assignments_total);
-      const cur = base + asg;
+      const cur = lineNet(
+        curSalary(money(d?.base_amount ?? line.base_amount)),
+        Object.values(d?.assignments || {}).reduce((s, a) => s + money(a), 0),
+        money(d?.allowances_amount ?? line.allowances_amount),
+        money(d?.deductions_amount ?? line.deductions_amount)
+      );
       currentTotal += cur;
       seen.add(line.payroll_person_id);
-      const prev = prevBy.get(line.payroll_person_id);
+      const prev = prevByPerson.get(line.payroll_person_id);
       if (!prev) {
         if (cur > EPS) {
           changes.push({
@@ -229,20 +302,18 @@ export default function DisbursementSheetPage() {
         }
         continue;
       }
-      const prevBase = money(prev.base_amount);
-      const prevAsg = money(prev.assignments_total);
-      const prevTotal = prevBase + prevAsg;
+      const prevTotal = lineNet(
+        prevSalary(money(prev.base_amount)),
+        money(prev.assignments_total),
+        money(prev.allowances_amount),
+        money(prev.deductions_amount)
+      );
       const diff = cur - prevTotal;
       if (Math.abs(diff) <= EPS) continue;
-      const parts: string[] = [];
-      if (base - prevBase > EPS) parts.push('زاد الراتب الأساسي');
-      else if (base - prevBase < -EPS) parts.push('قل الراتب الأساسي');
-      if (asg - prevAsg > EPS) parts.push('زادت التكليفات');
-      else if (asg - prevAsg < -EPS) parts.push('قلت التكليفات');
       changes.push({
         payroll_person_id: line.payroll_person_id,
         person_name: line.person_name_snapshot,
-        reason: parts.length ? parts.join(' و') : diff > 0 ? 'زاد الإجمالي' : 'قل الإجمالي',
+        reason: diff > 0 ? 'زاد الإجمالي' : 'قل الإجمالي',
         previous_total: prevTotal,
         current_total: cur,
         diff,
@@ -250,7 +321,12 @@ export default function DisbursementSheetPage() {
     }
     for (const p of detail.previous_month.lines) {
       if (seen.has(p.payroll_person_id)) continue;
-      const prevTotal = money(p.base_amount) + money(p.assignments_total);
+      const prevTotal = lineNet(
+        prevSalary(money(p.base_amount)),
+        money(p.assignments_total),
+        money(p.allowances_amount),
+        money(p.deductions_amount)
+      );
       if (prevTotal <= EPS) continue;
       changes.push({
         payroll_person_id: p.payroll_person_id,
@@ -271,16 +347,31 @@ export default function DisbursementSheetPage() {
       direction: Math.abs(diff) <= EPS ? 'equal' : diff > 0 ? 'higher' : 'lower',
       changes,
     };
-  }, [detail, draft]);
+  }, [detail, draft, isLecturerSheet, lecturerHourRate]);
 
-  function setBase(lineId: string, value: string) {
+  function patchDraft(lineId: string, patch: Partial<LineDraft>) {
     setDraft((prev) => ({
       ...prev,
       [lineId]: {
-        base_amount: value,
+        base_amount: prev[lineId]?.base_amount || '0',
+        allowances_amount: prev[lineId]?.allowances_amount || '0',
+        deductions_amount: prev[lineId]?.deductions_amount || '0',
         assignments: prev[lineId]?.assignments || {},
+        ...patch,
       },
     }));
+  }
+
+  function setBase(lineId: string, value: string) {
+    patchDraft(lineId, { base_amount: value });
+  }
+
+  function setAllowances(lineId: string, value: string) {
+    patchDraft(lineId, { allowances_amount: value });
+  }
+
+  function setDeductions(lineId: string, value: string) {
+    patchDraft(lineId, { deductions_amount: value });
   }
 
   function setAssignmentAmount(lineId: string, asgId: string, value: string) {
@@ -288,6 +379,8 @@ export default function DisbursementSheetPage() {
       ...prev,
       [lineId]: {
         base_amount: prev[lineId]?.base_amount || '0',
+        allowances_amount: prev[lineId]?.allowances_amount || '0',
+        deductions_amount: prev[lineId]?.deductions_amount || '0',
         assignments: {
           ...(prev[lineId]?.assignments || {}),
           [asgId]: value,
@@ -304,6 +397,8 @@ export default function DisbursementSheetPage() {
     const lines = detail.lines.map((line) => ({
       id: line.id,
       base_amount: draft[line.id]?.base_amount ?? line.base_amount,
+      allowances_amount: draft[line.id]?.allowances_amount ?? line.allowances_amount,
+      deductions_amount: draft[line.id]?.deductions_amount ?? line.deductions_amount,
       assignments: line.assignments.map((a) => ({
         id: a.id,
         amount: draft[line.id]?.assignments?.[a.id] ?? a.amount,
@@ -312,7 +407,11 @@ export default function DisbursementSheetPage() {
     const r = await fetchJson(disbursementSheetUrl(detail.sheet.id), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: detail.sheet.version, lines }),
+      body: JSON.stringify({
+        version: detail.sheet.version,
+        lecturer_hour_rate: isLecturerSheet ? lecturerHourRate : undefined,
+        lines,
+      }),
     });
     setSaving(false);
     if (!r.__ok) {
@@ -321,6 +420,7 @@ export default function DisbursementSheetPage() {
     }
     setDetail(r.data);
     hydrateDraft(r.data.lines || []);
+    setLecturerHourRate(r.data?.sheet?.lecturer_hour_rate ?? lecturerHourRate);
     setMessage('تم حفظ الكشف بنجاح');
   }
 
@@ -345,6 +445,7 @@ export default function DisbursementSheetPage() {
     }
     setDetail(r.data);
     hydrateDraft(r.data.lines || []);
+    setLecturerHourRate(r.data?.sheet?.lecturer_hour_rate ?? lecturerHourRate);
     setMessage(successMsg);
   }
 
@@ -352,25 +453,98 @@ export default function DisbursementSheetPage() {
     if (!detail) return;
     const rows = detail.lines.map((line) => {
       const d = draft[line.id];
-      const base = money(d?.base_amount ?? line.base_amount);
-      const asg = Object.values(d?.assignments || {}).reduce((s, a) => s + money(a), 0);
+      const hoursOrBase = money(d?.base_amount ?? line.base_amount);
+      const salary = lineSalary(hoursOrBase);
+      const assignments = Object.values(d?.assignments || {}).reduce((s, a) => s + money(a), 0);
+      const allowancesField = money(d?.allowances_amount ?? line.allowances_amount);
+      const allowances = allowancesField + assignments;
+      const deductions = money(d?.deductions_amount ?? line.deductions_amount);
+      const subtotal = salary + allowances;
+      const socialSecurity = salary * 0.05;
+      const netPayable = subtotal - socialSecurity - deductions;
       return {
         name: line.person_name_snapshot,
-        salary: base + asg,
         degree: line.degree || '',
-        academic_title: line.academic_title || '',
-        department: line.department_name || '',
+        position: line.job_title || line.academic_title || '',
+        salary,
+        allowances,
+        subtotal,
+        social_security: socialSecurity,
+        deductions,
+        net_payable: netPayable,
       };
     });
-    const total = rows.reduce((s, r) => s + r.salary, 0);
+    const totals = rows.reduce(
+      (acc, row) => {
+        acc.salary += row.salary;
+        acc.allowances += row.allowances;
+        acc.subtotal += row.subtotal;
+        acc.social_security += row.social_security;
+        acc.deductions += row.deductions;
+        acc.net_payable += row.net_payable;
+        return acc;
+      },
+      {
+        salary: 0,
+        allowances: 0,
+        subtotal: 0,
+        social_security: 0,
+        deductions: 0,
+        net_payable: 0,
+      }
+    );
     printDisbursementSheet({
       category_label: detail.sheet.category_label,
       month_label: detail.sheet.month_label,
       year_label: detail.sheet.year_label,
       status_label: STATUS_LABEL[detail.sheet.status] || detail.sheet.status,
       rows,
-      total_salary: total,
       people_count: rows.length,
+      totals,
+    });
+
+    // ملحق الضمان يُطبع مباشرة بعد كشف الراتب
+    window.setTimeout(() => {
+      handlePrintSocialSecurityAnnex();
+    }, 700);
+  }
+
+  function handlePrintSocialSecurityAnnex() {
+    if (!detail) return;
+    const rows = detail.lines.map((line) => {
+      const d = draft[line.id];
+      const hoursOrBase = money(d?.base_amount ?? line.base_amount);
+      const salary = lineSalary(hoursOrBase);
+      const pct5 = salary * 0.05;
+      const pct12 = salary * 0.12;
+      return {
+        name: line.person_name_snapshot,
+        degree: line.degree || '',
+        position: line.job_title || line.academic_title || '',
+        salary,
+        pct5,
+        pct12,
+        pct17: pct5 + pct12,
+      };
+    });
+    const totals = rows.reduce(
+      (acc, row) => {
+        acc.salary += row.salary;
+        acc.pct5 += row.pct5;
+        acc.pct12 += row.pct12;
+        acc.pct17 += row.pct17;
+        return acc;
+      },
+      { salary: 0, pct5: 0, pct12: 0, pct17: 0 }
+    );
+    printSocialSecurityAnnex({
+      category_short:
+        CATEGORY_SHORT[detail.sheet.person_category] || detail.sheet.category_label,
+      month_label: detail.sheet.month_label,
+      year_label: detail.sheet.year_label,
+      rows,
+      people_count: rows.length,
+      totals,
     });
   }
 
@@ -398,7 +572,7 @@ export default function DisbursementSheetPage() {
   }
 
   return (
-    <main dir="rtl" className="p-4 w-full pb-28">
+    <main dir="rtl" className="p-4 w-full pb-36">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-gray-800">{detail.sheet.category_label}</h1>
@@ -416,6 +590,13 @@ export default function DisbursementSheetPage() {
             className="rounded-md border border-red-900 bg-red-950 px-3 py-2 text-sm font-semibold text-white hover:bg-red-900"
           >
             طباعة PDF
+          </button>
+          <button
+            type="button"
+            onClick={handlePrintSocialSecurityAnnex}
+            className="rounded-md border border-amber-800 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950 hover:bg-amber-100"
+          >
+            طباعة ملحق الضمان
           </button>
           <Link
             href="/accounts/payroll/disbursement"
@@ -605,45 +786,56 @@ export default function DisbursementSheetPage() {
       )}
 
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full border-collapse text-sm">
+        <table className="w-full border-collapse text-sm table-fixed">
           <thead>
             <tr className="border-b border-gray-200 bg-red-950 text-white">
-              <th className="px-3 py-2.5 text-right font-semibold">#</th>
-              <th className="px-3 py-2.5 text-right font-semibold">الرمز</th>
-              <th className="px-3 py-2.5 text-right font-semibold">الاسم</th>
-              <th className="px-3 py-2.5 text-right font-semibold">الراتب الأساسي</th>
-              <th className="px-3 py-2.5 text-right font-semibold">التكليفات</th>
-              <th className="px-3 py-2.5 text-right font-semibold">الإجمالي</th>
-              <th className="px-3 py-2.5 text-center font-semibold">تفاصيل</th>
+              <th className="w-10 px-2 py-2.5 text-right font-semibold">#</th>
+              <th className="px-2 py-2.5 text-right font-semibold">الاسم</th>
+              <th className="w-[110px] px-2 py-2.5 text-right font-semibold">
+                {isLecturerSheet ? 'عدد الساعات' : 'الراتب الأساسي'}
+              </th>
+              {isLecturerSheet && (
+                <th className="w-[120px] px-2 py-2.5 text-right font-semibold">الراتب</th>
+              )}
+              <th className="w-[110px] px-2 py-2.5 text-right font-semibold">المخصصات</th>
+              <th className="w-[110px] px-2 py-2.5 text-right font-semibold">الاستقطاعات</th>
+              <th className="w-[100px] px-2 py-2.5 text-right font-semibold">التكليفات</th>
+              <th className="w-[120px] px-2 py-2.5 text-right font-semibold">الإجمالي</th>
+              <th className="w-[100px] px-2 py-2.5 text-center font-semibold">تفاصيل</th>
             </tr>
           </thead>
           <tbody>
             {visibleLines.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-10 text-center text-gray-500">
+                <td
+                  colSpan={isLecturerSheet ? 9 : 8}
+                  className="px-3 py-10 text-center text-gray-500"
+                >
                   لا توجد أسطر مطابقة
                 </td>
               </tr>
             ) : (
               visibleLines.map((line, idx) => {
                 const d = draft[line.id];
-                const base = money(d?.base_amount ?? line.base_amount);
+                const hoursOrBase = money(d?.base_amount ?? line.base_amount);
+                const salary = lineSalary(hoursOrBase);
                 const asgTotal = Object.values(d?.assignments || {}).reduce(
                   (s, a) => s + money(a),
                   0
                 );
+                const allowances = money(d?.allowances_amount ?? line.allowances_amount);
+                const deductions = money(d?.deductions_amount ?? line.deductions_amount);
                 const open = !!expanded[line.id];
                 return (
                   <Fragment key={line.id}>
                     <tr className="border-b border-gray-100 odd:bg-white even:bg-gray-50/70">
-                      <td className="px-3 py-2 text-gray-500">{idx + 1}</td>
-                      <td className="px-3 py-2 font-mono text-xs" dir="ltr">
-                        {line.person_code_snapshot}
+                      <td className="px-2 py-2 text-gray-500">{idx + 1}</td>
+                      <td className="px-2 py-2">
+                        <div className="font-medium text-gray-900 leading-snug">
+                          {line.person_name_snapshot}
+                        </div>
                       </td>
-                      <td className="px-3 py-2 font-medium text-gray-900 whitespace-nowrap">
-                        {line.person_name_snapshot}
-                      </td>
-                      <td className="px-3 py-2 min-w-[140px]">
+                      <td className="px-2 py-2">
                         <input
                           className={inputClass}
                           dir="ltr"
@@ -652,21 +844,47 @@ export default function DisbursementSheetPage() {
                           onChange={(e) => setBase(line.id, e.target.value)}
                         />
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap" dir="ltr">
+                      {isLecturerSheet && (
+                        <td
+                          className="px-2 py-2 font-semibold whitespace-nowrap text-gray-800"
+                          dir="ltr"
+                        >
+                          {formatMoney(salary)}
+                        </td>
+                      )}
+                      <td className="px-2 py-2">
+                        <input
+                          className={inputClass}
+                          dir="ltr"
+                          value={d?.allowances_amount ?? line.allowances_amount ?? '0'}
+                          disabled={readOnly || saving}
+                          onChange={(e) => setAllowances(line.id, e.target.value)}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <input
+                          className={inputClass}
+                          dir="ltr"
+                          value={d?.deductions_amount ?? line.deductions_amount ?? '0'}
+                          disabled={readOnly || saving}
+                          onChange={(e) => setDeductions(line.id, e.target.value)}
+                        />
+                      </td>
+                      <td className="px-2 py-2 whitespace-nowrap" dir="ltr">
                         {formatMoney(asgTotal)}
                         {line.assignments.some((a) => a.is_partial) && (
-                          <span className="mr-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
+                          <span className="mr-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-900">
                             جزئي
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-2 font-semibold whitespace-nowrap" dir="ltr">
-                        {formatMoney(base + asgTotal)}
+                      <td className="px-2 py-2 font-semibold whitespace-nowrap" dir="ltr">
+                        {formatMoney(lineNet(salary, asgTotal, allowances, deductions))}
                       </td>
-                      <td className="px-3 py-2 text-center">
+                      <td className="px-2 py-2 text-center">
                         <button
                           type="button"
-                          className="text-xs font-semibold text-red-900 hover:underline"
+                          className="text-xs font-semibold text-red-900 hover:underline whitespace-nowrap"
                           onClick={() =>
                             setExpanded((prev) => ({ ...prev, [line.id]: !prev[line.id] }))
                           }
@@ -677,9 +895,11 @@ export default function DisbursementSheetPage() {
                     </tr>
                     {open && (
                       <tr className="border-b border-gray-100 bg-red-50/30">
-                        <td colSpan={7} className="px-4 py-3">
+                        <td colSpan={isLecturerSheet ? 9 : 8} className="px-4 py-3">
                           {line.assignments.length === 0 ? (
-                            <div className="text-xs text-gray-500">لا توجد تكليفات نشطة لهذا الشهر</div>
+                            <div className="text-xs text-gray-500">
+                              لا توجد تكليفات نشطة لهذا الشهر
+                            </div>
                           ) : (
                             <div className="space-y-2">
                               {line.assignments.map((a) => (
@@ -722,19 +942,69 @@ export default function DisbursementSheetPage() {
         </table>
       </div>
 
+      {isLecturerSheet && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="w-full sm:w-56">
+              <label className="mb-1 block text-xs font-semibold text-amber-950">
+                مبلغ ساعة المحاضر
+              </label>
+              <input
+                className={inputClass}
+                dir="ltr"
+                value={lecturerHourRate}
+                disabled={readOnly || saving}
+                onChange={(e) => setLecturerHourRate(e.target.value)}
+                placeholder="0"
+              />
+            </div>
+            <div className="text-sm text-amber-950/80">
+              <span className="font-semibold">احتساب الراتب:</span> عدد الساعات × مبلغ الساعة
+              <span className="mx-2 text-amber-800/50">|</span>
+              مجموع الساعات:{' '}
+              <strong dir="ltr">{formatMoney(liveSummary.hours)}</strong>
+              <span className="mx-2 text-amber-800/50">|</span>
+              مجموع الرواتب:{' '}
+              <strong dir="ltr">{formatMoney(liveSummary.base)}</strong>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 text-sm">
           <div className="flex flex-wrap gap-4 text-gray-700">
             <span>
               الأسطر: <strong>{liveSummary.people}</strong>
             </span>
-            <span>
-              الأساسي:{' '}
-              <strong dir="ltr">{formatMoney(liveSummary.base)}</strong>
-            </span>
+            {isLecturerSheet ? (
+              <>
+                <span>
+                  الساعات:{' '}
+                  <strong dir="ltr">{formatMoney(liveSummary.hours)}</strong>
+                </span>
+                <span>
+                  الرواتب:{' '}
+                  <strong dir="ltr">{formatMoney(liveSummary.base)}</strong>
+                </span>
+              </>
+            ) : (
+              <span>
+                الأساسي:{' '}
+                <strong dir="ltr">{formatMoney(liveSummary.base)}</strong>
+              </span>
+            )}
             <span>
               التكليفات:{' '}
               <strong dir="ltr">{formatMoney(liveSummary.asg)}</strong>
+            </span>
+            <span>
+              المخصصات:{' '}
+              <strong dir="ltr">{formatMoney(liveSummary.allowances)}</strong>
+            </span>
+            <span>
+              الاستقطاعات:{' '}
+              <strong dir="ltr">{formatMoney(liveSummary.deductions)}</strong>
             </span>
             <span>
               الإجمالي:{' '}

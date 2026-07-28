@@ -8,6 +8,7 @@ export const API = {
   departments: '/api/accounts/departments',
   contracts: '/api/accounts/payroll/contracts',
   assignments: '/api/accounts/payroll/assignments',
+  rewards: '/api/accounts/payroll/rewards',
   components: '/api/accounts/payroll/components',
   componentAssignments: '/api/accounts/payroll/component-assignments',
   calendars: '/api/accounts/payroll/calendars',
@@ -376,6 +377,7 @@ export const ASSIGNMENT_TYPE: Record<string, string> = {
   LECTURER_ASSIGNMENT: 'تكليف محاضرة',
   COMMITTEE_ASSIGNMENT: 'تكليف لجنة',
   GENERAL_ASSIGNMENT: 'تكليف عام',
+  DEPUTATION: 'ايفاد',
 };
 
 export const ASSIGNMENT_STATUS: Record<string, string> = {

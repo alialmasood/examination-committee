@@ -45,6 +45,7 @@ const DEPARTMENTS = [
 
 export default function StudentAffairsPage() {
   const [totalStudents, setTotalStudents] = useState<number>(0);
+  const [totalAllYearsStudents, setTotalAllYearsStudents] = useState<number>(0);
   const [activeStudents, setActiveStudents] = useState<number>(0);
   const [firstYearStudents, setFirstYearStudents] = useState<number>(0);
   const [loading, setLoading] = useState(true);
@@ -99,6 +100,7 @@ export default function StudentAffairsPage() {
         
         if (studentsData.success && studentsData.data) {
           setTotalStudents(studentsData.data.total);
+          setTotalAllYearsStudents(studentsData.data.totalAllYears ?? 0);
           setActiveStudents(studentsData.data.active);
           setFirstYearStudents(studentsData.data.firstYear || 0);
           
@@ -159,8 +161,17 @@ export default function StudentAffairsPage() {
               </select>
             </div>
           </div>
-          <div className="text-right hidden sm:block">
-            <p className="text-xs text-gray-500">إحصائيات للعام الدراسي المحدد</p>
+          <div className="flex items-center gap-3 text-right">
+            <div className="hidden sm:block h-6 w-px bg-gray-200" aria-hidden="true" />
+            <div>
+              <p className="text-[11px] leading-none text-gray-500 tracking-wide">
+                إجمالي المسجلين · كل السنوات
+              </p>
+              <p className="mt-1 text-sm font-semibold text-gray-800 tabular-nums">
+                {loading ? '…' : totalAllYearsStudents.toLocaleString('ar-IQ')}
+                <span className="mr-1 text-xs font-normal text-gray-500">طالب</span>
+              </p>
+            </div>
           </div>
         </div>
       </div>

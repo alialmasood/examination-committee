@@ -15,6 +15,12 @@ export async function GET(request: NextRequest) {
     const totalResult = await query(totalQuery, totalParams);
     const total = parseInt(totalResult.rows[0].total);
 
+    // العدد الكلي المسجلين عبر كل السنوات الدراسية
+    const totalAllYearsResult = await query(
+      'SELECT COUNT(*) as total FROM student_affairs.students'
+    );
+    const totalAllYears = parseInt(totalAllYearsResult.rows[0].total);
+
     // جلب عدد الطلاب النشطين
     // الطالب النشط: academic_status = 'مستمر' AND payment_status = 'paid'
     // التحقق من وجود عمود academic_status و payment_status
@@ -217,6 +223,7 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         total,
+        totalAllYears,
         active,
         firstYear: firstYearCount,
         academicStatuses: statusStats,

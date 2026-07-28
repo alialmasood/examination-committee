@@ -46,6 +46,7 @@ export type PayrollPersonRow = {
   affiliation: string | null;
   job_classification: string | null;
   workplace: string | null;
+  commencement_order_no: string | null;
   status: string;
   effective_from: string | Date;
   effective_to: string | Date | null;
@@ -139,7 +140,7 @@ function optionalUuid(v: unknown): string | null {
   return s;
 }
 
-export const ACADEMIC_TITLES = ['مدرس', 'مدرس مساعد', 'استاذ', 'استاذ مساعد'] as const;
+export const ACADEMIC_TITLES = ['معيد', 'مدرس', 'مدرس مساعد', 'استاذ', 'استاذ مساعد'] as const;
 export const DEGREES = [
   'يقرأ ويكتب',
   'ابتدائية',
@@ -177,6 +178,7 @@ export async function createPayrollPerson(
     affiliation?: unknown;
     job_classification?: unknown;
     workplace?: unknown;
+    commencement_order_no?: unknown;
     effective_from?: unknown;
     effective_to?: unknown;
     created_by: string;
@@ -184,7 +186,7 @@ export async function createPayrollPerson(
 ): Promise<PayrollPersonRow> {
   const from = requiredDate(
     input.effective_from ?? new Date().toISOString().slice(0, 10),
-    'تاريخ بداية السريان'
+    'تاريخ المباشرة'
   );
   const to = optionalDate(input.effective_to, 'تاريخ نهاية السريان');
   assertEffectiveRange(from, to);
@@ -208,10 +210,10 @@ export async function createPayrollPerson(
         department_id, default_cost_center_id, default_currency_code, payment_method,
         bank_account_name, bank_account_identifier_masked,
         academic_title, degree, phone, job_title, university_id, affiliation,
-        job_classification, workplace,
+        job_classification, workplace, commencement_order_no,
         effective_from, effective_to, created_by, updated_by)
      VALUES ($1,$2,$3,$4,$5::uuid,$6::uuid,$7::uuid,$8::uuid,$9,$10,$11,$12,
-             $13,$14,$15,$16,$17,$18,$19,$20,$21::date,$22::date,$23::uuid,$23::uuid)
+             $13,$14,$15,$16,$17,$18,$19,$20,$21,$22::date,$23::date,$24::uuid,$24::uuid)
      RETURNING *`,
     [
       code,
@@ -234,6 +236,7 @@ export async function createPayrollPerson(
       textOrNull(input.affiliation, 200),
       optionalOneOf(input.job_classification, JOB_CLASSIFICATIONS, 'التوصيف الوظيفي'),
       textOrNull(input.workplace, 200),
+      textOrNull(input.commencement_order_no, 100),
       from,
       to,
       input.created_by,
@@ -269,6 +272,7 @@ export async function updatePayrollPerson(
     affiliation?: unknown;
     job_classification?: unknown;
     workplace?: unknown;
+    commencement_order_no?: unknown;
     effective_from?: unknown;
     effective_to?: unknown;
   }
@@ -277,7 +281,7 @@ export async function updatePayrollPerson(
   const row = await loadPayrollPerson(client, p.id, true);
   assertPayrollConcurrency(row, p.version, p.updated_at);
 
-  const from = p.effective_from === undefined ? dateStr(row.effective_from)! : requiredDate(p.effective_from, 'تاريخ بداية السريان');
+  const from = p.effective_from === undefined ? dateStr(row.effective_from)! : requiredDate(p.effective_from, 'تاريخ المباشرة');
   const to = p.effective_to === undefined ? dateStr(row.effective_to) : optionalDate(p.effective_to, 'تاريخ نهاية السريان');
   assertEffectiveRange(from, to);
 
@@ -300,9 +304,9 @@ export async function updatePayrollPerson(
        default_currency_code=$9, payment_method=$10, bank_account_name=$11,
        bank_account_identifier_masked=$12,
        academic_title=$13, degree=$14, phone=$15, job_title=$16, university_id=$17,
-       affiliation=$18, job_classification=$19, workplace=$20,
-       effective_from=$21::date, effective_to=$22::date,
-       updated_by=$23::uuid, updated_at=NOW(), version=version+1
+       affiliation=$18, job_classification=$19, workplace=$20, commencement_order_no=$21,
+       effective_from=$22::date, effective_to=$23::date,
+       updated_by=$24::uuid, updated_at=NOW(), version=version+1
      WHERE id=$1::uuid RETURNING *`,
     [
       row.id,
@@ -327,6 +331,9 @@ export async function updatePayrollPerson(
         ? row.job_classification
         : optionalOneOf(p.job_classification, JOB_CLASSIFICATIONS, 'التوصيف الوظيفي'),
       p.workplace === undefined ? row.workplace : textOrNull(p.workplace, 200),
+      p.commencement_order_no === undefined
+        ? row.commencement_order_no
+        : textOrNull(p.commencement_order_no, 100),
       from,
       to,
       p.userId,

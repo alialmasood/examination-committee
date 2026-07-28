@@ -39,6 +39,10 @@ async function ensureTeachingStaffColumns() {
     ALTER TABLE accounts.payroll_people
       ADD COLUMN IF NOT EXISTS workplace VARCHAR(200) NULL
   `).catch(() => undefined);
+  await query(`
+    ALTER TABLE accounts.payroll_people
+      ADD COLUMN IF NOT EXISTS commencement_order_no VARCHAR(100) NULL
+  `).catch(() => undefined);
 
   // توسيع قيد الشهادة ليشمل مستويات الكادر الوظيفي
   await query(`
@@ -63,6 +67,34 @@ async function ensureTeachingStaffColumns() {
             degree IS NULL OR degree IN (
               'يقرأ ويكتب','ابتدائية','متوسطة','اعدادية',
               'دبلوم','دبلوم عالي','بكالوريوس','ماجستير','دكتوراه'
+            )
+          );
+      END IF;
+    END $$;
+  `).catch(() => undefined);
+
+  // توسيع قيد اللقب العلمي ليشمل «معيد»
+  await query(`
+    DO $$
+    DECLARE
+      cname text;
+    BEGIN
+      SELECT con.conname INTO cname
+      FROM pg_constraint con
+      JOIN pg_class rel ON rel.oid = con.conrelid
+      JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+      WHERE nsp.nspname = 'accounts'
+        AND rel.relname = 'payroll_people'
+        AND con.contype = 'c'
+        AND pg_get_constraintdef(con.oid) ILIKE '%academic_title%'
+        AND pg_get_constraintdef(con.oid) NOT ILIKE '%معيد%';
+      IF cname IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE accounts.payroll_people DROP CONSTRAINT %I', cname);
+        ALTER TABLE accounts.payroll_people
+          ADD CONSTRAINT ck_payroll_people_academic_title
+          CHECK (
+            academic_title IS NULL OR academic_title IN (
+              'معيد', 'مدرس', 'مدرس مساعد', 'استاذ', 'استاذ مساعد'
             )
           );
       END IF;

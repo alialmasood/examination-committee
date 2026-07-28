@@ -19,6 +19,15 @@ export const ACADEMIC_DEPARTMENT_NAMES = [
   'القانون',
 ] as const;
 
+/** وحدات إدارية تنظيمية (غير أكاديمية) تظهر في قوائم التعيين */
+export const ADMIN_UNIT_NAMES = [
+  'العمادة',
+  'الادارية',
+  'المالية',
+  'الشؤون العلمية',
+  'المتابعة',
+] as const;
+
 export type DepartmentOption = {
   id: string;
   name_ar: string;
@@ -36,7 +45,7 @@ export async function ensureSystemDepartments(client?: TxClient | null): Promise
       params: unknown[] = []
     ) => (c ? txQuery<T>(c, sql, params) : query(sql, params));
 
-    // أقسام النظام الثابتة
+    // أقسام النظام الثابتة + الوحدات الإدارية
     await exec(
       `INSERT INTO student_affairs.departments (name_ar)
        SELECT x.name_ar
@@ -45,7 +54,12 @@ export async function ensureSystemDepartments(client?: TxClient | null): Promise
          SELECT 1 FROM student_affairs.departments d
          WHERE TRIM(d.name_ar) = TRIM(x.name_ar)
        )`,
-      [ACADEMIC_DEPARTMENT_NAMES as unknown as string[]]
+      [
+        [
+          ...(ACADEMIC_DEPARTMENT_NAMES as unknown as string[]),
+          ...(ADMIN_UNIT_NAMES as unknown as string[]),
+        ],
+      ]
     );
 
     // أقسام مستخدمة فعلياً في بيانات الطلبة وغير مسجّلة بعد

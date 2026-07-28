@@ -1,9 +1,13 @@
 export type DisbursementPrintRow = {
   name: string;
-  salary: number;
   degree: string;
-  academic_title: string;
-  department: string;
+  position: string;
+  salary: number;
+  allowances: number;
+  subtotal: number;
+  social_security: number;
+  deductions: number;
+  net_payable: number;
 };
 
 export type DisbursementPrintData = {
@@ -12,8 +16,15 @@ export type DisbursementPrintData = {
   year_label: string;
   status_label: string;
   rows: DisbursementPrintRow[];
-  total_salary: number;
   people_count: number;
+  totals: {
+    salary: number;
+    allowances: number;
+    subtotal: number;
+    social_security: number;
+    deductions: number;
+    net_payable: number;
+  };
 };
 
 function escapeHtml(value: unknown): string {
@@ -45,13 +56,19 @@ function buildHtml(data: DisbursementPrintData, logoUrl: string): string {
       (row, index) => `<tr>
         <td>${index + 1}</td>
         <td class="name">${escapeHtml(row.name)}</td>
-        <td>${escapeHtml(row.academic_title || '—')}</td>
         <td>${escapeHtml(row.degree || '—')}</td>
-        <td class="name">${escapeHtml(row.department || '—')}</td>
+        <td>${escapeHtml(row.position || '—')}</td>
         <td dir="ltr" class="money">${money(row.salary)}</td>
+        <td dir="ltr" class="money">${money(row.allowances)}</td>
+        <td dir="ltr" class="money">${money(row.subtotal)}</td>
+        <td dir="ltr" class="money">${money(row.social_security)}</td>
+        <td dir="ltr" class="money">${money(row.deductions)}</td>
+        <td dir="ltr" class="money net">${money(row.net_payable)}</td>
       </tr>`
     )
     .join('');
+
+  const t = data.totals;
 
   return `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -59,7 +76,7 @@ function buildHtml(data: DisbursementPrintData, logoUrl: string): string {
   <meta charset="utf-8" />
   <title>جدول رواتب ${escapeHtml(data.month_label)} ${escapeHtml(data.year_label)}</title>
   <style>
-    @page { size: A4 portrait; margin: 12mm 10mm 62mm; }
+    @page { size: A4 landscape; margin: 8mm 8mm 48mm; }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
@@ -67,7 +84,7 @@ function buildHtml(data: DisbursementPrintData, logoUrl: string): string {
       color: #111827;
       background: #fff;
       font-family: "Tahoma", "Segoe UI", Arial, sans-serif;
-      font-size: 11px;
+      font-size: 10px;
     }
     .header {
       display: grid;
@@ -75,22 +92,22 @@ function buildHtml(data: DisbursementPrintData, logoUrl: string): string {
       align-items: center;
       gap: 12px;
       border-bottom: 2.5px solid #450a0a;
-      padding-bottom: 10px;
-      margin-bottom: 12px;
+      padding-bottom: 8px;
+      margin-bottom: 10px;
     }
     .header-side p { margin: 0; font-size: 11px; color: #374151; line-height: 1.55; }
     .header-side .college { font-weight: 800; color: #450a0a; margin-top: 2px; font-size: 12px; }
     .header-center { text-align: center; }
     .header-center img {
-      width: 58px;
-      height: 58px;
+      width: 52px;
+      height: 52px;
       object-fit: contain;
       display: block;
       margin: 0 auto 4px;
     }
     .header-center .title {
       margin: 0;
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 800;
       color: #450a0a;
     }
@@ -111,12 +128,12 @@ function buildHtml(data: DisbursementPrintData, logoUrl: string): string {
       display: flex;
       flex-wrap: wrap;
       gap: 8px 18px;
-      margin: 0 0 12px;
-      padding: 8px 10px;
+      margin: 0 0 10px;
+      padding: 7px 10px;
       background: #fafafa;
       border: 1px solid #e5e7eb;
       border-radius: 4px;
-      font-size: 11px;
+      font-size: 10.5px;
     }
     .meta span b { color: #450a0a; }
     table.grid {
@@ -126,48 +143,55 @@ function buildHtml(data: DisbursementPrintData, logoUrl: string): string {
     }
     table.grid th, table.grid td {
       border: 1px solid #9ca3af;
-      padding: 5px 6px;
+      padding: 4px 4px;
       text-align: center;
       vertical-align: middle;
+      font-size: 9.5px;
     }
     table.grid th {
       background: #450a0a;
       color: #fff;
       font-weight: 700;
-      font-size: 10.5px;
+      font-size: 9px;
+      line-height: 1.35;
     }
-    table.grid col.c-num { width: 6%; }
-    table.grid col.c-name { width: 28%; }
-    table.grid col.c-title { width: 14%; }
-    table.grid col.c-degree { width: 14%; }
-    table.grid col.c-dept { width: 20%; }
-    table.grid col.c-sal { width: 18%; }
+    table.grid col.c-num { width: 4%; }
+    table.grid col.c-name { width: 18%; }
+    table.grid col.c-degree { width: 9%; }
+    table.grid col.c-pos { width: 9%; }
+    table.grid col.c-sal { width: 9%; }
+    table.grid col.c-all { width: 9%; }
+    table.grid col.c-sub { width: 9%; }
+    table.grid col.c-ss { width: 8%; }
+    table.grid col.c-ded { width: 9%; }
+    table.grid col.c-net { width: 10%; }
     table.grid td.name { text-align: right; font-weight: 600; }
     table.grid td.money { font-weight: 700; font-variant-numeric: tabular-nums; }
+    table.grid td.net { color: #14532d; }
     table.grid tbody tr:nth-child(even) td { background: #f9fafb; }
     table.grid tfoot td {
       background: #fef3c7;
       font-weight: 800;
       color: #451a03;
       border-color: #92400e;
+      font-size: 9.5px;
     }
-    /* تبقى التواقيع مثبتة في أسفل كل ورقة A4 */
     .page-bottom {
       position: fixed;
       left: 0;
       right: 0;
       bottom: 0;
-      padding: 6px 0 0;
+      padding: 4px 0 0;
       background: #fff;
     }
     .note {
-      margin: 12px 0 6px;
-      padding: 5px 0 0;
+      margin: 8px 0 4px;
+      padding: 4px 0 0;
       border: none;
       border-top: 1px solid #d1d5db;
-      font-size: 9px;
+      font-size: 8.5px;
       color: #4b5563;
-      line-height: 1.55;
+      line-height: 1.5;
       background: transparent;
       text-align: center;
     }
@@ -183,24 +207,24 @@ function buildHtml(data: DisbursementPrintData, logoUrl: string): string {
     .sig .role {
       font-weight: 800;
       color: #450a0a;
-      font-size: 11px;
-      margin-bottom: 28px;
+      font-size: 10.5px;
+      margin-bottom: 22px;
     }
     .sig .line {
       border-top: 1px solid #111827;
       margin: 0 auto;
       width: 78%;
       padding-top: 4px;
-      font-size: 9px;
+      font-size: 8.5px;
       color: #6b7280;
     }
     .sig.dean .role { color: #7f1d1d; }
     .footer {
-      margin-top: 4px;
+      margin-top: 3px;
       padding-top: 0;
       border-top: none;
       text-align: center;
-      font-size: 8.5px;
+      font-size: 8px;
       color: #6b7280;
     }
     thead { display: table-header-group; }
@@ -237,35 +261,48 @@ function buildHtml(data: DisbursementPrintData, logoUrl: string): string {
   <div class="meta">
     <span>عدد الأسماء: <b>${data.people_count}</b></span>
     <span>حالة الكشف: <b>${escapeHtml(data.status_label)}</b></span>
-    <span>إجمالي الرواتب: <b dir="ltr">${money(data.total_salary)}</b></span>
+    <span>صافي المستحق الكلي: <b dir="ltr">${money(t.net_payable)}</b></span>
   </div>
 
   <table class="grid">
     <colgroup>
       <col class="c-num" />
       <col class="c-name" />
-      <col class="c-title" />
       <col class="c-degree" />
-      <col class="c-dept" />
+      <col class="c-pos" />
       <col class="c-sal" />
+      <col class="c-all" />
+      <col class="c-sub" />
+      <col class="c-ss" />
+      <col class="c-ded" />
+      <col class="c-net" />
     </colgroup>
     <thead>
       <tr>
-        <th>ت</th>
+        <th>التسلسل</th>
         <th>الاسم</th>
-        <th>اللقب العلمي</th>
         <th>الشهادة</th>
-        <th>القسم</th>
+        <th>المنصب</th>
         <th>الراتب</th>
+        <th>المخصصات</th>
+        <th>المجموع</th>
+        <th>الضمان 5%</th>
+        <th>الاستقطاعات</th>
+        <th>المستحق</th>
       </tr>
     </thead>
     <tbody>
-      ${body || `<tr><td colspan="6">لا توجد بيانات</td></tr>`}
+      ${body || `<tr><td colspan="10">لا توجد بيانات</td></tr>`}
     </tbody>
     <tfoot>
       <tr>
-        <td colspan="5">المجموع الكلي</td>
-        <td dir="ltr">${money(data.total_salary)}</td>
+        <td colspan="4">المجموع الكلي</td>
+        <td dir="ltr">${money(t.salary)}</td>
+        <td dir="ltr">${money(t.allowances)}</td>
+        <td dir="ltr">${money(t.subtotal)}</td>
+        <td dir="ltr">${money(t.social_security)}</td>
+        <td dir="ltr">${money(t.deductions)}</td>
+        <td dir="ltr">${money(t.net_payable)}</td>
       </tr>
     </tfoot>
   </table>
@@ -291,6 +328,7 @@ function buildHtml(data: DisbursementPrintData, logoUrl: string): string {
       <b>${escapeHtml(data.category_label)}</b>
       عن شهر <b>${escapeHtml(data.month_label)}</b> /
       <b>${escapeHtml(data.year_label)}</b>.
+      الضمان يحسب بنسبة 5% من الراتب الأساسي، والمخصصات تشمل التكليفات إن وجدت، والمستحق = المجموع − الضمان − الاستقطاعات.
       بعد تدقيق المحاسب ومدير الحسابات يُرسل إلى السيد عميد الكلية لغرض التوقيع والاعتماد.
     </div>
 

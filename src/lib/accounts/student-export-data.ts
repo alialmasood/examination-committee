@@ -11,6 +11,15 @@ import {
   getAnnualTuitionFee,
 } from '@/app/accounts/students/lib/tuitionFees';
 
+export type StudentExportFilters = {
+  search?: string;
+  department?: string;
+  stage?: string;
+  studyType?: string;
+  /** settled = مسدّدون · partial = تسديد جزئي · unpaid = غير مسدّدين */
+  paymentStatus?: 'settled' | 'partial' | 'unpaid' | '';
+};
+
 export type StudentExportRow = {
   id: string;
   university_id: string;
@@ -168,7 +177,61 @@ function accumulate(target: DepartmentTotals, row: StudentExportRow): void {
   target.receipts_count += row.receipts_count;
 }
 
-export async function getStudentExportData(): Promise<StudentExportData> {
+export function paymentStatusOfRow(
+  row: Pick<
+    StudentExportRow,
+    'current_year' | 'paid_current_year' | 'remaining_current_year'
+  >
+): 'settled' | 'partial' | 'unpaid' {
+  if (!row.current_year || row.remaining_current_year <= 0.01) return 'settled';
+  if (row.paid_current_year > 0.01) return 'partial';
+  return 'unpaid';
+}
+
+function matchesExportFilters(
+  row: StudentExportRow,
+  rawAdmissionType: string | null | undefined,
+  rawStudyType: string | null | undefined,
+  filters?: StudentExportFilters
+): boolean {
+  if (!filters) return true;
+
+  if (filters.department && row.department !== filters.department) return false;
+
+  if (filters.stage) {
+    const stage = String(rawAdmissionType || '')
+      .trim()
+      .toLowerCase();
+    if (stage !== filters.stage) return false;
+  }
+
+  if (filters.studyType) {
+    const st = String(rawStudyType || '').toLowerCase();
+    if (filters.studyType === 'morning') {
+      if (st !== 'morning' && st !== 'صباحي') return false;
+    } else if (filters.studyType === 'evening') {
+      if (st !== 'evening' && st !== 'مسائي') return false;
+    }
+  }
+
+  if (filters.paymentStatus) {
+    if (paymentStatusOfRow(row) !== filters.paymentStatus) return false;
+  }
+
+  const q = (filters.search || '').trim().toLowerCase();
+  if (q) {
+    const name = row.name.toLowerCase();
+    const uni = row.university_id.toLowerCase();
+    const dept = row.department.toLowerCase();
+    if (!name.includes(q) && !uni.includes(q) && !dept.includes(q)) return false;
+  }
+
+  return true;
+}
+
+export async function getStudentExportData(
+  filters?: StudentExportFilters
+): Promise<StudentExportData> {
   await query(`
     ALTER TABLE student_affairs.students
       ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'pending',
@@ -298,10 +361,12 @@ export async function getStudentExportData(): Promise<StudentExportData> {
         : Math.max(0, netFee - totalCollected);
 
     const statusLabel = !currentYear
-      ? 'اكتملت السنوات الأربع'
-      : paidCurrentYear > 0
-        ? `السنة ${currentYear} — تسديد جزئي`
-        : `السنة ${currentYear} — غير مسددة`;
+      ? 'مسدّد — اكتملت السنوات'
+      : remainingCurrentYear <= 0.01
+        ? `السنة ${currentYear} — مسدّدة`
+        : paidCurrentYear > 0.01
+          ? `السنة ${currentYear} — تسديد جزئي`
+          : `السنة ${currentYear} — غير مسدّدة`;
 
     const row: StudentExportRow = {
       id: s.id,
@@ -321,6 +386,10 @@ export async function getStudentExportData(): Promise<StudentExportData> {
       current_year: currentYear,
       status_label: statusLabel,
     };
+
+    if (!matchesExportFilters(row, s.admission_type, s.study_type, filters)) {
+      continue;
+    }
 
     rows.push(row);
 

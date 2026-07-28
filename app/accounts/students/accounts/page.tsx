@@ -112,8 +112,26 @@ export default function StudentAccountsPage() {
   const [filterDepartment, setFilterDepartment] = useState('');
   const [filterStage, setFilterStage] = useState('');
   const [filterStudyType, setFilterStudyType] = useState('');
+  const [filterPaymentStatus, setFilterPaymentStatus] = useState<
+    '' | 'settled' | 'partial' | 'unpaid'
+  >('');
   const [tablePage, setTablePage] = useState(1);
   const PAGE_SIZE = 50;
+
+  function getPaymentCategory(
+    studentId: string
+  ): 'settled' | 'partial' | 'unpaid' {
+    const status = yearStatusByStudent[studentId];
+    if (!status) return 'unpaid';
+    if (status.all_completed || status.current_year == null) return 'settled';
+    const current =
+      status.years?.find((y) => y.isCurrent) ||
+      status.years?.find((y) => y.year === status.current_year);
+    if (!current) return 'unpaid';
+    if (current.remaining <= 0.01) return 'settled';
+    if (current.paid > 0.01) return 'partial';
+    return 'unpaid';
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -218,13 +236,24 @@ export default function StudentAccountsPage() {
           if (st !== 'evening' && st !== 'مسائي') return false;
         }
       }
+      if (filterPaymentStatus) {
+        if (getPaymentCategory(row.id) !== filterPaymentStatus) return false;
+      }
       if (!q) return true;
       const name = (row.name || '').toLowerCase();
       const uni = (row.university_id || '').toLowerCase();
       const dept = (row.department || '').toLowerCase();
       return name.includes(q) || uni.includes(q) || dept.includes(q);
     });
-  }, [sortedRows, searchQuery, filterDepartment, filterStage, filterStudyType]);
+  }, [
+    sortedRows,
+    searchQuery,
+    filterDepartment,
+    filterStage,
+    filterStudyType,
+    filterPaymentStatus,
+    yearStatusByStudent,
+  ]);
 
   const totalTablePages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
 
@@ -236,7 +265,13 @@ export default function StudentAccountsPage() {
 
   useEffect(() => {
     setTablePage(1);
-  }, [searchQuery, filterDepartment, filterStage, filterStudyType]);
+  }, [
+    searchQuery,
+    filterDepartment,
+    filterStage,
+    filterStudyType,
+    filterPaymentStatus,
+  ]);
 
   useEffect(() => {
     if (tablePage > totalTablePages) {
@@ -256,23 +291,132 @@ export default function StudentAccountsPage() {
     !!searchQuery.trim() ||
     !!filterDepartment ||
     !!filterStage ||
-    !!filterStudyType;
+    !!filterStudyType ||
+    !!filterPaymentStatus;
+
+  /** أعداد الصباحي/المسائي وفق الفلاتر الأخرى (بدون نوع الدراسة) */
+  const studyTypeCounts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    let morning = 0;
+    let evening = 0;
+    let other = 0;
+    for (const row of sortedRows) {
+      if (filterDepartment && row.department?.trim() !== filterDepartment) {
+        continue;
+      }
+      if (filterStage && String(row.admission_type || '') !== filterStage) {
+        continue;
+      }
+      if (filterPaymentStatus) {
+        if (getPaymentCategory(row.id) !== filterPaymentStatus) continue;
+      }
+      if (q) {
+        const name = (row.name || '').toLowerCase();
+        const uni = (row.university_id || '').toLowerCase();
+        const dept = (row.department || '').toLowerCase();
+        if (!name.includes(q) && !uni.includes(q) && !dept.includes(q)) {
+          continue;
+        }
+      }
+      const st = String(row.study_type || '').toLowerCase();
+      if (st === 'morning' || st === 'صباحي') morning += 1;
+      else if (st === 'evening' || st === 'مسائي') evening += 1;
+      else other += 1;
+    }
+    return {
+      morning,
+      evening,
+      all: morning + evening + other,
+    };
+  }, [
+    sortedRows,
+    searchQuery,
+    filterDepartment,
+    filterStage,
+    filterPaymentStatus,
+    yearStatusByStudent,
+  ]);
+
+  /** أعداد حالة التسديد وفق الفلاتر الأخرى (بدون حالة التسديد) */
+  const paymentStatusCounts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    let settled = 0;
+    let partial = 0;
+    let unpaid = 0;
+    for (const row of sortedRows) {
+      if (filterDepartment && row.department?.trim() !== filterDepartment) {
+        continue;
+      }
+      if (filterStage && String(row.admission_type || '') !== filterStage) {
+        continue;
+      }
+      if (filterStudyType) {
+        const st = String(row.study_type || '').toLowerCase();
+        if (filterStudyType === 'morning') {
+          if (st !== 'morning' && st !== 'صباحي') continue;
+        } else if (filterStudyType === 'evening') {
+          if (st !== 'evening' && st !== 'مسائي') continue;
+        }
+      }
+      if (q) {
+        const name = (row.name || '').toLowerCase();
+        const uni = (row.university_id || '').toLowerCase();
+        const dept = (row.department || '').toLowerCase();
+        if (!name.includes(q) && !uni.includes(q) && !dept.includes(q)) {
+          continue;
+        }
+      }
+      const cat = getPaymentCategory(row.id);
+      if (cat === 'settled') settled += 1;
+      else if (cat === 'partial') partial += 1;
+      else unpaid += 1;
+    }
+    return {
+      settled,
+      partial,
+      unpaid,
+      all: settled + partial + unpaid,
+    };
+  }, [
+    sortedRows,
+    searchQuery,
+    filterDepartment,
+    filterStage,
+    filterStudyType,
+    yearStatusByStudent,
+  ]);
 
   function resetFilters() {
     setSearchQuery('');
     setFilterDepartment('');
     setFilterStage('');
     setFilterStudyType('');
+    setFilterPaymentStatus('');
     setTablePage(1);
+  }
+
+  function buildExportQuery(): string {
+    const params = new URLSearchParams();
+    const q = searchQuery.trim();
+    if (q) params.set('search', q);
+    if (filterDepartment) params.set('department', filterDepartment);
+    if (filterStage) params.set('stage', filterStage);
+    if (filterStudyType) params.set('study_type', filterStudyType);
+    if (filterPaymentStatus) params.set('payment_status', filterPaymentStatus);
+    const qs = params.toString();
+    return qs ? `?${qs}` : '';
   }
 
   async function handleExportExcel() {
     setExporting('excel');
     try {
-      const res = await fetch('/api/accounts/students/export/excel', {
-        credentials: 'include',
-        cache: 'no-store',
-      });
+      const res = await fetch(
+        `/api/accounts/students/export/excel${buildExportQuery()}`,
+        {
+          credentials: 'include',
+          cache: 'no-store',
+        }
+      );
       if (!res.ok) {
         alert('تعذر تصدير ملف الإكسل');
         return;
@@ -296,10 +440,13 @@ export default function StudentAccountsPage() {
   async function handleExportPdf() {
     setExporting('pdf');
     try {
-      const res = await fetch('/api/accounts/students/export/data', {
-        credentials: 'include',
-        cache: 'no-store',
-      });
+      const res = await fetch(
+        `/api/accounts/students/export/data${buildExportQuery()}`,
+        {
+          credentials: 'include',
+          cache: 'no-store',
+        }
+      );
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.success || !body.data) {
         alert(body.error || 'تعذر تحميل بيانات التقرير');
@@ -416,65 +563,174 @@ export default function StudentAccountsPage() {
                     </button>
                   </div>
                 </div>
-                <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 items-end">
-                  <div className="xl:col-span-2">
-                    <label className="block text-xs text-gray-500 mb-1">
-                      بحث
-                    </label>
-                    <input
-                      type="search"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="اسم الطالب أو رقم الطالب أو القسم…"
-                      className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">
-                      القسم
-                    </label>
-                    <select
-                      value={filterDepartment}
-                      onChange={(e) => setFilterDepartment(e.target.value)}
-                      className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
-                    >
-                      <option value="">الكل</option>
-                      {departmentOptions.map((name) => (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">
-                      المرحلة
-                    </label>
-                    <select
-                      value={filterStage}
-                      onChange={(e) => setFilterStage(e.target.value)}
-                      className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
-                    >
-                      <option value="">الكل</option>
-                      <option value="first">الأولى</option>
-                      <option value="second">الثانية</option>
-                      <option value="third">الثالثة</option>
-                      <option value="fourth">الرابعة</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">
-                      نوع الدراسة
-                    </label>
-                    <select
-                      value={filterStudyType}
-                      onChange={(e) => setFilterStudyType(e.target.value)}
-                      className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
-                    >
-                      <option value="">الكل</option>
-                      <option value="morning">صباحي</option>
-                      <option value="evening">مسائي</option>
-                    </select>
+                <div className="p-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                    <div className="sm:col-span-4">
+                      <label className="block text-xs text-gray-500 mb-1">
+                        بحث
+                      </label>
+                      <input
+                        type="search"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="الاسم أو رقم الطالب…"
+                        className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="block text-xs text-gray-500 mb-1">
+                        القسم
+                      </label>
+                      <select
+                        value={filterDepartment}
+                        onChange={(e) => setFilterDepartment(e.target.value)}
+                        className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
+                      >
+                        <option value="">الكل</option>
+                        {departmentOptions.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs text-gray-500 mb-1">
+                        المرحلة
+                      </label>
+                      <select
+                        value={filterStage}
+                        onChange={(e) => setFilterStage(e.target.value)}
+                        className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm leading-none focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
+                      >
+                        <option value="">الكل</option>
+                        <option value="first">الأولى</option>
+                        <option value="second">الثانية</option>
+                        <option value="third">الثالثة</option>
+                        <option value="fourth">الرابعة</option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="block text-xs text-gray-500 mb-1">
+                        نوع الدراسة
+                      </label>
+                      <div
+                        className="flex w-full rounded-md border border-gray-300 overflow-hidden"
+                        role="group"
+                        aria-label="فلتر نوع الدراسة"
+                      >
+                        {(
+                          [
+                            {
+                              value: '',
+                              label: 'الكل',
+                              count: studyTypeCounts.all,
+                            },
+                            {
+                              value: 'morning',
+                              label: 'صباحي',
+                              count: studyTypeCounts.morning,
+                            },
+                            {
+                              value: 'evening',
+                              label: 'مسائي',
+                              count: studyTypeCounts.evening,
+                            },
+                          ] as const
+                        ).map((opt, idx) => {
+                          const active = filterStudyType === opt.value;
+                          return (
+                            <button
+                              key={opt.value || 'all'}
+                              type="button"
+                              onClick={() => setFilterStudyType(opt.value)}
+                              className={[
+                                'flex-1 h-10 px-2 text-sm font-semibold whitespace-nowrap transition-colors',
+                                idx > 0 ? 'border-r border-gray-300' : '',
+                                active
+                                  ? 'bg-red-950 text-white'
+                                  : 'bg-white text-gray-700 hover:bg-gray-100',
+                              ].join(' ')}
+                            >
+                              {opt.label}
+                              <span
+                                className={[
+                                  'mr-1 inline-flex min-w-[1.1rem] justify-center rounded px-1 text-[11px] font-bold',
+                                  active
+                                    ? 'bg-white/20 text-white'
+                                    : 'bg-gray-100 text-gray-600',
+                                ].join(' ')}
+                              >
+                                {opt.count}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="sm:col-span-12">
+                      <label className="block text-xs text-gray-500 mb-1">
+                        حالة التسديد
+                      </label>
+                      <div
+                        className="flex w-full rounded-md border border-gray-300 overflow-hidden"
+                        role="group"
+                        aria-label="فلتر حالة التسديد"
+                      >
+                        {(
+                          [
+                            {
+                              value: '' as const,
+                              label: 'الكل',
+                              count: paymentStatusCounts.all,
+                            },
+                            {
+                              value: 'settled' as const,
+                              label: 'مسدّدون',
+                              count: paymentStatusCounts.settled,
+                            },
+                            {
+                              value: 'partial' as const,
+                              label: 'تسديد جزئي',
+                              count: paymentStatusCounts.partial,
+                            },
+                            {
+                              value: 'unpaid' as const,
+                              label: 'غير مسدّدين',
+                              count: paymentStatusCounts.unpaid,
+                            },
+                          ] as const
+                        ).map((opt, idx) => {
+                          const active = filterPaymentStatus === opt.value;
+                          return (
+                            <button
+                              key={opt.value || 'payment-all'}
+                              type="button"
+                              onClick={() => setFilterPaymentStatus(opt.value)}
+                              className={[
+                                'flex-1 h-10 px-2 text-sm font-semibold whitespace-nowrap transition-colors',
+                                idx > 0 ? 'border-r border-gray-300' : '',
+                                active
+                                  ? 'bg-red-950 text-white'
+                                  : 'bg-white text-gray-700 hover:bg-gray-100',
+                              ].join(' ')}
+                            >
+                              {opt.label}
+                              <span
+                                className={[
+                                  'mr-1 inline-flex min-w-[1.1rem] justify-center rounded px-1 text-[11px] font-bold',
+                                  active
+                                    ? 'bg-white/20 text-white'
+                                    : 'bg-gray-100 text-gray-600',
+                                ].join(' ')}
+                              >
+                                {opt.count}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div className="px-4 pb-4 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3">

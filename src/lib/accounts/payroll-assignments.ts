@@ -20,8 +20,46 @@ import {
   requiredText,
   textOrNull,
 } from './payroll-validation';
+import { query } from '@/src/lib/db';
 import type { TxClient } from './with-transaction';
 import { txQuery } from './with-transaction';
+
+/** توسيع قيد نوع التكليف ليشمل الايفاد (DEPUTATION) */
+export async function ensureAssignmentTypeConstraint(): Promise<void> {
+  await query(`
+    ALTER TABLE accounts.payroll_assignments
+      ALTER COLUMN title_ar TYPE VARCHAR(2000)
+  `).catch(() => undefined);
+
+  await query(`
+    DO $$
+    DECLARE
+      cname text;
+    BEGIN
+      SELECT con.conname INTO cname
+      FROM pg_constraint con
+      JOIN pg_class rel ON rel.oid = con.conrelid
+      JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+      WHERE nsp.nspname = 'accounts'
+        AND rel.relname = 'payroll_assignments'
+        AND con.contype = 'c'
+        AND pg_get_constraintdef(con.oid) ILIKE '%assignment_type%'
+        AND pg_get_constraintdef(con.oid) NOT ILIKE '%DEPUTATION%';
+      IF cname IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE accounts.payroll_assignments DROP CONSTRAINT %I', cname);
+        ALTER TABLE accounts.payroll_assignments
+          ADD CONSTRAINT ck_payroll_assignments_assignment_type
+          CHECK (
+            assignment_type IN (
+              'TEMPORARY_DUTY', 'ADDITIONAL_RESPONSIBILITY', 'ALLOWANCE_SOURCE',
+              'LECTURER_ASSIGNMENT', 'COMMITTEE_ASSIGNMENT', 'GENERAL_ASSIGNMENT',
+              'DEPUTATION'
+            )
+          );
+      END IF;
+    END $$;
+  `).catch(() => undefined);
+}
 
 export type PayrollAssignmentRow = {
   id: string;
@@ -156,6 +194,7 @@ export async function createPayrollAssignment(
     created_by: string;
   }
 ): Promise<PayrollAssignmentRow> {
+  await ensureAssignmentTypeConstraint();
   const personId = optionalUuid(input.payroll_person_id);
   if (!personId) throw new AccountsHttpError('الشخص مطلوب', 400);
   const contractId = optionalUuid(input.payroll_contract_id);
@@ -192,7 +231,7 @@ export async function createPayrollAssignment(
       linkedContract,
       code,
       oneOf(input.assignment_type, PAYROLL_ENUMS.ASSIGNMENT_TYPE, 'نوع التكليف'),
-      requiredText(input.title_ar, 200, 'عنوان التكليف بالعربية'),
+      requiredText(input.title_ar, 2000, 'تفاصيل التكليف'),
       textOrNull(input.title_en, 200),
       departmentId,
       costCenterId,
@@ -227,6 +266,7 @@ export async function updatePayrollAssignment(
     metadata_json?: unknown;
   }
 ): Promise<PayrollAssignmentRow> {
+  await ensureAssignmentTypeConstraint();
   const existing = await loadPayrollAssignment(client, p.id);
   await acquirePayrollLocks(client, [payrollPersonLock(existing.payroll_person_id), payrollAssignmentLock(p.id)]);
   const row = await loadPayrollAssignment(client, p.id, true);
@@ -253,7 +293,7 @@ export async function updatePayrollAssignment(
       row.id,
       linkedContract,
       p.assignment_type === undefined ? row.assignment_type : oneOf(p.assignment_type, PAYROLL_ENUMS.ASSIGNMENT_TYPE, 'نوع التكليف'),
-      p.title_ar === undefined ? row.title_ar : requiredText(p.title_ar, 200, 'عنوان التكليف بالعربية'),
+      p.title_ar === undefined ? row.title_ar : requiredText(p.title_ar, 2000, 'تفاصيل التكليف'),
       p.title_en === undefined ? row.title_en : textOrNull(p.title_en, 200),
       departmentId,
       costCenterId,

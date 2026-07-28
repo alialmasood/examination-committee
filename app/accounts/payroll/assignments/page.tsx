@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import PayrollNav from '../PayrollNav';
 import {
   API,
@@ -38,14 +38,18 @@ type AssignmentRow = {
 type FormState = {
   payroll_person_id: string;
   assignment_type: string;
+  details: string;
   effective_from: string;
+  effective_to: string;
   duration_days: string;
 };
 
 const emptyForm = (): FormState => ({
   payroll_person_id: '',
   assignment_type: '',
+  details: '',
   effective_from: new Date().toISOString().slice(0, 10),
+  effective_to: '',
   duration_days: '',
 });
 
@@ -57,6 +61,8 @@ const PERSON_TYPE_LABEL: Record<string, string> = {
 };
 
 const ALLOWED_PERSON_TYPES = new Set(Object.keys(PERSON_TYPE_LABEL));
+const isDeputation = (type: string) => type === 'DEPUTATION';
+
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-red-900 focus:ring-1 focus:ring-red-900';
 const labelClass = 'mb-1 block text-xs font-semibold text-gray-700';
@@ -78,6 +84,11 @@ function durationDays(from: string, to: string | null): number | null {
   const start = new Date(`${from}T00:00:00`).getTime();
   const end = new Date(`${to}T00:00:00`).getTime();
   return Math.max(1, Math.round((end - start) / 86_400_000) + 1);
+}
+
+function dateOnlyGuard(e: KeyboardEvent<HTMLInputElement>) {
+  if (e.key === 'Tab' || e.key === 'Escape') return;
+  e.preventDefault();
 }
 
 export default function AssignmentsPage() {
@@ -149,7 +160,9 @@ export default function AssignmentsPage() {
     setForm({
       payroll_person_id: row.payroll_person_id,
       assignment_type: row.assignment_type,
-      effective_from: row.effective_from,
+      details: row.title_ar || '',
+      effective_from: (row.effective_from || '').slice(0, 10),
+      effective_to: (row.effective_to || '').slice(0, 10),
       duration_days: String(durationDays(row.effective_from, row.effective_to) ?? ''),
     });
     setFormError('');
@@ -166,7 +179,6 @@ export default function AssignmentsPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    const duration = Number(form.duration_days);
     if (!form.payroll_person_id) {
       setFormError('يجب اختيار الاسم');
       return;
@@ -175,21 +187,50 @@ export default function AssignmentsPage() {
       setFormError('نوع التكليف مطلوب');
       return;
     }
-    if (!form.effective_from) {
-      setFormError('تاريخ التكليف مطلوب');
-      return;
-    }
-    if (!Number.isInteger(duration) || duration < 1) {
-      setFormError('مدة التكليف يجب أن تكون عدداً صحيحاً من الأيام');
+    if (!form.details.trim()) {
+      setFormError('تفاصيل التكليف مطلوبة');
       return;
     }
 
-    const assignmentLabel = ASSIGNMENT_TYPE[form.assignment_type] || form.assignment_type;
+    let effectiveFrom = form.effective_from;
+    let effectiveTo = '';
+    let duration = 0;
+
+    if (isDeputation(form.assignment_type)) {
+      if (!form.effective_from) {
+        setFormError('تاريخ بداية الايفاد مطلوب');
+        return;
+      }
+      if (!form.effective_to) {
+        setFormError('تاريخ نهاية الايفاد مطلوب');
+        return;
+      }
+      if (form.effective_to < form.effective_from) {
+        setFormError('تاريخ نهاية الايفاد يجب أن يكون بعد تاريخ البداية أو يساويه');
+        return;
+      }
+      effectiveFrom = form.effective_from;
+      effectiveTo = form.effective_to;
+      duration = durationDays(effectiveFrom, effectiveTo) ?? 0;
+    } else {
+      duration = Number(form.duration_days);
+      if (!form.effective_from) {
+        setFormError('تاريخ التكليف مطلوب');
+        return;
+      }
+      if (!Number.isInteger(duration) || duration < 1) {
+        setFormError('مدة التكليف يجب أن تكون عدداً صحيحاً من الأيام');
+        return;
+      }
+      effectiveFrom = form.effective_from;
+      effectiveTo = addDays(form.effective_from, duration - 1);
+    }
+
     const payload = {
       assignment_type: form.assignment_type,
-      title_ar: assignmentLabel,
-      effective_from: form.effective_from,
-      effective_to: addDays(form.effective_from, duration - 1),
+      title_ar: form.details.trim(),
+      effective_from: effectiveFrom,
+      effective_to: effectiveTo,
       metadata_json: { duration_days: duration },
     };
     setSaving(true);
@@ -499,35 +540,119 @@ export default function AssignmentsPage() {
                 </select>
               </div>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label className={labelClass}>
-                    تاريخ التكليف <span className="text-red-700">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    className={inputClass}
-                    value={form.effective_from}
-                    onChange={(e) => setForm({ ...form, effective_from: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className={labelClass}>
-                    مدة التكليف (بالأيام) <span className="text-red-700">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    className={inputClass}
-                    value={form.duration_days}
-                    onChange={(e) => setForm({ ...form, duration_days: e.target.value })}
-                    placeholder="مثال: 30"
-                    required
-                  />
-                </div>
+              <div>
+                <label className={labelClass}>
+                  تفاصيل التكليف <span className="text-red-700">*</span>
+                </label>
+                <textarea
+                  className={`${inputClass} min-h-[72px]`}
+                  value={form.details}
+                  onChange={(e) => setForm({ ...form, details: e.target.value })}
+                  placeholder="اكتب تفاصيل التكليف…"
+                  maxLength={2000}
+                  required
+                  rows={3}
+                />
               </div>
+
+              {isDeputation(form.assignment_type) ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={labelClass}>
+                      تاريخ الايفاد من <span className="text-red-700">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      className={`${inputClass} cursor-pointer`}
+                      dir="ltr"
+                      value={form.effective_from}
+                      onChange={(e) => setForm({ ...form, effective_from: e.target.value })}
+                      onKeyDown={dateOnlyGuard}
+                      onPaste={(e) => e.preventDefault()}
+                      onClick={(e) => {
+                        const el = e.currentTarget;
+                        if (typeof el.showPicker === 'function') {
+                          try {
+                            el.showPicker();
+                          } catch {
+                            /* التقويم يفتح بالنقر العادي */
+                          }
+                        }
+                      }}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>
+                      تاريخ الايفاد الى <span className="text-red-700">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      className={`${inputClass} cursor-pointer`}
+                      dir="ltr"
+                      value={form.effective_to}
+                      min={form.effective_from || undefined}
+                      onChange={(e) => setForm({ ...form, effective_to: e.target.value })}
+                      onKeyDown={dateOnlyGuard}
+                      onPaste={(e) => e.preventDefault()}
+                      onClick={(e) => {
+                        const el = e.currentTarget;
+                        if (typeof el.showPicker === 'function') {
+                          try {
+                            el.showPicker();
+                          } catch {
+                            /* التقويم يفتح بالنقر العادي */
+                          }
+                        }
+                      }}
+                      required
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={labelClass}>
+                      تاريخ التكليف <span className="text-red-700">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      className={`${inputClass} cursor-pointer`}
+                      dir="ltr"
+                      value={form.effective_from}
+                      onChange={(e) => setForm({ ...form, effective_from: e.target.value })}
+                      onKeyDown={dateOnlyGuard}
+                      onPaste={(e) => e.preventDefault()}
+                      onClick={(e) => {
+                        const el = e.currentTarget;
+                        if (typeof el.showPicker === 'function') {
+                          try {
+                            el.showPicker();
+                          } catch {
+                            /* التقويم يفتح بالنقر العادي */
+                          }
+                        }
+                      }}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>
+                      مدة التكليف (بالأيام) <span className="text-red-700">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      className={inputClass}
+                      value={form.duration_days}
+                      onChange={(e) => setForm({ ...form, duration_days: e.target.value })}
+                      placeholder="مثال: 30"
+                      required
+                    />
+                  </div>
+                </div>
+              )}
 
               {formError && (
                 <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">

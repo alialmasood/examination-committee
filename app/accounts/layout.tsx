@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import SidebarStatsCard from '../components/SidebarStatsCard';
+import AccountsSearch from './components/AccountsSearch';
 
 interface User {
   id: string;
@@ -219,6 +220,27 @@ export default function AccountsLayout({
                 </svg>
               </div>
               حسابات الطلبة
+            </Link>
+
+            <Link
+              href="/accounts/promotion-approvals"
+              className={`group flex items-center px-2 py-1.5 text-sm font-medium transition-all duration-200 ${
+                pathname === '/accounts/promotion-approvals' ||
+                pathname?.startsWith('/accounts/promotion-approvals/')
+                  ? 'bg-red-800 text-white border-r-4 border-yellow-400 shadow-lg -mx-2 px-4'
+                  : 'text-red-100 hover:bg-red-900 hover:text-white hover:-mx-2 hover:px-4 rounded-md'
+              }`}
+            >
+              <div className="flex items-center">
+                {(pathname === '/accounts/promotion-approvals' ||
+                  pathname?.startsWith('/accounts/promotion-approvals/')) && (
+                  <div className="w-2 h-2 bg-yellow-400 rounded-full ml-2"></div>
+                )}
+                <svg className="mr-3 h-6 w-6 text-red-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11l5-5m0 0l5 5m-5-5v12" />
+                </svg>
+              </div>
+              موافقات الترحيل
             </Link>
 
             {/* Payroll */}
@@ -525,7 +547,7 @@ export default function AccountsLayout({
                 <nav aria-label="روابط الوصول السريع" className="hidden md:flex items-center gap-2">
                   <Link
                     href="/accounts/students/accounts"
-                    className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                    className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors ${
                       pathname === '/accounts/students/accounts' ||
                       pathname?.startsWith('/accounts/students/accounts/')
                         ? 'border-white/40 bg-white/15 text-white'
@@ -533,14 +555,14 @@ export default function AccountsLayout({
                     }`}
                     title="حسابات الطلبة"
                   >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5V8H2v12h5m10 0v-2a5 5 0 00-10 0v2m10 0H7m5-9a3 3 0 100-6 3 3 0 000 6z" />
                     </svg>
                     <span>حسابات الطلبة</span>
                   </Link>
                   <Link
                     href="/accounts/installments"
-                    className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                    className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors ${
                       pathname === '/accounts/installments' ||
                       pathname?.startsWith('/accounts/installments/')
                         ? 'border-white/40 bg-white/15 text-white'
@@ -548,7 +570,7 @@ export default function AccountsLayout({
                     }`}
                     title="إدارة الأقساط"
                   >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 14l2 2 4-4m5-4H4m16 0a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2v-8a2 2 0 012-2m18 0V6a2 2 0 00-2-2H4a2 2 0 00-2 2v2" />
                     </svg>
                     <span>إدارة الأقساط</span>
@@ -556,20 +578,7 @@ export default function AccountsLayout({
                 </nav>
 
                 {/* Search Bar */}
-                <div className="max-w-md hidden lg:block">
-                  <div className="relative">
-                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                      <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                      </svg>
-                    </div>
-                    <input
-                      type="text"
-                      placeholder="البحث في النظام..."
-                      className="block w-full pr-10 pl-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-right"
-                    />
-                  </div>
-                </div>
+                <AccountsSearch />
                 <div className="text-right">
                   <p className="text-sm font-medium text-white">{user.full_name}</p>
                   <p className="text-xs text-gray-300">{user.username}</p>

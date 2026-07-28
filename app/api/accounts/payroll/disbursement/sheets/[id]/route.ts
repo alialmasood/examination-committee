@@ -39,6 +39,7 @@ export async function PATCH(request: NextRequest, context: Ctx) {
         sheetId: id,
         userId: auth.user.id,
         version: body.version,
+        lecturer_hour_rate: body.lecturer_hour_rate,
         lines: Array.isArray(body.lines) ? body.lines : [],
       });
       await writeFinancialAudit(client, {

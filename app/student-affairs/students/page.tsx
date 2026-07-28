@@ -126,6 +126,7 @@ export default function StudentsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
+  const [selectedAdmissionType, setSelectedAdmissionType] = useState('');
   const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('all');
   const [academicYears, setAcademicYears] = useState<string[]>(['all']);
   const [yearsLoading, setYearsLoading] = useState(true);
@@ -314,6 +315,7 @@ export default function StudentsPage() {
         limit: pagination.limit.toString(),
         ...(debouncedSearch && { search: debouncedSearch }),
         ...(selectedDepartment && { department: selectedDepartment }),
+        ...(selectedAdmissionType && { admission_type: selectedAdmissionType }),
         ...(selectedAcademicYear && selectedAcademicYear !== 'all' && { academic_year: selectedAcademicYear })
       });
 
@@ -494,7 +496,7 @@ export default function StudentsPage() {
   useEffect(() => {
     fetchStudents();
     fetchDepartmentCounts();
-  }, [pagination.page, debouncedSearch, selectedDepartment, selectedAcademicYear]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pagination.page, debouncedSearch, selectedDepartment, selectedAdmissionType, selectedAcademicYear]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // البث الفوري لتحديث القائمة عند تغيير حالات الدفع من نظام الحسابات
   useEffect(() => {
@@ -3369,6 +3371,20 @@ export default function StudentsPage() {
                   {year === 'all' ? 'جميع السنوات' : year}
                 </option>
               ))}
+            </select>
+            <select
+              value={selectedAdmissionType}
+              onChange={(e) => {
+                setSelectedAdmissionType(e.target.value);
+                setPagination((prev) => ({ ...prev, page: 1 }));
+              }}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10 text-sm"
+            >
+              <option value="">جميع المراحل</option>
+              <option value="first">الأولى</option>
+              <option value="second">الثانية</option>
+              <option value="third">الثالثة</option>
+              <option value="fourth">الرابعة</option>
             </select>
             <select 
               value={selectedDepartment}

@@ -13,7 +13,18 @@ export async function GET(request: NextRequest) {
   if (isAuthFailure(auth)) return auth.response;
 
   try {
-    const data = await getStudentExportData();
+    const { searchParams } = new URL(request.url);
+    const data = await getStudentExportData({
+      search: searchParams.get('search') || undefined,
+      department: searchParams.get('department') || undefined,
+      stage: searchParams.get('stage') || undefined,
+      studyType: searchParams.get('study_type') || undefined,
+      paymentStatus: (searchParams.get('payment_status') || '') as
+        | 'settled'
+        | 'partial'
+        | 'unpaid'
+        | '',
+    });
     return NextResponse.json(
       { success: true, data },
       { headers: { 'Cache-Control': 'no-store' } }

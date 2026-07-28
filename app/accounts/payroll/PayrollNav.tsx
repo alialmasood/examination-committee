@@ -10,6 +10,7 @@ const tabs = [
   ['/accounts/payroll/admin-staff', 'الكادر الوظيفي'],
   ['/accounts/payroll/daily-wages', 'الأجور اليومية'],
   ['/accounts/payroll/assignments', 'التكليفات'],
+  ['/accounts/payroll/rewards', 'المكافئات'],
   ['/accounts/payroll/disbursement', 'صرف الرواتب'],
 ] as const;
 

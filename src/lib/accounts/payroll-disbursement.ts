@@ -58,6 +58,7 @@ export type DisbursementSheetRow = {
   person_category: DisbursementCategory;
   status: string;
   version: number;
+  lecturer_hour_rate: string | number | null;
   created_by: string;
   updated_by: string | null;
   created_at: Date | string;
@@ -71,6 +72,8 @@ export type DisbursementLineRow = {
   person_code_snapshot: string;
   person_name_snapshot: string;
   base_amount: string | number;
+  allowances_amount: string | number;
+  deductions_amount: string | number;
   notes: string | null;
   line_status: string;
   version: number;
@@ -99,6 +102,27 @@ function money(v: string | number | null | undefined): number {
   return Number(v ?? 0);
 }
 
+function lineGrandTotal(
+  base: number,
+  assignments: number,
+  allowances: number,
+  deductions: number
+): number {
+  return base + assignments + allowances - deductions;
+}
+
+/** للمحاضرين: base_amount = عدد الساعات، الراتب = ساعات × مبلغ الساعة */
+export function effectiveSalaryAmount(
+  personCategory: string,
+  baseAmount: number,
+  lecturerHourRate: number
+): number {
+  if (personCategory === 'EXTERNAL_LECTURER') {
+    return baseAmount * lecturerHourRate;
+  }
+  return baseAmount;
+}
+
 function monthBounds(yearLabel: string, monthNumber: number): { from: string; to: string } {
   const y = Number(yearLabel);
   const m = String(monthNumber).padStart(2, '0');
@@ -120,6 +144,7 @@ export function serializeMonth(row: DisbursementMonthRow) {
 export function serializeSheet(row: DisbursementSheetRow) {
   return {
     ...row,
+    lecturer_hour_rate: money(row.lecturer_hour_rate).toFixed(3),
     created_at: iso(row.created_at)!,
     updated_at: iso(row.updated_at)!,
   };
@@ -129,6 +154,8 @@ export function serializeLine(row: DisbursementLineRow) {
   return {
     ...row,
     base_amount: money(row.base_amount).toFixed(3),
+    allowances_amount: money(row.allowances_amount).toFixed(3),
+    deductions_amount: money(row.deductions_amount).toFixed(3),
     created_at: iso(row.created_at)!,
     updated_at: iso(row.updated_at)!,
   };
@@ -232,6 +259,22 @@ async function ensureTables(client: TxClient) {
     )
   `
   );
+
+  await txQuery(
+    client,
+    `ALTER TABLE accounts.payroll_disbursement_lines
+       ADD COLUMN IF NOT EXISTS allowances_amount NUMERIC(18, 3) NOT NULL DEFAULT 0`
+  ).catch(() => undefined);
+  await txQuery(
+    client,
+    `ALTER TABLE accounts.payroll_disbursement_lines
+       ADD COLUMN IF NOT EXISTS deductions_amount NUMERIC(18, 3) NOT NULL DEFAULT 0`
+  ).catch(() => undefined);
+  await txQuery(
+    client,
+    `ALTER TABLE accounts.payroll_disbursement_sheets
+       ADD COLUMN IF NOT EXISTS lecturer_hour_rate NUMERIC(18, 3) NOT NULL DEFAULT 0`
+  ).catch(() => undefined);
 }
 
 function assertEditableSheet(status: string) {
@@ -372,6 +415,8 @@ export type ComparisonPersonTotals = {
   person_name: string;
   base: number;
   assignments: number;
+  allowances: number;
+  deductions: number;
 };
 
 export type SheetComparisonChange = {
@@ -397,6 +442,10 @@ export type SheetComparison = {
 
 const MONEY_EPSILON = 0.0005;
 
+function comparisonNet(p: ComparisonPersonTotals): number {
+  return lineGrandTotal(p.base, p.assignments, p.allowances, p.deductions);
+}
+
 /** يبني مقارنة كشف مع الشهر السابق على مستوى الشخص مع سبب عربي لكل فرق. */
 export function buildSheetComparison(
   current: ComparisonPersonTotals[],
@@ -412,10 +461,10 @@ export function buildSheetComparison(
   let increasedCount = 0;
   let decreasedCount = 0;
 
-  for (const p of previous) previousTotal += p.base + p.assignments;
+  for (const p of previous) previousTotal += comparisonNet(p);
 
   for (const c of current) {
-    const cur = c.base + c.assignments;
+    const cur = comparisonNet(c);
     currentTotal += cur;
     seen.add(c.payroll_person_id);
     const prev = prevByPerson.get(c.payroll_person_id);
@@ -434,7 +483,7 @@ export function buildSheetComparison(
       }
       continue;
     }
-    const prevTotal = prev.base + prev.assignments;
+    const prevTotal = comparisonNet(prev);
     const diff = cur - prevTotal;
     if (Math.abs(diff) <= MONEY_EPSILON) continue;
     if (diff > 0) increasedCount += 1;
@@ -443,10 +492,16 @@ export function buildSheetComparison(
     const parts: string[] = [];
     const baseDiff = c.base - prev.base;
     const asgDiff = c.assignments - prev.assignments;
+    const allDiff = c.allowances - prev.allowances;
+    const dedDiff = c.deductions - prev.deductions;
     if (baseDiff > MONEY_EPSILON) parts.push('زاد الراتب الأساسي');
     else if (baseDiff < -MONEY_EPSILON) parts.push('قل الراتب الأساسي');
     if (asgDiff > MONEY_EPSILON) parts.push('زادت التكليفات');
     else if (asgDiff < -MONEY_EPSILON) parts.push('قلت التكليفات');
+    if (allDiff > MONEY_EPSILON) parts.push('زادت المخصصات');
+    else if (allDiff < -MONEY_EPSILON) parts.push('قلت المخصصات');
+    if (dedDiff > MONEY_EPSILON) parts.push('زادت الاستقطاعات');
+    else if (dedDiff < -MONEY_EPSILON) parts.push('قلت الاستقطاعات');
 
     changes.push({
       payroll_person_id: c.payroll_person_id,
@@ -461,7 +516,7 @@ export function buildSheetComparison(
 
   for (const p of previous) {
     if (seen.has(p.payroll_person_id)) continue;
-    const prevTotal = p.base + p.assignments;
+    const prevTotal = comparisonNet(p);
     if (prevTotal <= MONEY_EPSILON) continue;
     leftCount += 1;
     changes.push({
@@ -500,12 +555,16 @@ async function getSheetPersonTotals(
     payroll_person_id: string;
     person_name_snapshot: string;
     base_amount: string;
+    allowances_amount: string;
+    deductions_amount: string;
     assignments_total: string;
   }>(
     client,
     `SELECT l.payroll_person_id,
             l.person_name_snapshot,
             l.base_amount::text AS base_amount,
+            COALESCE(l.allowances_amount, 0)::text AS allowances_amount,
+            COALESCE(l.deductions_amount, 0)::text AS deductions_amount,
             COALESCE((
               SELECT SUM(al.amount)
               FROM accounts.payroll_disbursement_assignment_lines al
@@ -520,6 +579,8 @@ async function getSheetPersonTotals(
     person_name: row.person_name_snapshot,
     base: money(row.base_amount),
     assignments: money(row.assignments_total),
+    allowances: money(row.allowances_amount),
+    deductions: money(row.deductions_amount),
   }));
 }
 
@@ -614,6 +675,8 @@ export async function getMonthDisbursementDetail(
     person_code_snapshot: string;
     person_name_snapshot: string;
     base_amount: string;
+    allowances_amount: string;
+    deductions_amount: string;
     academic_title: string | null;
     degree: string | null;
     department_name: string | null;
@@ -627,6 +690,8 @@ export async function getMonthDisbursementDetail(
             l.person_code_snapshot,
             l.person_name_snapshot,
             l.base_amount::text AS base_amount,
+            COALESCE(l.allowances_amount, 0)::text AS allowances_amount,
+            COALESCE(l.deductions_amount, 0)::text AS deductions_amount,
             p.academic_title,
             p.degree,
             COALESCE(d.name_ar, p.workplace, p.affiliation) AS department_name,
@@ -663,6 +728,8 @@ export async function getMonthDisbursementDetail(
     payroll_person_id: string;
     person_name_snapshot: string;
     base_amount: string;
+    allowances_amount: string;
+    deductions_amount: string;
     assignments_total: string;
   }>(
     client,
@@ -670,6 +737,8 @@ export async function getMonthDisbursementDetail(
             l.payroll_person_id,
             l.person_name_snapshot,
             l.base_amount::text AS base_amount,
+            COALESCE(l.allowances_amount, 0)::text AS allowances_amount,
+            COALESCE(l.deductions_amount, 0)::text AS deductions_amount,
             COALESCE((
               SELECT SUM(al.amount)
               FROM accounts.payroll_disbursement_assignment_lines al
@@ -690,6 +759,8 @@ export async function getMonthDisbursementDetail(
       person_name: row.person_name_snapshot,
       base: money(row.base_amount),
       assignments: money(row.assignments_total),
+      allowances: money(row.allowances_amount),
+      deductions: money(row.deductions_amount),
     });
     prevByCategory.set(row.person_category, list);
   }
@@ -700,6 +771,8 @@ export async function getMonthDisbursementDetail(
     const serialized = sheetLines.map((line) => {
       const base = money(line.base_amount);
       const asg = money(line.assignments_total);
+      const allowances = money(line.allowances_amount);
+      const deductions = money(line.deductions_amount);
       return {
         id: line.id,
         payroll_person_id: line.payroll_person_id,
@@ -709,13 +782,17 @@ export async function getMonthDisbursementDetail(
         degree: line.degree,
         department_name: line.department_name,
         base_amount: base.toFixed(3),
+        allowances_amount: allowances.toFixed(3),
+        deductions_amount: deductions.toFixed(3),
         assignments_total: asg.toFixed(3),
         assignments_count: line.assignments_count,
-        grand_total: (base + asg).toFixed(3),
+        grand_total: lineGrandTotal(base, asg, allowances, deductions).toFixed(3),
       };
     });
     const baseTotal = serialized.reduce((s, l) => s + money(l.base_amount), 0);
     const asgTotal = serialized.reduce((s, l) => s + money(l.assignments_total), 0);
+    const allowancesTotal = serialized.reduce((s, l) => s + money(l.allowances_amount), 0);
+    const deductionsTotal = serialized.reduce((s, l) => s + money(l.deductions_amount), 0);
     const comparison = hasPreviousMonth
       ? buildSheetComparison(
           serialized.map((l) => ({
@@ -723,6 +800,8 @@ export async function getMonthDisbursementDetail(
             person_name: l.person_name,
             base: money(l.base_amount),
             assignments: money(l.assignments_total),
+            allowances: money(l.allowances_amount),
+            deductions: money(l.deductions_amount),
           })),
           prevByCategory.get(cat) ?? []
         )
@@ -734,11 +813,17 @@ export async function getMonthDisbursementDetail(
       status: sheet?.status ?? 'EMPTY',
       people_count: serialized.length,
       entered_count: serialized.filter(
-        (l) => money(l.base_amount) > 0 || money(l.assignments_total) > 0
+        (l) =>
+          money(l.base_amount) > 0 ||
+          money(l.assignments_total) > 0 ||
+          money(l.allowances_amount) > 0 ||
+          money(l.deductions_amount) > 0
       ).length,
       base_total: baseTotal.toFixed(3),
       assignments_total: asgTotal.toFixed(3),
-      grand_total: (baseTotal + asgTotal).toFixed(3),
+      allowances_total: allowancesTotal.toFixed(3),
+      deductions_total: deductionsTotal.toFixed(3),
+      grand_total: lineGrandTotal(baseTotal, asgTotal, allowancesTotal, deductionsTotal).toFixed(3),
       lines: serialized,
       comparison,
     };
@@ -750,14 +835,23 @@ export async function getMonthDisbursementDetail(
       acc.entered_count += c.entered_count;
       acc.base += money(c.base_total);
       acc.asg += money(c.assignments_total);
+      acc.allowances += money(c.allowances_total);
+      acc.deductions += money(c.deductions_total);
       return acc;
     },
-    { people_count: 0, entered_count: 0, base: 0, asg: 0 }
+    { people_count: 0, entered_count: 0, base: 0, asg: 0, allowances: 0, deductions: 0 }
   );
 
-  const grandTotal = totals.base + totals.asg;
+  const grandTotal = lineGrandTotal(totals.base, totals.asg, totals.allowances, totals.deductions);
   const prevGrandTotal = prevLines.rows.reduce(
-    (s, row) => s + money(row.base_amount) + money(row.assignments_total),
+    (s, row) =>
+      s +
+      lineGrandTotal(
+        money(row.base_amount),
+        money(row.assignments_total),
+        money(row.allowances_amount),
+        money(row.deductions_amount)
+      ),
     0
   );
   const totalDiff = grandTotal - prevGrandTotal;
@@ -770,6 +864,8 @@ export async function getMonthDisbursementDetail(
       entered_count: totals.entered_count,
       base_total: totals.base.toFixed(3),
       assignments_total: totals.asg.toFixed(3),
+      allowances_total: totals.allowances.toFixed(3),
+      deductions_total: totals.deductions.toFixed(3),
       grand_total: grandTotal.toFixed(3),
     },
     previous_comparison: hasPreviousMonth
@@ -806,6 +902,8 @@ export async function listDisbursementMonths(
       entered_count: number;
       base_total: string;
       assignments_total: string;
+      allowances_total: string;
+      deductions_total: string;
       grand_total: string;
     }>;
   }>
@@ -827,15 +925,22 @@ export async function listDisbursementMonths(
     entered_count: number;
     base_total: string;
     assignments_total: string;
+    allowances_total: string;
+    deductions_total: string;
   }>(
     client,
     `SELECT s.disbursement_month_id, s.person_category, s.status,
             COUNT(l.id)::int AS people_count,
-            COUNT(l.id) FILTER (WHERE l.base_amount > 0 OR EXISTS (
+            COUNT(l.id) FILTER (WHERE l.base_amount > 0
+              OR COALESCE(l.allowances_amount, 0) > 0
+              OR COALESCE(l.deductions_amount, 0) > 0
+              OR EXISTS (
               SELECT 1 FROM accounts.payroll_disbursement_assignment_lines al
               WHERE al.disbursement_line_id = l.id AND al.amount > 0
             ))::int AS entered_count,
             COALESCE(SUM(l.base_amount), 0)::text AS base_total,
+            COALESCE(SUM(l.allowances_amount), 0)::text AS allowances_total,
+            COALESCE(SUM(l.deductions_amount), 0)::text AS deductions_total,
             COALESCE((
               SELECT SUM(al.amount)
               FROM accounts.payroll_disbursement_assignment_lines al
@@ -870,6 +975,8 @@ export async function listDisbursementMonths(
         const s = sheets.find((x) => x.person_category === cat);
         const base = money(s?.base_total);
         const asg = money(s?.assignments_total);
+        const allowances = money(s?.allowances_total);
+        const deductions = money(s?.deductions_total);
         return {
           person_category: cat,
           status: s?.status ?? 'DRAFT',
@@ -877,7 +984,9 @@ export async function listDisbursementMonths(
           entered_count: s?.entered_count ?? 0,
           base_total: base.toFixed(3),
           assignments_total: asg.toFixed(3),
-          grand_total: (base + asg).toFixed(3),
+          allowances_total: allowances.toFixed(3),
+          deductions_total: deductions.toFixed(3),
+          grand_total: lineGrandTotal(base, asg, allowances, deductions).toFixed(3),
         };
       }),
     };
@@ -1080,6 +1189,7 @@ export async function getSheetDetail(client: TxClient, sheetId: string) {
     DisbursementLineRow & {
       academic_title: string | null;
       degree: string | null;
+      job_title: string | null;
       department_name_ar: string | null;
       workplace: string | null;
       affiliation: string | null;
@@ -1089,6 +1199,7 @@ export async function getSheetDetail(client: TxClient, sheetId: string) {
     `SELECT l.*,
             p.academic_title,
             p.degree,
+            p.job_title,
             d.name_ar AS department_name_ar,
             p.workplace,
             p.affiliation
@@ -1115,10 +1226,20 @@ export async function getSheetDetail(client: TxClient, sheetId: string) {
     asgByLine.set(a.disbursement_line_id, list);
   }
 
+  const lecturerHourRate = money(s.lecturer_hour_rate);
+  const isLecturer = s.person_category === 'EXTERNAL_LECTURER';
+
   const serializedLines = lines.rows.map((line) => {
     const assignments = (asgByLine.get(line.id) ?? []).map(serializeAssignmentLine);
     const assignmentsTotal = assignments.reduce((sum, a) => sum + money(a.amount), 0);
-    const base = money(line.base_amount);
+    const hoursOrBase = money(line.base_amount);
+    const salary = effectiveSalaryAmount(
+      s.person_category,
+      hoursOrBase,
+      lecturerHourRate
+    );
+    const allowances = money(line.allowances_amount);
+    const deductions = money(line.deductions_amount);
     const department =
       line.department_name_ar ||
       line.workplace ||
@@ -1128,17 +1249,27 @@ export async function getSheetDetail(client: TxClient, sheetId: string) {
       ...serializeLine(line),
       academic_title: line.academic_title,
       degree: line.degree,
+      job_title: line.job_title,
       department_name: department,
+      hours_amount: isLecturer ? hoursOrBase.toFixed(3) : null,
+      salary_amount: salary.toFixed(3),
       assignments,
       assignments_total: assignmentsTotal.toFixed(3),
-      grand_total: (base + assignmentsTotal).toFixed(3),
+      grand_total: lineGrandTotal(salary, assignmentsTotal, allowances, deductions).toFixed(3),
     };
   });
 
-  const baseTotal = serializedLines.reduce((s, l) => s + money(l.base_amount), 0);
+  const hoursTotal = serializedLines.reduce((s, l) => s + money(l.base_amount), 0);
+  const baseTotal = serializedLines.reduce((s, l) => s + money(l.salary_amount), 0);
   const asgTotal = serializedLines.reduce((s, l) => s + money(l.assignments_total), 0);
+  const allowancesTotal = serializedLines.reduce((s, l) => s + money(l.allowances_amount), 0);
+  const deductionsTotal = serializedLines.reduce((s, l) => s + money(l.deductions_amount), 0);
   const entered = serializedLines.filter(
-    (l) => money(l.base_amount) > 0 || money(l.assignments_total) > 0
+    (l) =>
+      money(l.base_amount) > 0 ||
+      money(l.assignments_total) > 0 ||
+      money(l.allowances_amount) > 0 ||
+      money(l.deductions_amount) > 0
   ).length;
 
   // بيانات الشهر السابق للفئة نفسها — لعرض تنبيه المقارنة الحي في الواجهة
@@ -1151,23 +1282,34 @@ export async function getSheetDetail(client: TxClient, sheetId: string) {
   let previousMonth: {
     month_number: number;
     month_label: string;
+    lecturer_hour_rate: string;
     lines: Array<{
       payroll_person_id: string;
       person_name: string;
       base_amount: string;
       assignments_total: string;
+      allowances_amount: string;
+      deductions_amount: string;
     }>;
   } | null = null;
   if (prevSheetRef) {
     const prevTotals = await getSheetPersonTotals(client, prevSheetRef.id);
+    const prevSheetRate = await txQuery<{ lecturer_hour_rate: string | number | null }>(
+      client,
+      `SELECT lecturer_hour_rate FROM accounts.payroll_disbursement_sheets WHERE id=$1::uuid`,
+      [prevSheetRef.id]
+    );
     previousMonth = {
       month_number: prevSheetRef.month_number,
       month_label: MONTH_LABELS[prevSheetRef.month_number - 1],
+      lecturer_hour_rate: money(prevSheetRate.rows[0]?.lecturer_hour_rate).toFixed(3),
       lines: prevTotals.map((l) => ({
         payroll_person_id: l.payroll_person_id,
         person_name: l.person_name,
         base_amount: l.base.toFixed(3),
         assignments_total: l.assignments.toFixed(3),
+        allowances_amount: l.allowances.toFixed(3),
+        deductions_amount: l.deductions.toFixed(3),
       })),
     };
   }
@@ -1186,9 +1328,12 @@ export async function getSheetDetail(client: TxClient, sheetId: string) {
     summary: {
       people_count: serializedLines.length,
       entered_count: entered,
+      hours_total: isLecturer ? hoursTotal.toFixed(3) : null,
       base_total: baseTotal.toFixed(3),
       assignments_total: asgTotal.toFixed(3),
-      grand_total: (baseTotal + asgTotal).toFixed(3),
+      allowances_total: allowancesTotal.toFixed(3),
+      deductions_total: deductionsTotal.toFixed(3),
+      grand_total: lineGrandTotal(baseTotal, asgTotal, allowancesTotal, deductionsTotal).toFixed(3),
     },
     previous_month: previousMonth,
   };
@@ -1200,9 +1345,12 @@ export async function saveSheetLines(
     sheetId: string;
     userId: string;
     version: unknown;
+    lecturer_hour_rate?: unknown;
     lines: Array<{
       id: string;
       base_amount?: unknown;
+      allowances_amount?: unknown;
+      deductions_amount?: unknown;
       notes?: unknown;
       assignments?: Array<{ id: string; amount?: unknown }>;
     }>;
@@ -1222,6 +1370,12 @@ export async function saveSheetLines(
     throw new AccountsHttpError('تم تعديل الكشف بواسطة مستخدم آخر. حدّث الصفحة ثم أعد المحاولة.', 409);
   }
 
+  const isLecturer = s.person_category === 'EXTERNAL_LECTURER';
+  let nextHourRate = money(s.lecturer_hour_rate);
+  if (isLecturer && p.lecturer_hour_rate !== undefined) {
+    nextHourRate = Number(nonNegativeMoney(p.lecturer_hour_rate, 'مبلغ ساعة المحاضر'));
+  }
+
   for (const item of p.lines ?? []) {
     if (!item?.id) continue;
     const line = await txQuery<DisbursementLineRow>(
@@ -1231,22 +1385,40 @@ export async function saveSheetLines(
       [item.id, p.sheetId]
     );
     if (!line.rows[0]) continue;
+    const baseLabel = isLecturer ? 'عدد الساعات' : 'الراتب الأساسي';
     const base =
       item.base_amount === undefined
         ? money(line.rows[0].base_amount)
-        : Number(nonNegativeMoney(item.base_amount, 'الراتب الأساسي'));
+        : Number(nonNegativeMoney(item.base_amount, baseLabel));
+    const allowances =
+      item.allowances_amount === undefined
+        ? money(line.rows[0].allowances_amount)
+        : Number(nonNegativeMoney(item.allowances_amount, 'المخصصات'));
+    const deductions =
+      item.deductions_amount === undefined
+        ? money(line.rows[0].deductions_amount)
+        : Number(nonNegativeMoney(item.deductions_amount, 'الاستقطاعات'));
     const notes =
       item.notes === undefined
         ? line.rows[0].notes
         : String(item.notes ?? '').trim() || null;
-    const lineStatus = base > 0 ? 'SAVED' : 'EMPTY';
+    const lineStatus =
+      base > 0 || allowances > 0 || deductions > 0 ? 'SAVED' : 'EMPTY';
     await txQuery(
       client,
       `UPDATE accounts.payroll_disbursement_lines
-       SET base_amount=$2, notes=$3, line_status=$4,
-           updated_by=$5::uuid, updated_at=NOW(), version=version+1
+       SET base_amount=$2, allowances_amount=$3, deductions_amount=$4, notes=$5, line_status=$6,
+           updated_by=$7::uuid, updated_at=NOW(), version=version+1
        WHERE id=$1::uuid`,
-      [item.id, base.toFixed(3), notes, lineStatus, p.userId]
+      [
+        item.id,
+        base.toFixed(3),
+        allowances.toFixed(3),
+        deductions.toFixed(3),
+        notes,
+        lineStatus,
+        p.userId,
+      ]
     );
 
     for (const asg of item.assignments ?? []) {
@@ -1269,9 +1441,11 @@ export async function saveSheetLines(
   await txQuery(
     client,
     `UPDATE accounts.payroll_disbursement_sheets
-     SET status='SAVED', updated_by=$2::uuid, updated_at=NOW(), version=version+1
+     SET status='SAVED',
+         lecturer_hour_rate=$3,
+         updated_by=$2::uuid, updated_at=NOW(), version=version+1
      WHERE id=$1::uuid`,
-    [p.sheetId, p.userId]
+    [p.sheetId, p.userId, nextHourRate.toFixed(3)]
   );
   await txQuery(
     client,
@@ -1406,6 +1580,8 @@ export async function copyPreviousMonthAmounts(
     return {
       id: line.id,
       base_amount: prevLine?.base_amount ?? line.base_amount,
+      allowances_amount: prevLine?.allowances_amount ?? line.allowances_amount,
+      deductions_amount: prevLine?.deductions_amount ?? line.deductions_amount,
       assignments: line.assignments.map((a) => {
         const prevAsg = prevLine?.assignments?.find(
           (x) => x.payroll_assignment_id === a.payroll_assignment_id
@@ -1419,6 +1595,7 @@ export async function copyPreviousMonthAmounts(
     sheetId: p.sheetId,
     userId: p.userId,
     version: current.sheet.version,
+    lecturer_hour_rate: prevDetail.sheet.lecturer_hour_rate,
     lines: payload,
   });
 }

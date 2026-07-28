@@ -151,6 +151,15 @@ export default function StudentAffairsLayout({
       ),
     },
     {
+      name: 'ترحيل الطلبة',
+      href: '/student-affairs/promotions',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11l5-5m0 0l5 5m-5-5v12" />
+        </svg>
+      ),
+    },
+    {
       name: 'النتائج والدرجات',
       href: '/student-affairs/grades',
       icon: (
@@ -290,18 +299,23 @@ export default function StudentAffairsLayout({
 
           <nav className="p-5 pt-2 flex-1 overflow-y-auto overflow-x-hidden">
             <ul className="space-y-0 -mt-4 w-full">
-              {navigationItems.map((item) => (
+              {navigationItems.map((item) => {
+                const isActive =
+                  item.href === '/student-affairs'
+                    ? pathname === item.href
+                    : pathname === item.href || Boolean(pathname?.startsWith(`${item.href}/`));
+                return (
                 <li key={item.name} className="w-full overflow-hidden">
                   <Link
                     href={item.href}
                     className={`group flex items-center space-x-4 space-x-reverse px-5 py-2.5 mx-0 rounded-none transition-all duration-300 w-full ${
-                      pathname === item.href
+                      isActive
                         ? 'bg-gradient-to-r from-blue-600/50 to-blue-500/50 text-white border-r-16 border-blue-400 shadow-lg backdrop-blur-sm -mr-4 -ml-6'
                         : 'text-gray-300 hover:bg-gradient-to-r hover:from-gray-800/50 hover:to-gray-700/50 hover:text-white border border-transparent hover:border-gray-600/50 hover:-mr-4 hover:-ml-6 hover:shadow-lg hover:backdrop-blur-sm'
                     }`}
                   >
                      <div className={`transition-all duration-300 ${
-                       pathname === item.href 
+                       isActive
                          ? 'text-blue-200' 
                          : 'text-gray-400 group-hover:text-blue-200'
                      }`}>
@@ -312,12 +326,13 @@ export default function StudentAffairsLayout({
                         {item.name}
                       </span>
                     </div>
-                    {pathname === item.href && (
+                    {isActive && (
                       <div className="w-2 h-2 bg-blue-400 rounded-full shadow-sm"></div>
                     )}
                   </Link>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </nav>
 

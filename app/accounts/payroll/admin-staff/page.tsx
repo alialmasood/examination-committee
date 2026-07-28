@@ -24,6 +24,13 @@ const DEGREES = [
   'دكتوراه',
 ] as const;
 const JOB_CLASSIFICATIONS = ['فني', 'اداري', 'خدمي', 'حرفي'] as const;
+const ADVANCED_DEGREES = new Set(['ماجستير', 'دكتوراه']);
+
+function showsAcademicTitle(degree: string): boolean {
+  return ADVANCED_DEGREES.has(degree);
+}
+
+type Department = { id: string; name_ar: string };
 
 type AdminStaffRow = {
   id: string;
@@ -34,6 +41,9 @@ type AdminStaffRow = {
   phone: string | null;
   job_classification: string | null;
   workplace: string | null;
+  department_id: string | null;
+  commencement_order_no: string | null;
+  effective_from: string | null;
   status: string;
   version: number;
   updated_at: string;
@@ -46,7 +56,12 @@ type FormState = {
   phone: string;
   job_classification: string;
   workplace: string;
+  department_id: string;
+  effective_from: string;
+  commencement_order_no: string;
 };
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
 
 const emptyForm = (): FormState => ({
   full_name_ar: '',
@@ -55,16 +70,22 @@ const emptyForm = (): FormState => ({
   phone: '',
   job_classification: '',
   workplace: '',
+  department_id: '',
+  effective_from: todayIso(),
+  commencement_order_no: '',
 });
 
 const inputClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-red-900 focus:ring-1 focus:ring-red-900';
-const labelClass = 'mb-1 block text-xs font-semibold text-gray-700';
+  'box-border h-9 w-full rounded-md border border-gray-300 bg-white px-2.5 text-sm leading-none text-gray-900 outline-none focus:border-red-900 focus:ring-1 focus:ring-red-900';
+const labelClass = 'mb-0.5 block text-xs font-semibold text-gray-700';
 const actionBtn =
   'rounded px-2 py-1 text-xs font-semibold border transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 
 export default function AdminStaffPage() {
   const [rows, setRows] = useState<AdminStaffRow[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentsLoading, setDepartmentsLoading] = useState(false);
+  const [departmentsError, setDepartmentsError] = useState('');
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState('');
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
@@ -101,15 +122,32 @@ export default function AdminStaffPage() {
     setLoading(false);
   }, []);
 
+  const loadDepartments = useCallback(async () => {
+    setDepartmentsLoading(true);
+    setDepartmentsError('');
+    const r = await fetchJson(API.departments);
+    if (!r.__ok) {
+      setDepartmentsError(errMsg(r));
+      setDepartments([]);
+    } else {
+      setDepartments(Array.isArray(r.data) ? r.data : []);
+    }
+    setDepartmentsLoading(false);
+  }, []);
+
   useEffect(() => {
-    void loadList('');
-  }, [loadList]);
+    const fromUrl = new URLSearchParams(window.location.search).get('q') || '';
+    if (fromUrl) setQ(fromUrl);
+    void loadList(fromUrl);
+    void loadDepartments();
+  }, [loadList, loadDepartments]);
 
   function openCreate() {
     setEditing(null);
     setForm(emptyForm());
     setFormError('');
     setModalMode('create');
+    void loadDepartments();
     setNextCode('');
     setNextCodeLoading(true);
     void (async () => {
@@ -120,17 +158,27 @@ export default function AdminStaffPage() {
   }
 
   function openEdit(row: AdminStaffRow) {
+    const workplaceName = row.workplace || '';
+    const matchedDept =
+      departments.find((d) => d.id === row.department_id) ||
+      departments.find((d) => d.name_ar === workplaceName);
     setEditing(row);
     setForm({
       full_name_ar: row.full_name_ar || '',
-      academic_title: row.academic_title || '',
+      academic_title: showsAcademicTitle(row.degree || '')
+        ? row.academic_title || ''
+        : '',
       degree: row.degree || '',
       phone: row.phone || '',
       job_classification: row.job_classification || '',
-      workplace: row.workplace || '',
+      workplace: matchedDept?.name_ar || workplaceName,
+      department_id: matchedDept?.id || row.department_id || '',
+      effective_from: (row.effective_from || '').slice(0, 10) || todayIso(),
+      commencement_order_no: row.commencement_order_no || '',
     });
     setFormError('');
     setModalMode('edit');
+    void loadDepartments();
   }
 
   function closeModal() {
@@ -146,15 +194,24 @@ export default function AdminStaffPage() {
       setFormError('الاسم الكامل واللقب مطلوب');
       return;
     }
+    if (!form.effective_from.trim()) {
+      setFormError('تاريخ المباشرة مطلوب');
+      return;
+    }
     setSaving(true);
     setFormError('');
     const payload = {
       full_name_ar: form.full_name_ar.trim(),
-      academic_title: form.academic_title || null,
+      academic_title: showsAcademicTitle(form.degree)
+        ? form.academic_title || null
+        : null,
       degree: form.degree || null,
       phone: form.phone.trim() || null,
       job_classification: form.job_classification || null,
       workplace: form.workplace.trim() || null,
+      department_id: form.department_id || null,
+      effective_from: form.effective_from.trim(),
+      commencement_order_no: form.commencement_order_no.trim() || null,
     };
     const r =
       modalMode === 'edit' && editing
@@ -230,6 +287,17 @@ export default function AdminStaffPage() {
     await loadList(q);
   }
 
+  const workplaceOptions = (() => {
+    const list = [...departments];
+    if (
+      form.workplace &&
+      !list.some((d) => d.name_ar === form.workplace || d.id === form.department_id)
+    ) {
+      list.push({ id: `legacy:${form.workplace}`, name_ar: form.workplace });
+    }
+    return list;
+  })();
+
   return (
     <main dir="rtl" className="p-4 w-full">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
@@ -276,32 +344,33 @@ export default function AdminStaffPage() {
         <table className="min-w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-red-950 text-white">
-              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">#</th>
               <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">الرمز</th>
               <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">الاسم الكامل</th>
-              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">اللقب العلمي</th>
               <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">الشهادة</th>
-              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">الهاتف</th>
+              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">اللقب العلمي</th>
+              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">رقم الهاتف</th>
               <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">التوصيف الوظيفي</th>
               <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">مكان العمل</th>
+              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">تاريخ المباشرة</th>
+              <th className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">رقم أمر المباشرة</th>
               <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">إجراء</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={9} className="px-3 py-10 text-center text-gray-500">
+                <td colSpan={10} className="px-3 py-10 text-center text-gray-500">
                   جاري التحميل…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-10 text-center text-gray-500">
+                <td colSpan={10} className="px-3 py-10 text-center text-gray-500">
                   لا يوجد موظفون مسجّلون بعد
                 </td>
               </tr>
             ) : (
-              rows.map((row, idx) => {
+              rows.map((row) => {
                 const busy = actionBusyId === row.id;
                 const ended = row.status === 'TERMINATED';
                 return (
@@ -309,67 +378,72 @@ export default function AdminStaffPage() {
                     key={row.id}
                     className="border-b border-gray-100 odd:bg-white even:bg-gray-50/70 hover:bg-red-50/40"
                   >
-                  <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{idx + 1}</td>
-                  <td className="px-3 py-2.5 font-mono text-xs text-gray-800 whitespace-nowrap" dir="ltr">
-                    {row.person_code}
-                  </td>
-                  <td className="px-3 py-2.5 font-medium text-gray-900 whitespace-nowrap">
-                    {row.full_name_ar}
-                    {ended && (
-                      <span className="mr-2 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold text-gray-700">
-                        منتهٍ
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">
-                    {row.academic_title || '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">{row.degree || '—'}</td>
-                  <td className="px-3 py-2.5 font-mono text-xs text-gray-800 whitespace-nowrap" dir="ltr">
-                    {row.phone || '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">
-                    {row.job_classification || '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">
-                    {row.workplace || '—'}
-                  </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <button
-                        type="button"
-                        disabled={busy || ended}
-                        onClick={() => openEdit(row)}
-                        className={`${actionBtn} border-blue-800 text-blue-900 hover:bg-blue-50`}
-                      >
-                        تعديل
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy || ended}
-                        onClick={() => {
-                          setTerminateReason('');
-                          setTerminateError('');
-                          setTerminateRow(row);
-                        }}
-                        className={`${actionBtn} border-amber-700 text-amber-900 hover:bg-amber-50`}
-                      >
-                        إنهاء
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => {
-                          setDeleteError('');
-                          setDeleteRow(row);
-                        }}
-                        className={`${actionBtn} border-red-800 text-red-900 hover:bg-red-50`}
-                      >
-                        حذف
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                    <td className="px-3 py-2.5 font-mono text-xs text-gray-600 whitespace-nowrap" dir="ltr">
+                      {row.person_code || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 font-medium text-gray-900 whitespace-nowrap">
+                      {row.full_name_ar}
+                      {ended && (
+                        <span className="mr-2 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold text-gray-700">
+                          منتهٍ
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">{row.degree || '—'}</td>
+                    <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">
+                      {row.academic_title || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-gray-800 whitespace-nowrap" dir="ltr">
+                      {row.phone || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">
+                      {row.job_classification || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">
+                      {row.workplace || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-gray-800 whitespace-nowrap" dir="ltr">
+                      {(row.effective_from || '').slice(0, 10) || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-800 whitespace-nowrap">
+                      {row.commencement_order_no || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={busy || ended}
+                          onClick={() => openEdit(row)}
+                          className={`${actionBtn} border-blue-800 text-blue-900 hover:bg-blue-50`}
+                        >
+                          تعديل
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy || ended}
+                          onClick={() => {
+                            setTerminateReason('');
+                            setTerminateError('');
+                            setTerminateRow(row);
+                          }}
+                          className={`${actionBtn} border-amber-700 text-amber-900 hover:bg-amber-50`}
+                        >
+                          إنهاء
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            setDeleteError('');
+                            setDeleteRow(row);
+                          }}
+                          className={`${actionBtn} border-red-800 text-red-900 hover:bg-red-50`}
+                        >
+                          حذف
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
                 );
               })
             )}
@@ -385,10 +459,10 @@ export default function AdminStaffPage() {
           onClick={closeModal}
         >
           <div
-            className="w-full max-w-xl max-h-[92vh] overflow-y-auto rounded-lg bg-white shadow-xl"
+            className="w-full max-w-3xl max-h-[80vh] overflow-y-auto rounded-lg bg-white shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-gray-200 bg-red-950 px-4 py-3 text-white">
+            <div className="flex items-center justify-between border-b border-gray-200 bg-red-950 px-4 py-2 text-white">
               <h2 className="text-base font-bold">
                 {modalMode === 'edit' ? 'تعديل بيانات موظف' : 'إضافة موظف جديد'}
               </h2>
@@ -402,59 +476,58 @@ export default function AdminStaffPage() {
               </button>
             </div>
 
-            <form onSubmit={onSubmit} className="space-y-3 p-4">
-              <div>
-                <label className={labelClass}>الرمز (يولّده النظام تلقائياً)</label>
-                <input
-                  className={`${inputClass} bg-gray-100 font-mono text-gray-600`}
-                  dir="ltr"
-                  value={
-                    modalMode === 'edit'
-                      ? editing?.person_code || ''
-                      : nextCodeLoading
-                        ? 'جاري التوليد…'
-                        : nextCode || '—'
-                  }
-                  readOnly
-                  tabIndex={-1}
-                />
-              </div>
-
-              <div>
-                <label className={labelClass}>
-                  الاسم الكامل واللقب <span className="text-red-700">*</span>
-                </label>
-                <input
-                  className={inputClass}
-                  value={form.full_name_ar}
-                  onChange={(e) => setForm({ ...form, full_name_ar: e.target.value })}
-                  required
-                  autoFocus
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <form onSubmit={onSubmit} className="space-y-2 p-3 sm:p-4">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div>
-                  <label className={labelClass}>اللقب العلمي إن وجد</label>
-                  <select
+                  <label className={labelClass}>
+                    الاسم الكامل واللقب <span className="text-red-700">*</span>
+                  </label>
+                  <input
                     className={inputClass}
-                    value={form.academic_title}
-                    onChange={(e) => setForm({ ...form, academic_title: e.target.value })}
-                  >
-                    <option value="">— اختر —</option>
-                    {ACADEMIC_TITLES.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
+                    value={form.full_name_ar}
+                    onChange={(e) => setForm({ ...form, full_name_ar: e.target.value })}
+                    required
+                    autoFocus
+                  />
                 </div>
+                <div>
+                  <label className={labelClass}>الرمز (يولّده النظام تلقائياً)</label>
+                  <input
+                    className={`${inputClass} bg-gray-100 font-mono text-gray-600`}
+                    dir="ltr"
+                    value={
+                      modalMode === 'edit'
+                        ? editing?.person_code || ''
+                        : nextCodeLoading
+                          ? 'جاري التوليد…'
+                          : nextCode || '—'
+                    }
+                    readOnly
+                    tabIndex={-1}
+                  />
+                </div>
+              </div>
+
+              <div
+                className={`grid grid-cols-1 gap-2 ${
+                  showsAcademicTitle(form.degree) ? 'sm:grid-cols-2' : ''
+                }`}
+              >
                 <div>
                   <label className={labelClass}>الشهادة</label>
                   <select
                     className={inputClass}
                     value={form.degree}
-                    onChange={(e) => setForm({ ...form, degree: e.target.value })}
+                    onChange={(e) => {
+                      const degree = e.target.value;
+                      setForm((prev) => ({
+                        ...prev,
+                        degree,
+                        academic_title: showsAcademicTitle(degree)
+                          ? prev.academic_title
+                          : '',
+                      }));
+                    }}
                   >
                     <option value="">— اختر —</option>
                     {DEGREES.map((d) => (
@@ -464,19 +537,35 @@ export default function AdminStaffPage() {
                     ))}
                   </select>
                 </div>
+                {showsAcademicTitle(form.degree) && (
+                  <div>
+                    <label className={labelClass}>اللقب العلمي إن وجد</label>
+                    <select
+                      className={inputClass}
+                      value={form.academic_title}
+                      onChange={(e) => setForm({ ...form, academic_title: e.target.value })}
+                    >
+                      <option value="">— اختر —</option>
+                      {ACADEMIC_TITLES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
-              <div>
-                <label className={labelClass}>رقم الهاتف</label>
-                <input
-                  className={inputClass}
-                  dir="ltr"
-                  value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div>
+                  <label className={labelClass}>رقم الهاتف</label>
+                  <input
+                    className={inputClass}
+                    dir="ltr"
+                    value={form.phone}
+                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  />
+                </div>
                 <div>
                   <label className={labelClass}>التوصيف الوظيفي</label>
                   <select
@@ -492,36 +581,112 @@ export default function AdminStaffPage() {
                     ))}
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label className={labelClass}>مكان العمل</label>
+                <select
+                  className={inputClass}
+                  value={form.department_id || form.workplace}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    const dept = departments.find((d) => d.id === value);
+                    if (dept) {
+                      setForm({
+                        ...form,
+                        department_id: dept.id,
+                        workplace: dept.name_ar,
+                      });
+                      return;
+                    }
+                    const legacy = workplaceOptions.find((d) => d.id === value || d.name_ar === value);
+                    setForm({
+                      ...form,
+                      department_id: '',
+                      workplace: legacy?.name_ar || value,
+                    });
+                  }}
+                  disabled={departmentsLoading}
+                >
+                  <option value="">
+                    {departmentsLoading
+                      ? 'جاري تحميل الأقسام…'
+                      : departments.length === 0
+                        ? 'لا توجد أقسام مسجّلة'
+                        : '— اختر مكان العمل —'}
+                  </option>
+                  {workplaceOptions.map((d) => (
+                    <option key={d.id} value={d.id.startsWith('legacy:') ? d.name_ar : d.id}>
+                      {d.name_ar}
+                    </option>
+                  ))}
+                </select>
+                {departmentsError && (
+                  <p className="mt-0.5 text-xs text-red-700">{departmentsError}</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div>
-                  <label className={labelClass}>مكان العمل</label>
+                  <label className={labelClass}>
+                    تاريخ المباشرة <span className="text-red-700">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    className={`${inputClass} cursor-pointer`}
+                    dir="ltr"
+                    value={form.effective_from}
+                    onChange={(e) => setForm({ ...form, effective_from: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Tab' || e.key === 'Escape') return;
+                      e.preventDefault();
+                    }}
+                    onPaste={(e) => e.preventDefault()}
+                    onClick={(e) => {
+                      const el = e.currentTarget;
+                      if (typeof el.showPicker === 'function') {
+                        try {
+                          el.showPicker();
+                        } catch {
+                          /* يفتح التقويم بالنقر العادي إن لم يُدعم showPicker */
+                        }
+                      }
+                    }}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>رقم أمر المباشرة</label>
                   <input
                     className={inputClass}
-                    value={form.workplace}
-                    onChange={(e) => setForm({ ...form, workplace: e.target.value })}
-                    placeholder="مثال: شعبة الحسابات"
+                    value={form.commencement_order_no}
+                    onChange={(e) =>
+                      setForm({ ...form, commencement_order_no: e.target.value })
+                    }
+                    placeholder="مثال: 123 / 2026"
                   />
                 </div>
               </div>
 
               {formError && (
-                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-900">
                   {formError}
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
+              <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-2">
                 <button
                   type="button"
                   onClick={closeModal}
                   disabled={saving}
-                  className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  className="rounded-md border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   إلغاء
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-md bg-red-950 px-5 py-2 text-sm font-semibold text-white hover:bg-red-900 disabled:opacity-50"
+                  className="rounded-md bg-red-950 px-5 py-1.5 text-sm font-semibold text-white hover:bg-red-900 disabled:opacity-50"
                 >
                   {saving
                     ? 'جاري الحفظ…'
@@ -560,7 +725,7 @@ export default function AdminStaffPage() {
                   سبب إنهاء الخدمة <span className="text-red-700">*</span>
                 </label>
                 <textarea
-                  className={inputClass}
+                  className={`${inputClass} h-auto py-2`}
                   rows={3}
                   value={terminateReason}
                   onChange={(e) => setTerminateReason(e.target.value)}

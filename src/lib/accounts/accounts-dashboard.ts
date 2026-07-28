@@ -51,6 +51,7 @@ export type AccountsDashboardStats = {
     collections_total: string;
     pending_installments: number;
     overdue_installments: number;
+    pending_stage_promotions: number;
   };
   cash: {
     boxes: { total: number; active: number; draft: number; suspended: number };
@@ -540,6 +541,14 @@ export async function getAccountsDashboardStats(
   const pr = row1(payrollRuns.rows);
   const sup = supplierSummary;
 
+  const pendingPromotions = await safeQuery<{ n: number }>(
+    client,
+    `SELECT COUNT(*)::int AS n
+     FROM student_affairs.stage_promotion_requests
+     WHERE status = 'pending'`
+  );
+  const pendingStagePromotions = Number(row1(pendingPromotions.rows).n ?? 0);
+
   const byStageRaw = academicStages.rows.length
     ? academicStages.rows
     : [
@@ -597,6 +606,7 @@ export async function getAccountsDashboardStats(
       collections_total: row1(collections.rows).total ?? '0',
       pending_installments: Number(row1(installments.rows).pending ?? 0),
       overdue_installments: Number(row1(installments.rows).overdue ?? 0),
+      pending_stage_promotions: pendingStagePromotions,
     },
     cash: {
       boxes: row1(cashBoxes.rows),
