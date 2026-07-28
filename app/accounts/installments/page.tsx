@@ -67,6 +67,8 @@ export default function AccountsInstallmentsPage() {
   const [pendingDepartmentFilter, setPendingDepartmentFilter] = useState<string>('');
   const [paidSearchTerm, setPaidSearchTerm] = useState<string>('');
   const [paidDepartmentFilter, setPaidDepartmentFilter] = useState<string>('');
+  const [paidTablePage, setPaidTablePage] = useState(1);
+  const PAID_PAGE_SIZE = 50;
 
   const totalStudentsAcrossDepartments = useMemo(() => {
     return departments.reduce((sum, department) => sum + (department.total || 0), 0);
@@ -139,6 +141,35 @@ export default function AccountsInstallmentsPage() {
       return fieldsToSearch.some((field) => field?.toLowerCase().includes(term));
     });
   }, [paidStudents, paidDepartmentFilter, paidSearchTerm]);
+
+  const paidTotalPages = Math.max(
+    1,
+    Math.ceil(filteredPaidStudents.length / PAID_PAGE_SIZE)
+  );
+
+  const pagedPaidStudents = useMemo(() => {
+    const safePage = Math.min(Math.max(paidTablePage, 1), paidTotalPages);
+    const start = (safePage - 1) * PAID_PAGE_SIZE;
+    return filteredPaidStudents.slice(start, start + PAID_PAGE_SIZE);
+  }, [filteredPaidStudents, paidTablePage, paidTotalPages]);
+
+  const paidPageRangeLabel = useMemo(() => {
+    if (filteredPaidStudents.length === 0) return '0';
+    const safePage = Math.min(Math.max(paidTablePage, 1), paidTotalPages);
+    const start = (safePage - 1) * PAID_PAGE_SIZE + 1;
+    const end = Math.min(safePage * PAID_PAGE_SIZE, filteredPaidStudents.length);
+    return `${start}–${end}`;
+  }, [filteredPaidStudents.length, paidTablePage, paidTotalPages]);
+
+  useEffect(() => {
+    setPaidTablePage(1);
+  }, [paidSearchTerm, paidDepartmentFilter]);
+
+  useEffect(() => {
+    if (paidTablePage > paidTotalPages) {
+      setPaidTablePage(paidTotalPages);
+    }
+  }, [paidTablePage, paidTotalPages]);
 
   const exportPaidStudentsToCSV = useCallback(() => {
     if (filteredPaidStudents.length === 0) {
@@ -1397,13 +1428,18 @@ export default function AccountsInstallmentsPage() {
               <h2 className="text-sm font-semibold text-gray-900">الطلبة المسددون للأقساط</h2>
               <div className="flex items-center gap-3 text-xs text-gray-500">
                 <span>الإجمالي: {paidStudents.length}</span>
+                {(paidDepartmentFilter || paidSearchTerm.trim()) && (
+                  <span className="text-blue-600">
+                    المطابق: {filteredPaidStudents.length}
+                  </span>
+                )}
+                {filteredPaidStudents.length > 0 && (
+                  <span>عرض {paidPageRangeLabel}</span>
+                )}
                 {paidDepartmentFilter && (
                   <span className="text-amber-600">
                     قسم مختار: <span className="font-semibold">{paidDepartmentFilter}</span>
                   </span>
-                )}
-                {paidSearchTerm.trim() && (
-                  <span className="text-blue-600">المعروض: {filteredPaidStudents.length}</span>
                 )}
               </div>
             </div>
@@ -1494,7 +1530,7 @@ export default function AccountsInstallmentsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
-                {filteredPaidStudents.map((s) => {
+                {pagedPaidStudents.map((s) => {
               const annualFee = getAnnualTuitionFee(s.department, s.study_type);
               const discountAmountValue = s.discount_amount !== null && s.discount_amount !== undefined ? Number(s.discount_amount) : null;
               const discountPercentageValue = s.discount_percentage !== null && s.discount_percentage !== undefined ? Number(s.discount_percentage) : null;
@@ -1544,6 +1580,35 @@ export default function AccountsInstallmentsPage() {
                 })}
               </tbody>
             </table>
+            {paidTotalPages > 1 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-4 py-3 bg-gray-50">
+                <p className="text-xs text-gray-600">
+                  صفحة {Math.min(Math.max(paidTablePage, 1), paidTotalPages)} من{' '}
+                  {paidTotalPages} · عرض {paidPageRangeLabel} من{' '}
+                  {filteredPaidStudents.length} طالب
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaidTablePage((p) => Math.max(1, p - 1))}
+                    disabled={paidTablePage <= 1}
+                    className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    السابق
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPaidTablePage((p) => Math.min(paidTotalPages, p + 1))
+                    }
+                    disabled={paidTablePage >= paidTotalPages}
+                    className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    التالي
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           )}
       </div>

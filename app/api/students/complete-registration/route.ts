@@ -24,13 +24,45 @@ export async function POST(request: NextRequest) {
     const department =
       typeof body.department === 'string' ? body.department.trim() : '';
 
-    const params: string[] = [];
+    const params: (string | string[])[] = [];
     let departmentCondition = '';
+    let scopeDescription = 'جميع الأقسام';
 
-    if (department) {
+    if (department === '__other__' || department === 'other' || department === 'أخرى') {
+      const knownDepartments = [
+        'تقنيات التخدير',
+        'تقنيات الاشعة',
+        'تقنيات الأشعة',
+        'تقنيات صناعة الاسنان',
+        'تقنيات صناعة الأسنان',
+        'هندسة تقنيات البناء والانشاءات',
+        'تقنيات البناء والاستشارات',
+        'تقنيات هندسة النفط والغاز',
+        'تقنيات الفيزياء الصحية',
+        'تقنيات البصريات',
+        'تقنيات صحة المجتمع',
+        'تقنيات طب الطوارئ',
+        'تقنيات العلاج الطبيعي',
+        'هندسة تقنيات الامن السيبراني والحوسبة السحابية',
+        'تقنيات الامن السيبراني',
+        'تقنيات الأمن السيبراني',
+        'القانون',
+      ];
+      params.push(knownDepartments);
+      departmentCondition = `AND (
+        TRIM(COALESCE(major, '')) = ''
+        OR NOT EXISTS (
+          SELECT 1
+          FROM unnest($1::text[]) AS known(name)
+          WHERE normalize_arabic(known.name) = normalize_arabic(COALESCE(major, ''))
+        )
+      )`;
+      scopeDescription = 'الطلبة بدون قسم مطابق (أخرى)';
+    } else if (department) {
       params.push(department);
       departmentCondition =
-        'AND normalize_arabic(COALESCE(major, \'\')) = normalize_arabic($1)';
+        "AND normalize_arabic(COALESCE(major, '')) = normalize_arabic($1)";
+      scopeDescription = `قسم ${department}`;
     }
 
     const result = await query(
@@ -44,9 +76,6 @@ export async function POST(request: NextRequest) {
     );
 
     const completedCount = result.rowCount ?? 0;
-    const scopeDescription = department
-      ? `قسم ${department}`
-      : 'جميع الأقسام';
 
     const ipAddress =
       request.headers.get('x-forwarded-for') ||

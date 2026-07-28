@@ -1688,9 +1688,12 @@ export default function StudentsPage() {
   const handleCompleteRegistrations = async () => {
     if (isCompletingRegistrations) return;
 
-    const scopeName = selectedDepartment
-      ? `قسم ${selectedDepartment}`
-      : 'جميع الأقسام';
+    const scopeName =
+      selectedDepartment === '__other__'
+        ? 'الطلبة بدون قسم مطابق'
+        : selectedDepartment
+          ? `قسم ${selectedDepartment}`
+          : 'جميع الأقسام';
     const confirmed = confirm(
       `هل أنت متأكد من إتمام تسجيل جميع الطلبة قيد التسجيل ضمن ${scopeName}؟\n\nسيتم ترحيلهم إلى صفحة الحسابات.`
     );
@@ -3325,9 +3328,11 @@ export default function StudentsPage() {
               disabled={isCompletingRegistrations}
               className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
               title={
-                selectedDepartment
-                  ? `إتمام تسجيل طلبة قسم ${selectedDepartment}`
-                  : 'إتمام تسجيل جميع الطلبة قيد التسجيل'
+                selectedDepartment === '__other__'
+                  ? 'إتمام تسجيل الطلبة بدون قسم مطابق'
+                  : selectedDepartment
+                    ? `إتمام تسجيل طلبة قسم ${selectedDepartment}`
+                    : 'إتمام تسجيل جميع الطلبة قيد التسجيل'
               }
             >
               {isCompletingRegistrations ? (
@@ -3339,9 +3344,11 @@ export default function StudentsPage() {
               )}
               {isCompletingRegistrations
                 ? 'جارٍ الإتمام...'
-                : selectedDepartment
-                  ? 'إتمام تسجيل القسم'
-                  : 'إتمام تسجيل الكل'}
+                : selectedDepartment === '__other__'
+                  ? 'إتمام تسجيل (أخرى)'
+                  : selectedDepartment
+                    ? 'إتمام تسجيل القسم'
+                    : 'إتمام تسجيل الكل'}
             </button>
             <div className="relative">
               <input
@@ -3407,6 +3414,7 @@ export default function StudentsPage() {
               <option value="تقنيات العلاج الطبيعي">قسم تقنيات العلاج الطبيعي</option>
               <option value="هندسة تقنيات الامن السيبراني والحوسبة السحابية">قسم هندسة تقنيات الامن السيبراني والحوسبة السحابية</option>
               <option value="القانون">قسم القانون</option>
+              <option value="__other__">أخرى (بلا قسم / غير مطابق)</option>
             </select>
           </div>
         </div>

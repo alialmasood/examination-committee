@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     
     // بناء استعلام البحث
     const whereConditions = [];
-    const queryParams: (string | number)[] = [];
+    const queryParams: (string | number | string[])[] = [];
     let paramIndex = 1;
     
     if (search) {
@@ -57,9 +57,44 @@ export async function GET(request: NextRequest) {
     }
     
     if (department) {
-      whereConditions.push(`normalize_arabic(COALESCE(s.major, '')) = normalize_arabic($${paramIndex})`);
-      queryParams.push(department);
-      paramIndex++;
+      if (department === '__other__' || department === 'other' || department === 'أخرى') {
+        // طلبة بلا قسم أو بقسم لا يطابق الأقسام المعتمدة
+        const knownDepartments = [
+          'تقنيات التخدير',
+          'تقنيات الاشعة',
+          'تقنيات الأشعة',
+          'تقنيات صناعة الاسنان',
+          'تقنيات صناعة الأسنان',
+          'هندسة تقنيات البناء والانشاءات',
+          'تقنيات البناء والاستشارات',
+          'تقنيات هندسة النفط والغاز',
+          'تقنيات الفيزياء الصحية',
+          'تقنيات البصريات',
+          'تقنيات صحة المجتمع',
+          'تقنيات طب الطوارئ',
+          'تقنيات العلاج الطبيعي',
+          'هندسة تقنيات الامن السيبراني والحوسبة السحابية',
+          'تقنيات الامن السيبراني',
+          'تقنيات الأمن السيبراني',
+          'القانون',
+        ];
+        whereConditions.push(`(
+          TRIM(COALESCE(s.major, '')) = ''
+          OR NOT EXISTS (
+            SELECT 1
+            FROM unnest($${paramIndex}::text[]) AS known(name)
+            WHERE normalize_arabic(known.name) = normalize_arabic(COALESCE(s.major, ''))
+          )
+        )`);
+        queryParams.push(knownDepartments);
+        paramIndex++;
+      } else {
+        whereConditions.push(
+          `normalize_arabic(COALESCE(s.major, '')) = normalize_arabic($${paramIndex})`
+        );
+        queryParams.push(department);
+        paramIndex++;
+      }
     }
     
     if (level) {
