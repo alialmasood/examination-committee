@@ -13,7 +13,7 @@ export const metadata: Metadata = {
   title: "SHAU - نظام كلية الشرق للعلوم التقنية التخصصية",
   description: "نظام إدارة شامل لكلية الشرق للعلوم التقنية التخصصية",
   manifest: "/manifest.json",
-  themeColor: "#991b1b",
+  themeColor: "#1EA886",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -42,7 +42,7 @@ export const metadata: Metadata = {
     "apple-mobile-web-app-title": "SHAU",
     "format-detection": "telephone=no",
     "mobile-web-app-capable": "yes",
-    "msapplication-TileColor": "#991b1b",
+    "msapplication-TileColor": "#1EA886",
     "msapplication-tap-highlight": "no",
   },
 };

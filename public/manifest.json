@@ -4,8 +4,8 @@
   "description": "نظام إدارة شامل لكلية الشرق للعلوم التقنية التخصصية",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#991b1b",
+  "background_color": "#1EA886",
+  "theme_color": "#1EA886",
   "orientation": "portrait-primary",
   "icons": [
     {

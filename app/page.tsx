@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Image from 'next/image';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
+import PwaInstallPrompt from './components/PwaInstallPrompt';
 
 /** لون الهوية البصرية — لعرض الموبايل فقط */
 const BRAND = '#1EA886';
@@ -449,6 +450,8 @@ export default function LoginPage() {
             </div>
           </form>
         </div>
+
+        <PwaInstallPrompt />
       </div>
     </>
   );
