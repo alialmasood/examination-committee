@@ -2,551 +2,704 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { accountsApi } from '../../entries/components/types';
+import {
+  currentMonthRange,
+  currentWeekRange,
+  type CashboxRegisterData,
+  type CashboxRegisterRow,
+} from '@/src/lib/accounts/cashbox-daily-register-types';
+import { printCashboxDailyRegister } from './printCashboxDailyRegister';
 
-type JournalRow = {
-  entry_date: string;
-  entry_number: string;
-  entry_description: string;
-  entry_type: string;
-  source_type: string | null;
-  source_id: string | null;
-  reference_number: string | null;
-  source_student_id: string | null;
-  source_student_name: string | null;
-  account_code: string;
-  account_name_ar: string;
-  cost_center_code?: string | null;
-  cost_center_name_ar?: string | null;
-  line_description?: string | null;
-  line_number?: number;
-  debit_amount: string;
-  credit_amount: string;
-  journal_entry_id: string;
-  line_id: string;
-};
+const money = (n: number) =>
+  new Intl.NumberFormat('en-US').format(Math.round(n || 0));
 
-type Totals = {
-  total_debit: string;
-  total_credit: string;
-  page_debit: string;
-  page_credit: string;
-};
-
-const ENTRY_TYPE_LABELS: Record<string, string> = {
-  MANUAL: 'قيد يدوي',
-  OPENING: 'قيد افتتاحي',
-  RECEIPT: 'سند قبض',
-  PAYMENT: 'سند صرف',
-  TRANSFER: 'تحويل',
-  STUDENT_FEE: 'رسوم طلبة',
-  SALARY: 'رواتب',
-  ADJUSTMENT: 'تسوية',
-  CLOSING: 'قيد إقفال',
-  REVERSAL: 'قيد عكسي',
-};
-
-function money(value: unknown): string {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n === 0) return '—';
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(n);
-}
-
-function moneyTotal(value: unknown): string {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return '0';
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(n);
-}
-
-function formatDate(value?: string | null): string {
-  if (!value) return '—';
-  const raw = String(value).slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return String(value);
+const formatDate = (iso?: string | null) => {
+  if (!iso) return '—';
+  const raw = String(iso).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return String(iso);
   const [y, m, d] = raw.split('-');
   return `${d}/${m}/${y}`;
-}
-
-type EntryGroup = {
-  journal_entry_id: string;
-  entry_number: string;
-  entry_date: string;
-  entry_description: string;
-  entry_type: string;
-  source_type: string | null;
-  reference_number: string | null;
-  source_student_id: string | null;
-  source_student_name: string | null;
-  lines: JournalRow[];
-  total_debit: number;
-  total_credit: number;
 };
 
-export default function JournalBookPage() {
-  const [rows, setRows] = useState<JournalRow[]>([]);
+type CustomReportState = {
+  open: boolean;
+  department: string;
+  stage: string;
+  docType: '' | 'receipt' | 'payment';
+  dateFrom: string;
+  dateTo: string;
+  format: 'excel' | 'pdf';
+};
+
+export default function CashboxDailyRegisterPage() {
+  const [data, setData] = useState<CashboxRegisterData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [years, setYears] = useState<Array<{ id: string; code: string }>>([]);
-  const [accounts, setAccounts] = useState<
-    Array<{ id: string; code: string; name_ar: string }>
-  >([]);
-  const [fiscalYearId, setFiscalYearId] = useState('');
-  const [accountId, setAccountId] = useState('');
-  const [entryType, setEntryType] = useState('');
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [department, setDepartment] = useState('');
+  const [stage, setStage] = useState('');
+  const [docType, setDocType] = useState<'' | 'receipt' | 'payment'>('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [entryNumber, setEntryNumber] = useState('');
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalLines, setTotalLines] = useState(0);
-  const [totals, setTotals] = useState<Totals | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [savingNotesId, setSavingNotesId] = useState<string | null>(null);
+  const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
+  const [custom, setCustom] = useState<CustomReportState>({
+    open: false,
+    department: '',
+    stage: '',
+    docType: '',
+    dateFrom: '',
+    dateTo: '',
+    format: 'pdf',
+  });
+
+  const queryString = useMemo(() => {
+    const p = new URLSearchParams();
+    if (search.trim()) p.set('search', search.trim());
+    if (department) p.set('department', department);
+    if (stage) p.set('stage', stage);
+    if (docType) p.set('doc_type', docType);
+    if (dateFrom) p.set('date_from', dateFrom);
+    if (dateTo) p.set('date_to', dateTo);
+    const qs = p.toString();
+    return qs ? `?${qs}` : '';
+  }, [search, department, stage, docType, dateFrom, dateTo]);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams({ page: String(page), page_size: '50' });
-    if (fiscalYearId) params.set('fiscal_year_id', fiscalYearId);
-    if (accountId) params.set('account_id', accountId);
-    if (entryType) params.set('entry_type', entryType);
-    if (dateFrom) params.set('date_from', dateFrom);
-    if (dateTo) params.set('date_to', dateTo);
-    if (entryNumber.trim()) params.set('entry_number', entryNumber.trim());
+    setError('');
+    try {
+      const res = await fetch(`/api/accounts/reports/journal${queryString}`, {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.success) {
+        setError(body.error || 'تعذر تحميل سجل يومية الصندوق');
+        setData(null);
+        return;
+      }
+      const next = body.data as CashboxRegisterData;
+      setData(next);
+      const draft: Record<string, string> = {};
+      for (const row of next.rows) draft[row.id] = row.notes || '';
+      setNotesDraft(draft);
+    } catch {
+      setError('تعذر الاتصال بالخادم');
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [queryString]);
 
-    const res = await accountsApi<JournalRow[]>(
-      `/api/accounts/reports/journal?${params}`
+  useEffect(() => {
+    const t = setTimeout(() => void load(), 250);
+    return () => clearTimeout(t);
+  }, [load]);
+
+  async function saveNotes(row: CashboxRegisterRow) {
+    const notes = notesDraft[row.id] ?? '';
+    if (notes === (row.notes || '')) return;
+    setSavingNotesId(row.id);
+    try {
+      const res = await fetch('/api/accounts/reports/journal/notes', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receipt_id: row.id, notes }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.success) {
+        alert(body.error || 'تعذر حفظ الملاحظات');
+        return;
+      }
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              rows: prev.rows.map((r) =>
+                r.id === row.id ? { ...r, notes } : r
+              ),
+            }
+          : prev
+      );
+    } catch {
+      alert('تعذر الاتصال بالخادم');
+    } finally {
+      setSavingNotesId(null);
+    }
+  }
+
+  async function exportExcel(
+    params: URLSearchParams,
+    reportTitle: string
+  ): Promise<void> {
+    params.set('report_title', reportTitle);
+    const res = await fetch(
+      `/api/accounts/reports/journal/excel?${params.toString()}`,
+      { credentials: 'include', cache: 'no-store' }
     );
-    if (!res.success) {
-      setError(res.message || 'تعذر تحميل دفتر اليومية');
-      setRows([]);
-      setTotals(null);
-    } else {
-      setRows((res.data as JournalRow[]) || []);
-      setTotals((res.totals as Totals) || null);
-      const pg = res.pagination as
-        | { total_pages?: number; total?: number }
-        | undefined;
-      setTotalPages(pg?.total_pages || 1);
-      setTotalLines(pg?.total || 0);
-      setError(null);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'تعذر تصدير Excel');
     }
-    setLoading(false);
-  }, [page, fiscalYearId, accountId, entryType, dateFrom, dateTo, entryNumber]);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `يومية-الصندوق-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
-  useEffect(() => {
-    void (async () => {
-      const opt = await accountsApi<{
-        fiscal_years: Array<{ id: string; code: string }>;
-        default_fiscal_year: { id: string } | null;
-        posting_accounts: Array<{ id: string; code: string; name_ar: string }>;
-      }>('/api/accounts/journal-entries/options');
-      if (opt.success && opt.data) {
-        setYears(opt.data.fiscal_years || []);
-        setAccounts(opt.data.posting_accounts || []);
-        if (opt.data.default_fiscal_year?.id) {
-          setFiscalYearId(opt.data.default_fiscal_year.id);
-        }
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, fiscalYearId, accountId, entryType]);
-
-  const groups = useMemo<EntryGroup[]>(() => {
-    const map = new Map<string, EntryGroup>();
-    for (const row of rows) {
-      let group = map.get(row.journal_entry_id);
-      if (!group) {
-        group = {
-          journal_entry_id: row.journal_entry_id,
-          entry_number: row.entry_number,
-          entry_date: row.entry_date,
-          entry_description: row.entry_description,
-          entry_type: row.entry_type,
-          source_type: row.source_type,
-          reference_number: row.reference_number,
-          source_student_id: row.source_student_id,
-          source_student_name: row.source_student_name,
-          lines: [],
-          total_debit: 0,
-          total_credit: 0,
-        };
-        map.set(row.journal_entry_id, group);
-      }
-      group.lines.push(row);
-      group.total_debit += Number(row.debit_amount) || 0;
-      group.total_credit += Number(row.credit_amount) || 0;
+  async function exportPdf(
+    params: URLSearchParams,
+    reportTitle: string
+  ): Promise<void> {
+    const res = await fetch(
+      `/api/accounts/reports/journal?${params.toString()}`,
+      { credentials: 'include', cache: 'no-store' }
+    );
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.success) {
+      throw new Error(body.error || 'تعذر تجهيز التقرير');
     }
-    return Array.from(map.values());
-  }, [rows]);
+    printCashboxDailyRegister(body.data as CashboxRegisterData, reportTitle);
+  }
 
-  function applyFilters() {
-    setPage(1);
-    void load();
+  async function runReport(
+    kind: 'week' | 'month' | 'custom' | 'current',
+    format: 'excel' | 'pdf',
+    customFilters?: Partial<CustomReportState>
+  ) {
+    const key = `${kind}-${format}`;
+    setExporting(key);
+    try {
+      const params = new URLSearchParams();
+      let title = 'سجل يومية الصندوق — كلية الشرق';
+
+      if (kind === 'week') {
+        const { from, to } = currentWeekRange();
+        params.set('date_from', from);
+        params.set('date_to', to);
+        title = `تقرير أسبوعي — يومية الصندوق (${formatDate(from)} → ${formatDate(to)})`;
+      } else if (kind === 'month') {
+        const { from, to } = currentMonthRange();
+        params.set('date_from', from);
+        params.set('date_to', to);
+        title = `تقرير شهري — يومية الصندوق (${formatDate(from)} → ${formatDate(to)})`;
+      } else if (kind === 'custom' && customFilters) {
+        if (customFilters.department) params.set('department', customFilters.department);
+        if (customFilters.stage) params.set('stage', customFilters.stage);
+        if (customFilters.docType) params.set('doc_type', customFilters.docType);
+        if (customFilters.dateFrom) params.set('date_from', customFilters.dateFrom);
+        if (customFilters.dateTo) params.set('date_to', customFilters.dateTo);
+        title = 'تقرير مخصص — يومية الصندوق';
+      } else {
+        if (search.trim()) params.set('search', search.trim());
+        if (department) params.set('department', department);
+        if (stage) params.set('stage', stage);
+        if (docType) params.set('doc_type', docType);
+        if (dateFrom) params.set('date_from', dateFrom);
+        if (dateTo) params.set('date_to', dateTo);
+        title = 'سجل يومية الصندوق — كلية الشرق';
+      }
+
+      if (format === 'excel') await exportExcel(params, title);
+      else await exportPdf(params, title);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'تعذر إنشاء التقرير');
+    } finally {
+      setExporting(null);
+    }
   }
 
   function resetFilters() {
-    setAccountId('');
-    setEntryType('');
+    setSearch('');
+    setDepartment('');
+    setStage('');
+    setDocType('');
     setDateFrom('');
     setDateTo('');
-    setEntryNumber('');
-    setPage(1);
   }
 
+  const hasFilters =
+    !!search.trim() || !!department || !!stage || !!docType || !!dateFrom || !!dateTo;
+
   return (
-    <div className="p-6 w-full" dir="rtl">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+    <div className="p-4 md:p-6 max-w-[1600px] mx-auto" dir="rtl">
+      <div className="mb-4 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">دفتر اليومية</h1>
+          <Link href="/accounts/reports" className="text-sm text-red-900 hover:underline">
+            ← العودة إلى التقارير
+          </Link>
+          <h1 className="text-xl font-semibold text-gray-900 mt-2">
+            سجل يومية الصندوق — كلية الشرق
+          </h1>
           <p className="text-sm text-gray-600 mt-1">
-            سجل القيود المرحلة (POSTED) — مدين / دائن
+            المقبوضات من وصولات تسديد الطلبة · البيان من اسم الطالب على الوصل
           </p>
         </div>
-        <Link
-          href="/accounts/entries"
-          className="text-sm text-red-900 hover:underline"
-        >
-          → العودة للقيود
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-gray-50 disabled:opacity-50"
+          >
+            تحديث
+          </button>
+          <button
+            type="button"
+            onClick={() => void runReport('week', 'pdf')}
+            disabled={!!exporting}
+            className="rounded-md bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
+          >
+            {exporting === 'week-pdf' ? '…' : 'تقرير أسبوعي PDF'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void runReport('week', 'excel')}
+            disabled={!!exporting}
+            className="rounded-md border border-amber-700 text-amber-900 px-3 py-1.5 text-xs font-semibold hover:bg-amber-50 disabled:opacity-50"
+          >
+            أسبوعي Excel
+          </button>
+          <button
+            type="button"
+            onClick={() => void runReport('month', 'pdf')}
+            disabled={!!exporting}
+            className="rounded-md bg-indigo-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-900 disabled:opacity-50"
+          >
+            {exporting === 'month-pdf' ? '…' : 'تقرير شهري PDF'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void runReport('month', 'excel')}
+            disabled={!!exporting}
+            className="rounded-md border border-indigo-800 text-indigo-900 px-3 py-1.5 text-xs font-semibold hover:bg-indigo-50 disabled:opacity-50"
+          >
+            شهري Excel
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setCustom((c) => ({
+                ...c,
+                open: true,
+                department,
+                stage,
+                docType,
+                dateFrom,
+                dateTo,
+              }))
+            }
+            className="rounded-md bg-red-950 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-900"
+          >
+            تقرير مخصص
+          </button>
+          <button
+            type="button"
+            onClick={() => void runReport('current', 'pdf')}
+            disabled={!!exporting || !data}
+            className="rounded-md border border-red-900 text-red-950 px-3 py-1.5 text-xs font-semibold hover:bg-red-50 disabled:opacity-50"
+          >
+            طباعة الحالي
+          </button>
+          <button
+            type="button"
+            onClick={() => void runReport('current', 'excel')}
+            disabled={!!exporting || !data}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold hover:bg-gray-50 disabled:opacity-50"
+          >
+            Excel الحالي
+          </button>
+        </div>
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white overflow-hidden shadow-sm mb-4">
-        <div className="bg-red-950 text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-xs text-red-100/80">بحث وفلترة</p>
-            <p className="text-sm font-semibold">سجل اليومية العامة</p>
-          </div>
-          <p className="text-xs text-red-100/90">
-            {totalLines > 0 ? `${totalLines} سطر قيد` : ''}
-          </p>
+      {/* فلاتر */}
+      <div className="mb-4 rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="bg-red-950 text-white px-4 py-2.5">
+          <p className="text-sm font-semibold">بحث وفلترة</p>
         </div>
-        <div className="p-4 grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3 items-end">
+        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <div className="lg:col-span-2">
+            <label className="block text-xs text-gray-500 mb-1">بحث</label>
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="اسم الطالب / رقم الوصل / رقم الطالب…"
+              className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-red-800"
+            />
+          </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              السنة المالية
-            </label>
+            <label className="block text-xs text-gray-500 mb-1">القسم</label>
             <select
-              className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
-              value={fiscalYearId}
-              onChange={(e) => {
-                setFiscalYearId(e.target.value);
-                setPage(1);
-              }}
+              value={department}
+              onChange={(e) => setDepartment(e.target.value)}
+              className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm"
             >
-              <option value="">كل السنوات</option>
-              {years.map((y) => (
-                <option key={y.id} value={y.id}>
-                  {y.code}
+              <option value="">الكل</option>
+              {(data?.departments || []).map((d) => (
+                <option key={d} value={d}>
+                  {d}
                 </option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              نوع القيد
-            </label>
+            <label className="block text-xs text-gray-500 mb-1">المرحلة</label>
             <select
-              className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
-              value={entryType}
-              onChange={(e) => {
-                setEntryType(e.target.value);
-                setPage(1);
-              }}
+              value={stage}
+              onChange={(e) => setStage(e.target.value)}
+              className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm"
             >
-              <option value="">كل الأنواع</option>
-              {Object.entries(ENTRY_TYPE_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
+              <option value="">الكل</option>
+              <option value="first">الأولى</option>
+              <option value="second">الثانية</option>
+              <option value="third">الثالثة</option>
+              <option value="fourth">الرابعة</option>
             </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">نوع المستند</label>
+            <select
+              value={docType}
+              onChange={(e) =>
+                setDocType(e.target.value as '' | 'receipt' | 'payment')
+              }
+              className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm"
+            >
+              <option value="">الكل</option>
+              <option value="receipt">قبض</option>
+              <option value="payment">دفع</option>
+            </select>
+          </div>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={resetFilters}
+              disabled={!hasFilters}
+              className="h-10 w-full rounded-md border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+            >
+              إعادة تعيين
+            </button>
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">من تاريخ</label>
             <input
               type="date"
-              className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
+              className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              إلى تاريخ
-            </label>
+            <label className="block text-xs text-gray-500 mb-1">إلى تاريخ</label>
             <input
               type="date"
-              className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
+              className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm"
             />
           </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              رقم القيد
-            </label>
-            <input
-              className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
-              placeholder="JV-…"
-              value={entryNumber}
-              onChange={(e) => setEntryNumber(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">الحساب</label>
-            <select
-              className="box-border h-10 w-full border border-gray-300 rounded-md px-3 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
-              value={accountId}
-              onChange={(e) => {
-                setAccountId(e.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">كل الحسابات</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.code} — {a.name_ar}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="px-4 pb-4 flex flex-wrap items-center justify-end gap-2 border-t border-gray-100 pt-3">
-          <button
-            type="button"
-            onClick={resetFilters}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-          >
-            إعادة تعيين
-          </button>
-          <button
-            type="button"
-            onClick={applyFilters}
-            className="rounded-md bg-red-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-red-800"
-          >
-            تطبيق الفلاتر
-          </button>
         </div>
       </div>
 
-      {error ? (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+      {error && (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
-        </div>
-      ) : null}
-
-      {loading ? (
-        <div className="py-16 text-center text-gray-500 text-sm">
-          جارٍ تحميل دفتر اليومية…
-        </div>
-      ) : groups.length === 0 ? (
-        <div className="py-16 text-center border border-dashed border-gray-300 rounded-lg bg-white">
-          <p className="text-gray-700 font-medium">لا توجد قيود مرحلة مطابقة</p>
-          <p className="text-sm text-gray-500 mt-1">
-            عدّل الفلاتر أو أنشئ قيوداً جديدة (وصولات التسديد تُرحَّل تلقائياً).
-          </p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-          <table className="min-w-full text-sm">
-            <thead className="bg-red-950 text-white">
-              <tr>
-                <th className="px-3 py-2.5 text-right font-medium w-24">
-                  التاريخ
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium w-36">
-                  رقم القيد
-                </th>
-                <th className="px-3 py-2.5 pe-5 text-right font-medium min-w-[220px] w-[28%]">
-                  الحساب
-                </th>
-                <th className="px-3 py-2.5 ps-5 text-right font-medium min-w-[240px] w-[32%]">
-                  البيان
-                </th>
-                <th className="px-3 py-2.5 text-left font-medium w-32">
-                  مدين
-                </th>
-                <th className="px-3 py-2.5 text-left font-medium w-32">
-                  دائن
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium w-36">
-                  المرجع
-                </th>
-              </tr>
-            </thead>
-            {groups.map((group) => (
-              <tbody
-                key={group.journal_entry_id}
-                className="border-b-2 border-gray-200"
-              >
-                <tr className="bg-slate-100/80">
-                  <td className="px-3 py-2 text-gray-800 font-medium whitespace-nowrap">
-                    {formatDate(group.entry_date)}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs font-semibold text-red-950">
-                    {group.entry_number}
-                  </td>
-                  <td colSpan={2} className="px-3 py-2 text-gray-800">
-                    <span className="font-medium">
-                      {group.entry_description}
-                    </span>
-                    <span className="mr-2 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-900">
-                      {ENTRY_TYPE_LABELS[group.entry_type] || group.entry_type}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2" />
-                  <td className="px-3 py-2" />
-                  <td className="px-3 py-2">
-                    {group.source_type === 'STUDENT_SETTLEMENT_RECEIPT' &&
-                    group.source_student_id ? (
-                      <Link
-                        href={`/accounts/students/accounts/student/${group.source_student_id}`}
-                        className="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-900 hover:bg-red-100"
-                        title={
-                          group.source_student_name
-                            ? `وصل ${group.reference_number} — ${group.source_student_name}`
-                            : `وصل ${group.reference_number}`
-                        }
-                      >
-                        عرض الوصل {group.reference_number}
-                      </Link>
-                    ) : group.reference_number ? (
-                      <span
-                        className="font-mono text-[11px] text-gray-600"
-                        dir="ltr"
-                      >
-                        {group.reference_number}
-                      </span>
-                    ) : (
-                      <span className="text-gray-400">—</span>
-                    )}
-                  </td>
-                </tr>
-                {group.lines.map((line) => (
-                  <tr key={line.line_id} className="hover:bg-gray-50">
-                    <td className="px-3 py-1.5" />
-                    <td className="px-3 py-1.5" />
-                    <td className="px-3 py-1.5 pe-5 align-top min-w-[220px]">
-                      <span className="font-mono text-xs text-gray-500 ml-1">
-                        {line.account_code}
-                      </span>
-                      <span
-                        className={
-                          Number(line.debit_amount) > 0
-                            ? 'text-gray-900 font-medium'
-                            : 'text-gray-700'
-                        }
-                      >
-                        {Number(line.credit_amount) > 0 ? (
-                          <span className="text-gray-400 mx-1">إلى</span>
-                        ) : null}
-                        {line.account_name_ar}
-                      </span>
-                      {line.cost_center_code ? (
-                        <span className="block text-[10px] text-gray-400 mt-0.5">
-                          مركز كلفة: {line.cost_center_code} —{' '}
-                          {line.cost_center_name_ar}
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-1.5 ps-5 align-top text-xs text-gray-500 min-w-[240px] border-r border-gray-100">
-                      {line.line_description || '—'}
-                    </td>
-                    <td
-                      className="px-3 py-1.5 text-left font-mono text-xs font-semibold text-emerald-800"
-                      dir="ltr"
-                    >
-                      {money(line.debit_amount)}
-                    </td>
-                    <td
-                      className="px-3 py-1.5 text-left font-mono text-xs font-semibold text-red-800"
-                      dir="ltr"
-                    >
-                      {money(line.credit_amount)}
-                    </td>
-                    <td className="px-3 py-1.5" />
-                  </tr>
-                ))}
-                <tr className="bg-slate-50 text-xs">
-                  <td className="px-3 py-1.5" colSpan={4}>
-                    <span className="text-gray-500">إجمالي القيد</span>
-                  </td>
-                  <td
-                    className="px-3 py-1.5 text-left font-mono font-bold text-emerald-900"
-                    dir="ltr"
-                  >
-                    {moneyTotal(group.total_debit)}
-                  </td>
-                  <td
-                    className="px-3 py-1.5 text-left font-mono font-bold text-red-900"
-                    dir="ltr"
-                  >
-                    {moneyTotal(group.total_credit)}
-                  </td>
-                  <td className="px-3 py-1.5" />
-                </tr>
-              </tbody>
-            ))}
-            {totals ? (
-              <tfoot>
-                <tr className="bg-red-950 text-white text-xs">
-                  <td className="px-3 py-2.5 font-semibold" colSpan={4}>
-                    إجمالي الصفحة ({groups.length} قيد)
-                  </td>
-                  <td className="px-3 py-2.5 text-left font-mono font-bold" dir="ltr">
-                    {moneyTotal(totals.page_debit)}
-                  </td>
-                  <td className="px-3 py-2.5 text-left font-mono font-bold" dir="ltr">
-                    {moneyTotal(totals.page_credit)}
-                  </td>
-                  <td className="px-3 py-2.5" />
-                </tr>
-                <tr className="bg-red-900 text-white text-xs">
-                  <td className="px-3 py-2.5 font-semibold" colSpan={4}>
-                    الإجمالي العام (كل النتائج)
-                  </td>
-                  <td className="px-3 py-2.5 text-left font-mono font-bold" dir="ltr">
-                    {moneyTotal(totals.total_debit)}
-                  </td>
-                  <td className="px-3 py-2.5 text-left font-mono font-bold" dir="ltr">
-                    {moneyTotal(totals.total_credit)}
-                  </td>
-                  <td className="px-3 py-2.5" />
-                </tr>
-              </tfoot>
-            ) : null}
-          </table>
         </div>
       )}
 
-      <div className="flex items-center justify-between mt-4 text-sm">
-        <button
-          type="button"
-          disabled={page <= 1}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
-          onClick={() => setPage((p) => Math.max(1, p - 1))}
-        >
-          السابق
-        </button>
-        <span className="text-xs text-gray-600">
-          صفحة {page} من {totalPages}
-        </span>
-        <button
-          type="button"
-          disabled={page >= totalPages}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
-          onClick={() => setPage((p) => p + 1)}
-        >
-          التالي
-        </button>
-      </div>
+      {loading && !data ? (
+        <div className="py-16 text-center text-gray-500 text-sm">جارٍ التحميل…</div>
+      ) : data ? (
+        <>
+          <div className="mb-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+              <p className="text-xs text-amber-800">عدد السجلات</p>
+              <p className="text-xl font-bold tabular-nums">{data.totals.count}</p>
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
+              <p className="text-xs text-emerald-800">إجمالي مقبوضات الصندوق</p>
+              <p className="text-xl font-bold tabular-nums text-emerald-800">
+                {money(data.totals.cash_received)} IQD
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs text-slate-600">إيداعات البنك</p>
+              <p className="text-xl font-bold tabular-nums text-slate-500">
+                {money(data.totals.bank_deposit)} IQD
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-red-950 text-white">
+                  <tr>
+                    <th className="px-2 py-2.5 text-center font-medium whitespace-nowrap">التسلسل</th>
+                    <th className="px-2 py-2.5 text-center font-medium whitespace-nowrap">
+                      حسابات الصندوق
+                      <br />
+                      <span className="text-[10px] font-normal text-red-100">(مقبوضات منه)</span>
+                    </th>
+                    <th className="px-2 py-2.5 text-center font-medium whitespace-nowrap">
+                      حسابات البنك
+                      <br />
+                      <span className="text-[10px] font-normal text-red-100">(ايداعات له)</span>
+                    </th>
+                    <th className="px-2 py-2.5 text-right font-medium">البيان</th>
+                    <th className="px-2 py-2.5 text-center font-medium">نوع المستند</th>
+                    <th className="px-2 py-2.5 text-center font-medium">تاريخ المستند</th>
+                    <th className="px-2 py-2.5 text-center font-medium">رقم المستند</th>
+                    <th className="px-2 py-2.5 text-center font-medium">تاريخ الشيك</th>
+                    <th className="px-2 py-2.5 text-center font-medium">رقم الشيك</th>
+                    <th className="px-2 py-2.5 text-right font-medium">القسم</th>
+                    <th className="px-2 py-2.5 text-center font-medium">المرحلة</th>
+                    <th className="px-2 py-2.5 text-right font-medium min-w-[160px]">ملاحظات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {data.rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={12} className="px-4 py-12 text-center text-gray-500">
+                        لا توجد سجلات مطابقة للفلاتر الحالية
+                      </td>
+                    </tr>
+                  ) : (
+                    data.rows.map((row) => (
+                      <tr key={row.id} className="hover:bg-amber-50/40">
+                        <td className="px-2 py-2 text-center tabular-nums text-gray-600">
+                          {row.seq}
+                        </td>
+                        <td className="px-2 py-2 text-center font-bold tabular-nums text-emerald-800">
+                          {money(row.cash_received)}
+                        </td>
+                        <td className="px-2 py-2 text-center text-slate-400">—</td>
+                        <td className="px-2 py-2 font-medium text-red-950">
+                          {row.statement}
+                          <div className="text-[10px] text-gray-400 font-normal" dir="ltr">
+                            {row.university_id}
+                          </div>
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                            {row.doc_type_label}
+                          </span>
+                        </td>
+                        <td className="px-2 py-2 text-center tabular-nums">
+                          {formatDate(row.doc_date)}
+                        </td>
+                        <td className="px-2 py-2 text-center font-mono text-[11px]" dir="ltr">
+                          {row.doc_number}
+                        </td>
+                        <td className="px-2 py-2 text-center text-slate-400">—</td>
+                        <td className="px-2 py-2 text-center text-slate-400">—</td>
+                        <td className="px-2 py-2 text-gray-700 max-w-[180px]">
+                          <span className="line-clamp-2">{row.department}</span>
+                        </td>
+                        <td className="px-2 py-2 text-center">{row.stage_label}</td>
+                        <td className="px-2 py-2">
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={notesDraft[row.id] ?? ''}
+                              onChange={(e) =>
+                                setNotesDraft((prev) => ({
+                                  ...prev,
+                                  [row.id]: e.target.value,
+                                }))
+                              }
+                              onBlur={() => void saveNotes(row)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.currentTarget.blur();
+                                }
+                              }}
+                              placeholder="أدخل ملاحظة…"
+                              className="h-8 w-full min-w-[140px] rounded border border-gray-300 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-red-800"
+                            />
+                            {savingNotesId === row.id ? (
+                              <span className="text-[10px] text-gray-400 shrink-0">…</span>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {data.rows.length > 0 && (
+                  <tfoot>
+                    <tr className="bg-amber-50 font-semibold">
+                      <td className="px-2 py-2.5 text-center">الإجمالي</td>
+                      <td className="px-2 py-2.5 text-center text-emerald-800 tabular-nums">
+                        {money(data.totals.cash_received)}
+                      </td>
+                      <td className="px-2 py-2.5 text-center text-slate-500">
+                        {money(data.totals.bank_deposit)}
+                      </td>
+                      <td className="px-2 py-2.5" colSpan={9}>
+                        {data.totals.count} سجل
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      {/* مودال تقرير مخصص */}
+      {custom.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-900/50"
+            aria-label="إغلاق"
+            onClick={() => setCustom((c) => ({ ...c, open: false }))}
+          />
+          <div className="relative w-full max-w-lg rounded-xl bg-white shadow-2xl border border-gray-200 overflow-hidden">
+            <div className="bg-red-950 text-white px-5 py-3">
+              <p className="font-semibold">تقرير مخصص — يومية الصندوق</p>
+              <p className="text-xs text-red-100/80 mt-0.5">
+                حدّد القسم أو المرحلة أو نوع المستند أو الفترة ثم صدّر
+              </p>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">القسم</label>
+                <select
+                  value={custom.department}
+                  onChange={(e) =>
+                    setCustom((c) => ({ ...c, department: e.target.value }))
+                  }
+                  className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm"
+                >
+                  <option value="">الكل</option>
+                  {(data?.departments || []).map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">المرحلة</label>
+                <select
+                  value={custom.stage}
+                  onChange={(e) => setCustom((c) => ({ ...c, stage: e.target.value }))}
+                  className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm"
+                >
+                  <option value="">الكل</option>
+                  <option value="first">الأولى</option>
+                  <option value="second">الثانية</option>
+                  <option value="third">الثالثة</option>
+                  <option value="fourth">الرابعة</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">نوع المستند</label>
+                <select
+                  value={custom.docType}
+                  onChange={(e) =>
+                    setCustom((c) => ({
+                      ...c,
+                      docType: e.target.value as '' | 'receipt' | 'payment',
+                    }))
+                  }
+                  className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm"
+                >
+                  <option value="">الكل</option>
+                  <option value="receipt">قبض</option>
+                  <option value="payment">دفع</option>
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">من تاريخ</label>
+                  <input
+                    type="date"
+                    value={custom.dateFrom}
+                    onChange={(e) =>
+                      setCustom((c) => ({ ...c, dateFrom: e.target.value }))
+                    }
+                    className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">إلى تاريخ</label>
+                  <input
+                    type="date"
+                    value={custom.dateTo}
+                    onChange={(e) =>
+                      setCustom((c) => ({ ...c, dateTo: e.target.value }))
+                    }
+                    className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">صيغة التصدير</label>
+                <div className="flex rounded-md border border-gray-300 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setCustom((c) => ({ ...c, format: 'pdf' }))}
+                    className={[
+                      'flex-1 h-10 text-sm font-semibold',
+                      custom.format === 'pdf'
+                        ? 'bg-red-950 text-white'
+                        : 'bg-white text-gray-700',
+                    ].join(' ')}
+                  >
+                    PDF (A4)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCustom((c) => ({ ...c, format: 'excel' }))}
+                    className={[
+                      'flex-1 h-10 text-sm font-semibold border-r border-gray-300',
+                      custom.format === 'excel'
+                        ? 'bg-red-950 text-white'
+                        : 'bg-white text-gray-700',
+                    ].join(' ')}
+                  >
+                    Excel
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCustom((c) => ({ ...c, open: false }))}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                disabled={!!exporting}
+                onClick={() => {
+                  void runReport('custom', custom.format, custom).then(() =>
+                    setCustom((c) => ({ ...c, open: false }))
+                  );
+                }}
+                className="rounded-md bg-red-950 px-4 py-2 text-sm font-semibold text-white hover:bg-red-900 disabled:opacity-50"
+              >
+                {exporting?.startsWith('custom') ? 'جارٍ التجهيز…' : 'تصدير التقرير'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

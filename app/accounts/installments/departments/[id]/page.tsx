@@ -15,6 +15,7 @@ type StageStat = {
   unpaid_count: number;
   collected_amount: number;
   expected_amount: number;
+  discount_amount: number;
   debt_amount: number;
   morning: number;
   evening: number;
@@ -32,6 +33,7 @@ type ReportData = {
     unpaid_count: number;
     collected_amount: number;
     expected_amount: number;
+    discount_amount: number;
     debt_amount: number;
     morning: number;
     evening: number;
@@ -43,6 +45,7 @@ type ReportData = {
     stage_label: string;
     study_type: string;
     expected: number;
+    discount?: number;
     paid: number;
     debt: number;
     payment_status: string;
@@ -94,6 +97,7 @@ function buildPrintHtml(data: ReportData) {
         <td>${s.unpaid_count}</td>
         <td>${money(s.collected_amount)}</td>
         <td>${money(s.expected_amount)}</td>
+        <td>${money(s.discount_amount || 0)}</td>
         <td class="debt">${money(s.debt_amount)}</td>
       </tr>`
     )
@@ -109,7 +113,8 @@ function buildPrintHtml(data: ReportData) {
           <li>صباحي ${s.morning} — مسائي ${s.evening}</li>
           <li>مسدد بالكامل ${s.paid_count} — عليهم متبقي ${s.unpaid_count}</li>
           <li>المقبوضات: ${money(s.collected_amount)} IQD</li>
-          <li>المتوقع: ${money(s.expected_amount)} IQD</li>
+          <li>المتوقع بعد التخفيض: ${money(s.expected_amount)} IQD</li>
+          <li><strong>التخفيضات: ${money(s.discount_amount || 0)} IQD</strong></li>
           <li class="debt"><strong>الديون: ${money(s.debt_amount)} IQD</strong></li>
         </ul>
       </div>`
@@ -118,7 +123,7 @@ function buildPrintHtml(data: ReportData) {
 
   const debtRows =
     unpaid_students.length === 0
-      ? `<tr><td colspan="9" style="text-align:center">لا توجد ديون مسجّلة حالياً.</td></tr>`
+      ? `<tr><td colspan="10" style="text-align:center">لا توجد ديون مسجّلة حالياً.</td></tr>`
       : unpaid_students
           .map(
             (s, i) => `
@@ -130,6 +135,7 @@ function buildPrintHtml(data: ReportData) {
           <td>${escapeHtml(s.study_type)}</td>
           <td>${escapeHtml(s.status_label || 'غير مسدد')}</td>
           <td>${money(s.expected)}</td>
+          <td>${money(s.discount || 0)}</td>
           <td>${money(s.paid)}</td>
           <td class="debt">${money(s.debt)}</td>
         </tr>`
@@ -268,7 +274,8 @@ function buildPrintHtml(data: ReportData) {
     </div>
     <div class="cards cols-3">
       <div class="card green"><div class="label">إجمالي المقبوضات</div><div class="value">${money(summary.collected_amount)} IQD</div></div>
-      <div class="card"><div class="label">إجمالي الأقساط المتوقعة</div><div class="value">${money(summary.expected_amount)} IQD</div></div>
+      <div class="card"><div class="label">إجمالي الأقساط المتوقعة (بعد التخفيض)</div><div class="value">${money(summary.expected_amount)} IQD</div></div>
+      <div class="card"><div class="label">إجمالي التخفيضات</div><div class="value">${money(summary.discount_amount || 0)} IQD</div></div>
       <div class="card red"><div class="label">إجمالي الديون</div><div class="value">${money(summary.debt_amount)} IQD</div></div>
     </div>
 
@@ -278,7 +285,7 @@ function buildPrintHtml(data: ReportData) {
         <tr>
           <th>المرحلة</th><th>الطلبة</th><th>ذكور</th><th>إناث</th>
           <th>صباحي</th><th>مسائي</th><th>مسدد بالكامل</th><th>عليهم متبقي</th>
-          <th>المقبوضات</th><th>المتوقع</th><th>الديون</th>
+          <th>المقبوضات</th><th>المتوقع</th><th>التخفيضات</th><th>الديون</th>
         </tr>
       </thead>
       <tbody>
@@ -294,6 +301,7 @@ function buildPrintHtml(data: ReportData) {
           <td>${summary.unpaid_count}</td>
           <td>${money(summary.collected_amount)}</td>
           <td>${money(summary.expected_amount)}</td>
+          <td>${money(summary.discount_amount || 0)}</td>
           <td class="debt">${money(summary.debt_amount)}</td>
         </tr>
       </tbody>
@@ -307,7 +315,7 @@ function buildPrintHtml(data: ReportData) {
       <thead>
         <tr>
           <th>#</th><th>الرقم الجامعي</th><th>الاسم</th><th>المرحلة</th>
-          <th>الدراسة</th><th>الحالة</th><th>المطلوب</th><th>المدفوع</th><th>الدين</th>
+          <th>الدراسة</th><th>الحالة</th><th>المطلوب</th><th>التخفيض</th><th>المدفوع</th><th>الدين</th>
         </tr>
       </thead>
       <tbody>${debtRows}</tbody>
@@ -477,15 +485,19 @@ export default function DepartmentInstallmentsReportPage() {
                 <StatCard label="صباحي" value={String(summary.morning)} />
                 <StatCard label="مسائي" value={String(summary.evening)} />
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
                 <StatCard
                   label="إجمالي المقبوضات"
                   value={`${money(summary.collected_amount)} IQD`}
                   tone="green"
                 />
                 <StatCard
-                  label="إجمالي الأقساط المتوقعة"
+                  label="الأقساط المتوقعة (بعد التخفيض)"
                   value={`${money(summary.expected_amount)} IQD`}
+                />
+                <StatCard
+                  label="إجمالي التخفيضات"
+                  value={`${money(summary.discount_amount || 0)} IQD`}
                 />
                 <StatCard
                   label="إجمالي الديون"
@@ -513,6 +525,7 @@ export default function DepartmentInstallmentsReportPage() {
                       <th className="border p-2 text-right">عليهم متبقي</th>
                       <th className="border p-2 text-right">المقبوضات</th>
                       <th className="border p-2 text-right">المتوقع</th>
+                      <th className="border p-2 text-right">التخفيضات</th>
                       <th className="border p-2 text-right">الديون</th>
                     </tr>
                   </thead>
@@ -529,6 +542,9 @@ export default function DepartmentInstallmentsReportPage() {
                         <td className="border p-2 text-amber-700">{s.unpaid_count}</td>
                         <td className="border p-2">{money(s.collected_amount)}</td>
                         <td className="border p-2">{money(s.expected_amount)}</td>
+                        <td className="border p-2 text-indigo-700">
+                          {money(s.discount_amount || 0)}
+                        </td>
                         <td className="border p-2 text-red-700">{money(s.debt_amount)}</td>
                       </tr>
                     ))}
@@ -543,6 +559,9 @@ export default function DepartmentInstallmentsReportPage() {
                       <td className="border p-2">{summary.unpaid_count}</td>
                       <td className="border p-2">{money(summary.collected_amount)}</td>
                       <td className="border p-2">{money(summary.expected_amount)}</td>
+                      <td className="border p-2">
+                        {money(summary.discount_amount || 0)}
+                      </td>
                       <td className="border p-2">{money(summary.debt_amount)}</td>
                     </tr>
                   </tbody>
@@ -565,7 +584,10 @@ export default function DepartmentInstallmentsReportPage() {
                         مسدد بالكامل {s.paid_count} — عليهم متبقي {s.unpaid_count}
                       </li>
                       <li>المقبوضات: {money(s.collected_amount)} IQD</li>
-                      <li>المتوقع: {money(s.expected_amount)} IQD</li>
+                      <li>المتوقع بعد التخفيض: {money(s.expected_amount)} IQD</li>
+                      <li className="text-indigo-800 font-medium">
+                        التخفيضات: {money(s.discount_amount || 0)} IQD
+                      </li>
                       <li className="text-red-800 font-medium">
                         الديون: {money(s.debt_amount)} IQD
                       </li>
@@ -593,6 +615,7 @@ export default function DepartmentInstallmentsReportPage() {
                         <th className="border p-2 text-right">الدراسة</th>
                         <th className="border p-2 text-right">الحالة</th>
                         <th className="border p-2 text-right">المطلوب</th>
+                        <th className="border p-2 text-right">التخفيض</th>
                         <th className="border p-2 text-right">المدفوع</th>
                         <th className="border p-2 text-right">الدين</th>
                       </tr>
@@ -607,6 +630,9 @@ export default function DepartmentInstallmentsReportPage() {
                           <td className="border p-2">{s.study_type}</td>
                           <td className="border p-2">{s.status_label || 'غير مسدد'}</td>
                           <td className="border p-2">{money(s.expected)}</td>
+                          <td className="border p-2 text-indigo-700">
+                            {money(s.discount || 0)}
+                          </td>
                           <td className="border p-2">{money(s.paid)}</td>
                           <td className="border p-2 text-red-700 font-medium">
                             {money(s.debt)}

@@ -99,6 +99,7 @@ export async function GET(request: NextRequest) {
         current_year: number | null;
         all_completed: boolean;
         years: YearVisualEntry[];
+        receipts_count: number;
       }
     > = {};
 
@@ -122,6 +123,9 @@ export async function GET(request: NextRequest) {
         current_year: ledger.currentYear,
         all_completed: ledger.allYearsCompleted,
         years: getYearVisualEntries(ledger),
+        receipts_count: receipts.filter(
+          (r) => Math.max(0, Number(r.pay_amount || 0)) > 0
+        ).length,
       };
     }
 

@@ -575,6 +575,21 @@ export default function AccountsLayout({
                     </svg>
                     <span>إدارة الأقساط</span>
                   </Link>
+                  <Link
+                    href="/accounts/reports/journal"
+                    className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors ${
+                      pathname === '/accounts/reports/journal' ||
+                      pathname?.startsWith('/accounts/reports/journal/')
+                        ? 'border-white/40 bg-white/15 text-white'
+                        : 'border-white/20 bg-white/5 text-gray-200 hover:bg-white/15 hover:text-white'
+                    }`}
+                    title="سجل اليومية"
+                  >
+                    <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <span>سجل اليومية</span>
+                  </Link>
                 </nav>
 
                 {/* Search Bar */}

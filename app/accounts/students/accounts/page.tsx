@@ -31,6 +31,7 @@ type StudentYearStatus = {
   current_year: number | null;
   all_completed: boolean;
   years: YearVisualEntry[];
+  receipts_count?: number;
 };
 
 function formatStage(admissionType?: string | null): string {
@@ -832,6 +833,7 @@ export default function StudentAccountsPage() {
                         <tr>
                           <th className="px-3 py-2.5 text-right font-medium">التسلسل</th>
                           <th className="px-3 py-2.5 text-right font-medium">اسم الطالب</th>
+                          <th className="px-3 py-2.5 text-right font-medium">الوصولات</th>
                           <th className="px-3 py-2.5 text-right font-medium">المرحلة</th>
                           <th className="px-3 py-2.5 text-right font-medium">القسم</th>
                           <th className="px-3 py-2.5 text-right font-medium">نوع الدراسة</th>
@@ -846,6 +848,8 @@ export default function StudentAccountsPage() {
                               PAGE_SIZE +
                             index +
                             1;
+                          const receiptsCount =
+                            yearStatusByStudent[row.id]?.receipts_count ?? 0;
                           return (
                           <tr key={row.id} className="hover:bg-gray-50">
                             <td className="px-3 py-2.5 text-gray-700">{rowNumber}</td>
@@ -865,6 +869,19 @@ export default function StudentAccountsPage() {
                                   <span>—</span>
                                 )}
                               </div>
+                            </td>
+                            <td className="px-3 py-2.5 text-center">
+                              <span
+                                className={[
+                                  'inline-flex min-w-[2.25rem] justify-center rounded-md border px-2 py-0.5 text-xs font-bold tabular-nums',
+                                  receiptsCount > 0
+                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                                    : 'bg-slate-50 border-slate-200 text-slate-500',
+                                ].join(' ')}
+                                title="عدد وصولات التسديد المقطوعة"
+                              >
+                                {receiptsCount}
+                              </span>
                             </td>
                             <td className="px-3 py-2.5 text-gray-700">
                               {formatStage(row.admission_type)}

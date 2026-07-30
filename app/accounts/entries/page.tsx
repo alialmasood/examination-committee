@@ -103,16 +103,10 @@ export default function AccountsEntriesPage() {
           <div>
             <h1 className="text-xl font-semibold text-gray-900">القيود المحاسبية</h1>
             <p className="text-sm text-gray-600 mt-1">
-              إنشاء ومراجعة واعتماد وترحيل القيود المزدوجة — دفتر اليومية من التقارير.
+              إنشاء ومراجعة واعتماد وترحيل القيود المزدوجة.
             </p>
           </div>
           <div className="flex gap-2">
-            <a
-              href="/accounts/reports/journal"
-              className="px-3 py-2 rounded-md border text-sm text-gray-700 hover:bg-gray-50"
-            >
-              دفتر اليومية
-            </a>
             <button
               type="button"
               className="px-4 py-2 rounded-md bg-red-900 text-white text-sm hover:bg-red-800"

@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/src/lib/db';
+import {
+  expectedAnnualFee,
+  getAnnualTuitionFee,
+} from '@/app/accounts/students/lib/tuitionFees';
+import {
+  getOpenYearState,
+  type SettlementHistoryRow,
+} from '@/app/accounts/students/lib/settlementYearLedger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -27,35 +35,48 @@ const STAGE_LABELS: Record<string, string> = {
   unknown: 'غير محدد',
 };
 
-const FIXED_DISCOUNTS: Record<string, number> = {
-  general: 0,
-  martyrs: 50,
-  social_care: 50,
-  siblings_married: 10,
-  top_students: 10,
-  health_ministry: 20,
+type ReceiptRow = SettlementHistoryRow & {
+  student_id?: string;
+  pay_amount?: number | string | null;
 };
 
-function getAnnualTuitionFee(department: string, studyType?: string | null): number {
-  const isEvening = studyType === 'evening';
-  const fees: Record<string, number> = {
-    'تقنيات التخدير': isEvening ? 2750000 : 3000000,
-    'تقنيات الاشعة': isEvening ? 2750000 : 3000000,
-    'تقنيات صناعة الاسنان': isEvening ? 2250000 : 2500000,
-    'تقنيات البصريات': 2750000,
-    'تقنيات طب الطوارئ': 2750000,
-    'تقنيات صحة المجتمع': 2750000,
-    'تقنيات العلاج الطبيعي': 2750000,
-    'هندسة تقنيات البناء والانشاءات': 2500000,
-    'تقنيات البناء والاستشارات': 2500000,
-    'تقنيات هندسة النفط والغاز': 2500000,
-    'تقنيات الفيزياء الصحية': 2500000,
-    'هندسة تقنيات الامن السيبراني والحوسبة السحابية': 3000000,
-    'تقنيات الامن السيبراني': 3000000,
-    'تقنيات الأمن السيبراني': 3000000,
-    القانون: 0,
+type StageBucket = {
+  stage: string;
+  stage_label: string;
+  total: number;
+  males: number;
+  females: number;
+  unknown_gender: number;
+  paid_count: number;
+  unpaid_count: number;
+  collected_amount: number;
+  /** القسط بعد طرح التخفيض — ما يجب دفعه */
+  expected_amount: number;
+  /** التخفيضات (قناة + تسديد) — ليست ديناً */
+  discount_amount: number;
+  /** الدين = المطلوب بعد التخفيض − المدفوع */
+  debt_amount: number;
+  morning: number;
+  evening: number;
+};
+
+function emptyStage(stage: string): StageBucket {
+  return {
+    stage,
+    stage_label: STAGE_LABELS[stage] || stage,
+    total: 0,
+    males: 0,
+    females: 0,
+    unknown_gender: 0,
+    paid_count: 0,
+    unpaid_count: 0,
+    collected_amount: 0,
+    expected_amount: 0,
+    discount_amount: 0,
+    debt_amount: 0,
+    morning: 0,
+    evening: 0,
   };
-  return fees[department] || 0;
 }
 
 function normalizeGender(raw: unknown): 'male' | 'female' | 'unknown' {
@@ -78,57 +99,54 @@ function normalizeStage(raw: unknown): string {
   return 'unknown';
 }
 
-function expectedFee(row: {
+function receiptTime(row: ReceiptRow): number {
+  const a = Date.parse(String(row.created_at || ''));
+  if (Number.isFinite(a)) return a;
+  const b = Date.parse(String(row.settlement_date || ''));
+  return Number.isFinite(b) ? b : 0;
+}
+
+/** خصم التسوية من أول وصل لكل سنة قسط */
+function settlementDiscountForStudent(receipts: ReceiptRow[]): number {
+  const byYear = new Map<number, ReceiptRow[]>();
+  for (const row of receipts) {
+    const year = Math.max(1, Math.min(4, Number(row.fee_year) || 1));
+    const list = byYear.get(year) || [];
+    list.push(row);
+    byYear.set(year, list);
+  }
+
+  let total = 0;
+  for (const [, list] of byYear) {
+    const first = [...list].sort((a, b) => receiptTime(a) - receiptTime(b))[0];
+    if (!first) continue;
+    const mode = String(first.discount_mode || 'none');
+    const amount = Math.max(0, Number(first.discount_amount || 0));
+    if (mode !== 'none' && amount > 0) total += amount;
+  }
+  return total;
+}
+
+function channelDiscountAmount(row: {
   major: string;
   study_type: string | null;
   admission_channel: string | null;
   discount_percentage: number | null;
+  discount_amount: number | null;
   final_fee_after_discount: number | null;
 }): number {
-  if (row.final_fee_after_discount != null && Number(row.final_fee_after_discount) > 0) {
-    return Number(row.final_fee_after_discount);
-  }
   const annual = getAnnualTuitionFee(row.major, row.study_type);
-  const channel = row.admission_channel || 'general';
-  const discountPct =
-    row.discount_percentage != null && Number(row.discount_percentage) >= 0
-      ? Number(row.discount_percentage)
-      : FIXED_DISCOUNTS[channel] ?? 0;
-  return annual - (annual * discountPct) / 100;
-}
-
-type StageBucket = {
-  stage: string;
-  stage_label: string;
-  total: number;
-  males: number;
-  females: number;
-  unknown_gender: number;
-  paid_count: number;
-  unpaid_count: number;
-  collected_amount: number;
-  expected_amount: number;
-  debt_amount: number;
-  morning: number;
-  evening: number;
-};
-
-function emptyStage(stage: string): StageBucket {
-  return {
-    stage,
-    stage_label: STAGE_LABELS[stage] || stage,
-    total: 0,
-    males: 0,
-    females: 0,
-    unknown_gender: 0,
-    paid_count: 0,
-    unpaid_count: 0,
-    collected_amount: 0,
-    expected_amount: 0,
-    debt_amount: 0,
-    morning: 0,
-    evening: 0,
-  };
+  if (Number(row.discount_amount || 0) > 0) {
+    return Number(row.discount_amount);
+  }
+  const expected = expectedAnnualFee({
+    major: row.major,
+    study_type: row.study_type,
+    admission_channel: row.admission_channel,
+    discount_percentage: row.discount_percentage,
+    final_fee_after_discount: row.final_fee_after_discount,
+  });
+  return Math.max(0, annual - expected);
 }
 
 export async function GET(
@@ -167,6 +185,7 @@ export async function GET(
          s.academic_year,
          COALESCE(NULLIF(TRIM(s.payment_status), ''), 'pending') AS payment_status,
          s.discount_percentage::float8 AS discount_percentage,
+         COALESCE(s.discount_amount, 0)::float8 AS discount_amount,
          s.final_fee_after_discount::float8 AS final_fee_after_discount
        FROM student_affairs.students s
        WHERE normalize_arabic(COALESCE(s.major, '')) = normalize_arabic($1)
@@ -174,23 +193,36 @@ export async function GET(
       [dept.name]
     );
 
-    const paidByStudent = new Map<string, number>();
+    const receiptsByStudent = new Map<string, ReceiptRow[]>();
     if (result.rows.length > 0) {
       try {
         const studentIds = result.rows.map((row: { id: string }) => row.id);
         const receiptsRes = await query(
-          `SELECT student_id::text AS student_id,
-                  COALESCE(SUM(pay_amount), 0)::float8 AS paid_amount
+          `SELECT
+             student_id::text AS student_id,
+             id,
+             fee_year,
+             pay_amount,
+             after_discount,
+             remaining_amount,
+             annual_fee,
+             discount_mode,
+             discount_input,
+             discount_amount,
+             settlement_date,
+             created_at
            FROM accounts.student_settlement_receipts
-           WHERE student_id = ANY($1::uuid[])
-           GROUP BY student_id`,
+           WHERE student_id = ANY($1::uuid[])`,
           [studentIds]
         );
         for (const row of receiptsRes.rows) {
-          paidByStudent.set(String(row.student_id), Number(row.paid_amount || 0));
+          const sid = String(row.student_id);
+          const list = receiptsByStudent.get(sid) || [];
+          list.push(row as ReceiptRow);
+          receiptsByStudent.set(sid, list);
         }
       } catch {
-        // لا وصولات تسديد بعد — يبقى المدفوع صفراً
+        // لا وصولات بعد
       }
     }
 
@@ -205,6 +237,7 @@ export async function GET(
     let totalUnpaid = 0;
     let totalCollected = 0;
     let totalExpected = 0;
+    let totalDiscount = 0;
     let totalDebt = 0;
     let morning = 0;
     let evening = 0;
@@ -215,6 +248,7 @@ export async function GET(
       stage_label: string;
       study_type: string;
       expected: number;
+      discount: number;
       paid: number;
       debt: number;
       payment_status: string;
@@ -226,17 +260,42 @@ export async function GET(
       const gender = normalizeGender(row.gender);
       const status = String(row.payment_status || 'pending');
       const isMarkedPaid = status === 'paid';
-      const paidAmount = paidByStudent.get(String(row.id)) || 0;
-      const expected = expectedFee({
-        major: row.major || dept.name,
+      const major = row.major || dept.name;
+      const receipts = receiptsByStudent.get(String(row.id)) || [];
+
+      const annualBase = getAnnualTuitionFee(major, row.study_type);
+      const channelDiscount = channelDiscountAmount({
+        major,
+        study_type: row.study_type,
+        admission_channel: row.admission_channel,
+        discount_percentage: row.discount_percentage,
+        discount_amount: row.discount_amount,
+        final_fee_after_discount: row.final_fee_after_discount,
+      });
+      const settlementDiscount = settlementDiscountForStudent(receipts);
+      // التخفيض ليس ديناً — يُعرض منفصلاً
+      const discountTotal = channelDiscount + settlementDiscount;
+
+      // المطلوب بعد التخفيض (قناة)
+      const expectedNet = expectedAnnualFee({
+        major,
         study_type: row.study_type,
         admission_channel: row.admission_channel,
         discount_percentage: row.discount_percentage,
         final_fee_after_discount: row.final_fee_after_discount,
       });
-      // الدين = المتبقي الفعلي بغض النظر عن حالة الدفع المسجّلة
-      const debt = Math.max(0, expected - paidAmount);
-      const isFullyPaid = debt <= 0;
+
+      const paidAmount = receipts.reduce(
+        (sum, r) => sum + Math.max(0, Number(r.pay_amount || 0)),
+        0
+      );
+
+      // الدين من دفتر السنوات: المستهدف بعد الخصم − المدفوع (لا يدخل مبلغ التخفيض في الدين)
+      const annualForLedger =
+        expectedNet > 0 ? expectedNet : annualBase > 0 ? annualBase : 0;
+      const openState = getOpenYearState(receipts, annualForLedger);
+      const debt = Math.max(0, openState.outstandingBefore);
+      const isFullyPaid = debt <= 0.01;
 
       const bucket = byStage[stage] || byStage.unknown;
       bucket.total += 1;
@@ -259,8 +318,10 @@ export async function GET(
         morning += 1;
       }
 
-      bucket.expected_amount += expected;
-      totalExpected += expected;
+      bucket.expected_amount += expectedNet;
+      totalExpected += expectedNet;
+      bucket.discount_amount += discountTotal;
+      totalDiscount += discountTotal;
       bucket.collected_amount += paidAmount;
       totalCollected += paidAmount;
       bucket.debt_amount += debt;
@@ -274,20 +335,25 @@ export async function GET(
         totalUnpaid += 1;
       }
 
-      // كشف الديون: كل من عليه متبقي > 0 (غير مسدد أو مسدد جزئياً)
-      if (debt > 0) {
+      if (debt > 0.01) {
         let statusLabel = 'غير مسدد';
-        if (isMarkedPaid) statusLabel = paidAmount > 0 ? 'مسدد جزئياً' : 'مسجل كمسدد بدون مبلغ';
-        else if (status === 'registration_pending') statusLabel = 'بانتظار إتمام التسجيل';
-        else if (status === 'pending') statusLabel = 'قيد الدفع';
-        else if (paidAmount > 0) statusLabel = 'مسدد جزئياً';
+        if (isMarkedPaid) {
+          statusLabel = paidAmount > 0 ? 'مسدد جزئياً' : 'مسجل كمسدد بدون مبلغ';
+        } else if (status === 'registration_pending') {
+          statusLabel = 'بانتظار إتمام التسجيل';
+        } else if (status === 'pending') {
+          statusLabel = 'قيد الدفع';
+        } else if (paidAmount > 0) {
+          statusLabel = 'مسدد جزئياً';
+        }
 
         unpaidStudents.push({
           university_id: row.university_id || '—',
           name: row.name || '—',
           stage_label: STAGE_LABELS[stage] || 'غير محدد',
           study_type: row.study_type === 'evening' ? 'مسائي' : 'صباحي',
-          expected,
+          expected: expectedNet,
+          discount: discountTotal,
           paid: paidAmount,
           debt,
           payment_status: status,
@@ -317,6 +383,7 @@ export async function GET(
             unpaid_count: totalUnpaid,
             collected_amount: totalCollected,
             expected_amount: totalExpected,
+            discount_amount: totalDiscount,
             debt_amount: totalDebt,
             morning,
             evening,

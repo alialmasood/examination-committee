@@ -11,9 +11,9 @@ export default function AccountsReportsPage() {
             href="/accounts/reports/journal"
             className="block border rounded-lg p-4 hover:border-red-900 hover:bg-red-50/40 transition"
           >
-            <h2 className="font-medium text-red-950">دفتر اليومية</h2>
+            <h2 className="font-medium text-red-950">سجل يومية الصندوق</h2>
             <p className="text-sm text-gray-600 mt-1">
-              عرض سطور القيود المرحلة مع التصفية حسب التاريخ والحساب.
+              مقبوضات الصندوق من وصولات تسديد الطلبة مع التقارير الأسبوعية والشهرية والمخصصة.
             </p>
           </Link>
           <div className="border rounded-lg p-4 opacity-60">
