@@ -126,7 +126,7 @@ export default function PlatformAdminLayout({
                   : 'border-transparent text-slate-400 hover:text-white'
               }`}
             >
-              كلمات مرور الأنظمة
+              إدارة حسابات الأنظمة
             </Link>
           </div>
         </nav>

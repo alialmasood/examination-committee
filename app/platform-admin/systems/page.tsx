@@ -21,12 +21,19 @@ type SystemRow = {
   users: SystemUser[];
 };
 
+type CreatableSystem = {
+  code: string;
+  name_ar: string;
+  base_path: string;
+};
+
 /**
- * إدارة كلمات مرور مستخدمي الأنظمة من بوابة مركزية —
- * دون الحاجة للدخول إلى كل نظام على حدة.
+ * إدارة حسابات الأنظمة من بوابة مركزية —
+ * إنشاء، كلمات المرور، التعطيل، والحذف.
  */
 export default function PlatformSystemsPasswordsPage() {
   const [systems, setSystems] = useState<SystemRow[]>([]);
+  const [creatableSystems, setCreatableSystems] = useState<CreatableSystem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
@@ -41,18 +48,41 @@ export default function PlatformSystemsPasswordsPage() {
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
 
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [createForm, setCreateForm] = useState({
+    username: '',
+    full_name: '',
+    email: '',
+    password: '',
+    confirm_password: '',
+    system_code: '',
+  });
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetchWithAuth('/api/admin/systems');
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body.success) {
-        setError(body.message || 'تعذر تحميل الأنظمة');
+      const [systemsRes, optionsRes] = await Promise.all([
+        fetchWithAuth('/api/admin/systems'),
+        fetchWithAuth('/api/admin/users'),
+      ]);
+      const systemsBody = await systemsRes.json().catch(() => ({}));
+      const optionsBody = await optionsRes.json().catch(() => ({}));
+
+      if (!systemsRes.ok || !systemsBody.success) {
+        setError(systemsBody.message || 'تعذر تحميل الأنظمة');
         setSystems([]);
         return;
       }
-      setSystems(Array.isArray(body.data?.systems) ? body.data.systems : []);
+      setSystems(Array.isArray(systemsBody.data?.systems) ? systemsBody.data.systems : []);
+
+      if (optionsRes.ok && optionsBody.success) {
+        setCreatableSystems(
+          Array.isArray(optionsBody.data?.systems) ? optionsBody.data.systems : []
+        );
+      }
     } catch {
       setError('تعذر الاتصال بالخادم');
     } finally {
@@ -84,6 +114,95 @@ export default function PlatformSystemsPasswordsPage() {
     setModalOpen(false);
     setSelectedUser(null);
     setFormError('');
+  }
+
+  function openCreateModal(preferredSystemCode?: string) {
+    setCreateError('');
+    setCreateForm({
+      username:
+        preferredSystemCode === 'DEAN'
+          ? 'dean'
+          : preferredSystemCode === 'GENERAL_SUPERVISION'
+            ? 'rahmaan'
+            : '',
+      full_name:
+        preferredSystemCode === 'DEAN'
+          ? 'السيد عميد الكلية'
+          : preferredSystemCode === 'GENERAL_SUPERVISION'
+            ? 'لوحة إشراف عامة'
+            : '',
+      email: '',
+      password: '',
+      confirm_password: '',
+      system_code: preferredSystemCode || creatableSystems[0]?.code || '',
+    });
+    setCreateOpen(true);
+  }
+
+  function closeCreateModal() {
+    if (creating) return;
+    setCreateOpen(false);
+    setCreateError('');
+  }
+
+  async function submitCreate() {
+    if (!createForm.system_code) {
+      setCreateError('اختر صلاحية / وظيفة الحساب');
+      return;
+    }
+    if (
+      createForm.system_code !== 'DEAN' &&
+      createForm.system_code !== 'GENERAL_SUPERVISION' &&
+      createForm.username.trim().length < 3
+    ) {
+      setCreateError('اسم المستخدم يجب ألا يقل عن 3 أحرف');
+      return;
+    }
+    if (
+      createForm.system_code !== 'DEAN' &&
+      createForm.system_code !== 'GENERAL_SUPERVISION' &&
+      !createForm.full_name.trim()
+    ) {
+      setCreateError('الاسم الكامل مطلوب');
+      return;
+    }
+    if (createForm.password.length < 6) {
+      setCreateError('كلمة المرور يجب ألا تقل عن 6 أحرف');
+      return;
+    }
+    if (createForm.password !== createForm.confirm_password) {
+      setCreateError('تأكيد كلمة المرور غير مطابق');
+      return;
+    }
+
+    setCreating(true);
+    setCreateError('');
+    try {
+      const res = await fetchWithAuth('/api/admin/users', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          username: createForm.username.trim(),
+          full_name: createForm.full_name.trim(),
+          email: createForm.email.trim() || undefined,
+          password: createForm.password,
+          confirm_password: createForm.confirm_password,
+          system_code: createForm.system_code,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.success) {
+        setCreateError(body.message || 'تعذر إنشاء الحساب');
+        return;
+      }
+      setToast(body.message || 'تم إنشاء الحساب بنجاح');
+      setCreateOpen(false);
+      await load();
+    } catch {
+      setCreateError('تعذر الاتصال بالخادم');
+    } finally {
+      setCreating(false);
+    }
   }
 
   async function submitPassword() {
@@ -184,14 +303,30 @@ export default function PlatformSystemsPasswordsPage() {
     }
   }
 
+  const selectedCreateSystem = creatableSystems.find(
+    (s) => s.code === createForm.system_code
+  );
+  const isDeanCreate = createForm.system_code === 'DEAN';
+  const isGeneralSupervisionCreate = createForm.system_code === 'GENERAL_SUPERVISION';
+  const isFixedAccountCreate = isDeanCreate || isGeneralSupervisionCreate;
+
   return (
     <div className="p-6" dir="rtl">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-slate-900">كلمات مرور الأنظمة</h2>
-        <p className="text-sm text-slate-600 mt-2 leading-relaxed max-w-3xl">
-          من هنا تغيّر كلمة مرور مستخدم أي نظام مباشرة — دون الدخول إلى ذلك النظام.
-          مفيد للتدوير الدوري لكلمات المرور حفاظاً على أمان العمل.
-        </p>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">إدارة حسابات الأنظمة</h2>
+          <p className="text-sm text-slate-600 mt-2 leading-relaxed max-w-3xl">
+            إنشاء حسابات جديدة مع تحديد الصلاحية (شؤون الطلبة، الحسابات، مراقبة العميد…)،
+            وتغيير كلمات المرور وتعطيل أو حذف الحسابات من مكان واحد.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => openCreateModal()}
+          className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+        >
+          إنشاء حساب جديد
+        </button>
       </div>
 
       {toast && (
@@ -216,8 +351,15 @@ export default function PlatformSystemsPasswordsPage() {
       {loading ? (
         <p className="text-slate-500 text-sm">جارٍ التحميل…</p>
       ) : systems.length === 0 && !error ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-500">
-          لا توجد أنظمة مسجّلة حالياً.
+        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-500 space-y-3">
+          <p>لا توجد أنظمة أو حسابات مسجّلة حالياً.</p>
+          <button
+            type="button"
+            onClick={() => openCreateModal()}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+          >
+            إنشاء أول حساب
+          </button>
         </div>
       ) : (
         <div className="space-y-4">
@@ -233,15 +375,24 @@ export default function PlatformSystemsPasswordsPage() {
                     {system.code} · {system.base_path}
                   </p>
                 </div>
-                <span
-                  className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                    system.is_active
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-slate-200 text-slate-600'
-                  }`}
-                >
-                  {system.is_active ? 'نشط' : 'غير نشط'}
-                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openCreateModal(system.code)}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                  >
+                    إضافة حساب لهذا النظام
+                  </button>
+                  <span
+                    className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                      system.is_active
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    {system.is_active ? 'نشط' : 'غير نشط'}
+                  </span>
+                </div>
               </div>
 
               <div className="px-5 py-4">
@@ -320,6 +471,163 @@ export default function PlatformSystemsPasswordsPage() {
               </div>
             </section>
           ))}
+        </div>
+      )}
+
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" dir="rtl">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-5 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-slate-900 mb-1">إنشاء حساب جديد</h3>
+            <p className="text-sm text-slate-600 mb-4">
+              حدّد وظيفة الحساب أولاً (النظام الذي سيدخل إليه)، ثم أدخل بيانات الدخول.
+            </p>
+
+            <label className="block text-sm text-slate-700 mb-1">
+              صلاحية / وظيفة الحساب <span className="text-red-600">*</span>
+            </label>
+            <select
+              className="w-full border rounded-lg px-3 py-2 text-sm mb-3 bg-white"
+              value={createForm.system_code}
+              disabled={creating}
+              onChange={(e) => {
+                const code = e.target.value;
+                setCreateForm((prev) => ({
+                  ...prev,
+                  system_code: code,
+                  username:
+                    code === 'DEAN'
+                      ? 'dean'
+                      : code === 'GENERAL_SUPERVISION'
+                        ? 'rahmaan'
+                        : prev.username === 'dean' || prev.username === 'rahmaan'
+                          ? ''
+                          : prev.username,
+                  full_name:
+                    code === 'DEAN'
+                      ? prev.full_name || 'السيد عميد الكلية'
+                      : code === 'GENERAL_SUPERVISION'
+                        ? prev.full_name || 'لوحة إشراف عامة'
+                        : prev.full_name,
+                }));
+              }}
+            >
+              <option value="">— اختر النظام —</option>
+              {creatableSystems.map((s) => (
+                <option key={s.code} value={s.code}>
+                  {s.name_ar} ({s.code})
+                </option>
+              ))}
+            </select>
+            {selectedCreateSystem && (
+              <p className="text-xs text-slate-500 mb-3" dir="ltr">
+                المسار: {selectedCreateSystem.base_path}
+              </p>
+            )}
+
+            <label className="block text-sm text-slate-700 mb-1">اسم المستخدم</label>
+            <input
+              type="text"
+              className="w-full border rounded-lg px-3 py-2 text-sm mb-3 font-mono disabled:bg-slate-50"
+              dir="ltr"
+              value={
+                isDeanCreate
+                  ? 'dean'
+                  : isGeneralSupervisionCreate
+                    ? 'rahmaan'
+                    : createForm.username
+              }
+              disabled={creating || isFixedAccountCreate}
+              autoComplete="off"
+              onChange={(e) =>
+                setCreateForm((prev) => ({ ...prev, username: e.target.value }))
+              }
+              placeholder="مثال: accounts أو user5"
+            />
+            {isDeanCreate && (
+              <p className="text-xs text-amber-700 mb-3">
+                حساب مراقبة العميد يستخدم اسم المستخدم الثابت <span className="font-mono">dean</span>
+              </p>
+            )}
+            {isGeneralSupervisionCreate && (
+              <p className="text-xs text-amber-700 mb-3">
+                حساب لوحة إشراف عامة يستخدم اسم المستخدم الثابت{' '}
+                <span className="font-mono">rahmaan</span>
+              </p>
+            )}
+
+            <label className="block text-sm text-slate-700 mb-1">الاسم الكامل</label>
+            <input
+              type="text"
+              className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
+              value={createForm.full_name}
+              disabled={creating}
+              onChange={(e) =>
+                setCreateForm((prev) => ({ ...prev, full_name: e.target.value }))
+              }
+              placeholder="الاسم الظاهر في النظام"
+            />
+
+            <label className="block text-sm text-slate-700 mb-1">البريد (اختياري)</label>
+            <input
+              type="email"
+              className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
+              dir="ltr"
+              value={createForm.email}
+              disabled={creating}
+              onChange={(e) =>
+                setCreateForm((prev) => ({ ...prev, email: e.target.value }))
+              }
+            />
+
+            <label className="block text-sm text-slate-700 mb-1">كلمة المرور</label>
+            <input
+              type="password"
+              className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
+              value={createForm.password}
+              disabled={creating}
+              autoComplete="new-password"
+              onChange={(e) =>
+                setCreateForm((prev) => ({ ...prev, password: e.target.value }))
+              }
+              placeholder="6 أحرف على الأقل"
+            />
+
+            <label className="block text-sm text-slate-700 mb-1">تأكيد كلمة المرور</label>
+            <input
+              type="password"
+              className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
+              value={createForm.confirm_password}
+              disabled={creating}
+              autoComplete="new-password"
+              onChange={(e) =>
+                setCreateForm((prev) => ({
+                  ...prev,
+                  confirm_password: e.target.value,
+                }))
+              }
+            />
+
+            {createError && <p className="text-sm text-red-600 mb-3">{createError}</p>}
+
+            <div className="flex justify-end gap-2 mt-2">
+              <button
+                type="button"
+                className="border rounded-lg px-4 py-2 text-sm"
+                disabled={creating}
+                onClick={closeCreateModal}
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                className="bg-slate-900 text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50"
+                disabled={creating}
+                onClick={() => void submitCreate()}
+              >
+                {creating ? 'جارٍ الإنشاء…' : 'إنشاء الحساب'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

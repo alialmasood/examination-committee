@@ -92,6 +92,31 @@ export async function GET(request: NextRequest) {
     const firstYearResult = await query(firstYearQuery, firstYearParams);
     const firstYearCount = parseInt(firstYearResult.rows[0].count);
 
+    // المرحلة الثانية
+    const secondYearQuery = academicYear
+      ? 'SELECT COUNT(*) as count FROM student_affairs.students WHERE admission_type = $1 AND academic_year = $2'
+      : 'SELECT COUNT(*) as count FROM student_affairs.students WHERE admission_type = $1';
+    const secondYearParams = academicYear ? ['second', academicYear] : ['second'];
+    const secondYearResult = await query(secondYearQuery, secondYearParams);
+    const secondYearCount = parseInt(secondYearResult.rows[0].count);
+
+    // صباحي / مسائي
+    const morningQuery = academicYear
+      ? `SELECT COUNT(*) as count FROM student_affairs.students
+         WHERE COALESCE(study_type, 'morning') = 'morning' AND academic_year = $1`
+      : `SELECT COUNT(*) as count FROM student_affairs.students
+         WHERE COALESCE(study_type, 'morning') = 'morning'`;
+    const morningResult = await query(morningQuery, academicYear ? [academicYear] : []);
+    const morningCount = parseInt(morningResult.rows[0].count);
+
+    const eveningQuery = academicYear
+      ? `SELECT COUNT(*) as count FROM student_affairs.students
+         WHERE study_type = 'evening' AND academic_year = $1`
+      : `SELECT COUNT(*) as count FROM student_affairs.students
+         WHERE study_type = 'evening'`;
+    const eveningResult = await query(eveningQuery, academicYear ? [academicYear] : []);
+    const eveningCount = parseInt(eveningResult.rows[0].count);
+
     // جلب إحصائيات قنوات القبول
     const admissionChannels = [
       'general',
@@ -226,6 +251,9 @@ export async function GET(request: NextRequest) {
         totalAllYears,
         active,
         firstYear: firstYearCount,
+        secondYear: secondYearCount,
+        morning: morningCount,
+        evening: eveningCount,
         academicStatuses: statusStats,
         admissionChannels: channelStats
       }

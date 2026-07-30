@@ -33,6 +33,7 @@ export async function POST(request: NextRequest) {
       systems: result.systems,
       is_platform_admin: result.is_platform_admin === true,
       is_dean: result.is_dean === true,
+      is_general_supervision: result.is_general_supervision === true,
       message: 'تم تسجيل الدخول بنجاح',
     });
 

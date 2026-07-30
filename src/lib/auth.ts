@@ -4,6 +4,10 @@ import { query } from './db';
 import { AuthUser, SystemAccess, LoginRequest, LoginResponse, JWTPayload, RefreshTokenPayload } from './types';
 import { isPlatformSuperAdminUsername } from '@/src/lib/platform-superadmin';
 import { isDeanUsername, ensureDeanUser } from '@/src/lib/dean';
+import {
+  isGeneralSupervisionUsername,
+  ensureGeneralSupervisionUser,
+} from '@/src/lib/general-supervision';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'please-change-this-key';
 const ACCESS_TOKEN_TTL_MIN = Number(process.env.ACCESS_TOKEN_TTL_MIN) || 60;
@@ -59,6 +63,11 @@ export async function authenticateUser(loginData: LoginRequest): Promise<LoginRe
       await ensureDeanUser();
     }
 
+    // إنشاء حساب الإشراف العامة تلقائياً عند أول محاولة دخول
+    if (isGeneralSupervisionUsername(loginData.username)) {
+      await ensureGeneralSupervisionUser();
+    }
+
     // البحث عن المستخدم
     const userResult = await query(
       `SELECT id, username, email, full_name, password_hash, is_active 
@@ -102,9 +111,10 @@ export async function authenticateUser(loginData: LoginRequest): Promise<LoginRe
     const systems: SystemAccess[] = systemsResult.rows;
     const platformAdmin = isPlatformSuperAdminUsername(user.username);
     const dean = isDeanUsername(user.username);
+    const generalSupervision = isGeneralSupervisionUsername(user.username);
 
-    // السوبر أدمن والعميد يدخلان حتى بلا أنظمة تشغيلية
-    if (systems.length === 0 && !platformAdmin && !dean) {
+    // السوبر أدمن والعميد والإشراف العامة يدخلون حتى بلا أنظمة تشغيلية
+    if (systems.length === 0 && !platformAdmin && !dean && !generalSupervision) {
       return {
         success: false,
         message: 'ليس لديك صلاحية للوصول إلى أي نظام'
@@ -134,6 +144,7 @@ export async function authenticateUser(loginData: LoginRequest): Promise<LoginRe
       systems,
       is_platform_admin: platformAdmin,
       is_dean: dean,
+      is_general_supervision: generalSupervision,
       access_token: accessToken,
       refresh_token: refreshToken
     };

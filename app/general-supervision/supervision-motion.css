@@ -1,0 +1,104 @@
+/* تأثيرات دخول خفيفة — لوحة الإشراف العامة (موبايل) */
+
+@media (max-width: 1023px) {
+  @keyframes sup-fade-rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes sup-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes sup-soft-scale {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes sup-drawer-item {
+    from {
+      opacity: 0;
+      transform: translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .sup-enter {
+    animation: sup-fade-rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .sup-enter-fade {
+    animation: sup-fade-in 0.4s ease-out both;
+  }
+
+  .sup-enter-scale {
+    animation: sup-soft-scale 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .sup-d1 {
+    animation-delay: 0.05s;
+  }
+  .sup-d2 {
+    animation-delay: 0.1s;
+  }
+  .sup-d3 {
+    animation-delay: 0.16s;
+  }
+  .sup-d4 {
+    animation-delay: 0.22s;
+  }
+  .sup-d5 {
+    animation-delay: 0.28s;
+  }
+  .sup-d6 {
+    animation-delay: 0.34s;
+  }
+  .sup-d7 {
+    animation-delay: 0.4s;
+  }
+
+  .sup-drawer-open .sup-drawer-item {
+    animation: sup-drawer-item 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .sup-drawer-open .sup-drawer-item:nth-child(1) {
+    animation-delay: 0.06s;
+  }
+  .sup-drawer-open .sup-drawer-item:nth-child(2) {
+    animation-delay: 0.12s;
+  }
+  .sup-drawer-open .sup-drawer-item:nth-child(3) {
+    animation-delay: 0.18s;
+  }
+  .sup-drawer-open .sup-drawer-item:nth-child(4) {
+    animation-delay: 0.24s;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sup-enter,
+  .sup-enter-fade,
+  .sup-enter-scale,
+  .sup-drawer-open .sup-drawer-item {
+    animation: none !important;
+  }
+}
