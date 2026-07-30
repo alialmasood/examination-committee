@@ -7,19 +7,19 @@ export const pool = new Pool({
   database: process.env.DB_NAME || 'examination',
   user: process.env.DB_USER || 'exam_admin',
   password: process.env.DB_PASS || 'StrongPass!2025',
-  max: 10,
+  // رفع الحد لتجنب timeout عند الطلبات المتوازية (لوحة الحسابات / المصادقة)
+  max: 25,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 10_000,
-  client_encoding: 'utf8',
+  connectionTimeoutMillis: 15_000,
+  // ضبط الجلسة عند إنشاء الاتصال دون سباق مع أول استعلام
+  options: `-c search_path=student_affairs,platform,public -c client_encoding=UTF8`,
 });
 
-// ضبط search_path عند كل اتصال
-pool.on('connect', (client) => {
-  client.query(`SET search_path TO student_affairs,platform,public;`);
-  client.query(`SET client_encoding TO 'UTF8';`);
+pool.on('error', (err) => {
+  console.error('خطأ غير متوقع في اتصال قاعدة البيانات:', err);
 });
 
-// دالة لتنفيذ الاستعلامات
+/** تنفيذ استعلام مع أخذ اتصال من الـ pool ثم إعادته فوراً */
 export async function query(text: string, params?: any[]) {
   const client = await pool.connect();
   try {
@@ -30,7 +30,6 @@ export async function query(text: string, params?: any[]) {
   }
 }
 
-// دالة لإغلاق الاتصال
 export async function closePool() {
   await pool.end();
 }

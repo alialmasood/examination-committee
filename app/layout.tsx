@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Cairo } from "next/font/google";
 import "./globals.css";
 import RegisterSW from "./register-sw";
@@ -9,22 +9,23 @@ const cairo = Cairo({
   weight: ["300", "400", "500", "600", "700"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+  themeColor: "#1EA886",
+};
+
 export const metadata: Metadata = {
   title: "SHAU - نظام كلية الشرق للعلوم التقنية التخصصية",
   description: "نظام إدارة شامل لكلية الشرق للعلوم التقنية التخصصية",
   manifest: "/manifest.json",
-  themeColor: "#1EA886",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "SHAU",
-  },
-  viewport: {
-    width: "device-width",
-    initialScale: 1,
-    maximumScale: 1,
-    userScalable: false,
-    viewportFit: "cover",
   },
   icons: {
     icon: [

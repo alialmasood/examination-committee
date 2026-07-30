@@ -1,23 +1,12 @@
-// Service Worker للتطبيق
-const CACHE_NAME = 'shau-v1';
-const urlsToCache = [
-  '/',
-  '/login',
-  '/student-affairs',
-  '/accounts',
-  '/manifest.json',
-  '/icons/icon-192x192.png',
-  '/icons/icon-512x512.png'
-];
+// Service Worker للتطبيق — لا يتدخل في طلبات API
+const CACHE_NAME = 'shau-v2';
+const urlsToCache = ['/', '/manifest.json', '/wasl.png'];
 
-// تثبيت Service Worker
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('تم فتح cache');
-        return cache.addAll(urlsToCache);
-      })
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(urlsToCache))
       .catch((error) => {
         console.error('خطأ في تثبيت Service Worker:', error);
       })
@@ -25,37 +14,56 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// تفعيل Service Worker
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
+    caches.keys().then((cacheNames) =>
+      Promise.all(
         cacheNames.map((cacheName) => {
           if (cacheName !== CACHE_NAME) {
-            console.log('حذف cache القديم:', cacheName);
             return caches.delete(cacheName);
           }
+          return undefined;
         })
-      );
-    })
+      )
+    )
   );
   return self.clients.claim();
 });
 
-// استرجاع الطلبات
 self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  const url = new URL(req.url);
+
+  // لا تعترض طلبات API أو غير GET — دعها تمر للشبكة مباشرة
+  if (req.method !== 'GET' || url.pathname.startsWith('/api/')) {
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        // إرجاع من cache إذا كان متوفراً، وإلا من الشبكة
-        return response || fetch(event.request);
-      })
-      .catch(() => {
-        // في حالة عدم وجود اتصال، يمكن إرجاع صفحة offline
-        if (event.request.destination === 'document') {
-          return caches.match('/');
+    fetch(req)
+      .then((networkResponse) => {
+        // خزّن الصفحات الثابتة فقط عند النجاح
+        if (
+          networkResponse &&
+          networkResponse.ok &&
+          (url.pathname === '/' ||
+            url.pathname.endsWith('.png') ||
+            url.pathname.endsWith('.json'))
+        ) {
+          const copy = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)).catch(() => undefined);
         }
+        return networkResponse;
+      })
+      .catch(async () => {
+        const cached = await caches.match(req);
+        if (cached) return cached;
+        if (req.destination === 'document') {
+          const home = await caches.match('/');
+          if (home) return home;
+        }
+        // يجب دائماً إرجاع Response صالح
+        return new Response('', { status: 503, statusText: 'Offline' });
       })
   );
 });
-

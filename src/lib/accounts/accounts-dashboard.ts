@@ -1,9 +1,10 @@
 /**
  * تجميع إحصائيات لوحة تحكم نظام الحسابات.
+ * استعلامات القراءة تعمل عبر pool منفصل لكل استعلام (آمن مع Promise.all).
  */
+import { query } from '@/src/lib/db';
 import { getSupplierDashboardSummary } from './suppliers';
-import type { TxClient } from './with-transaction';
-import { txQuery } from './with-transaction';
+import { withTransaction } from './with-transaction';
 
 export type AccountsDashboardStats = {
   generated_at: string;
@@ -157,20 +158,43 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 async function safeQuery<T extends Record<string, unknown>>(
-  client: TxClient,
   sql: string,
   params: unknown[] = []
 ): Promise<{ rows: T[] }> {
   try {
-    return await txQuery<T>(client, sql, params);
+    return await query(sql, params);
   } catch {
     return { rows: [] };
   }
 }
 
-export async function getAccountsDashboardStats(
-  client: TxClient
-): Promise<AccountsDashboardStats> {
+async function dbQuery<T extends Record<string, unknown>>(
+  sql: string,
+  params: unknown[] = []
+): Promise<{ rows: T[] }> {
+  return query(sql, params);
+}
+
+const SUPPLIER_DASHBOARD_FALLBACK = {
+  active_suppliers: 0,
+  total_payables: '0',
+  paid_to_suppliers: '0',
+  remaining_payables: '0',
+  cash_supplier_payments: '0',
+  bank_supplier_payments: '0',
+  cash_direct_expenses: '0',
+  bank_direct_expenses: '0',
+  draft_invoices: 0,
+  posted_invoices: 0,
+  void_invoices: 0,
+  due_invoices: 0,
+  overdue_invoices: 0,
+  recent_invoices: [],
+  recent_payments: [],
+  recent_expenses: [],
+};
+
+export async function getAccountsDashboardStats(): Promise<AccountsDashboardStats> {
   const [
     fiscal,
     chartAccounts,
@@ -204,13 +228,12 @@ export async function getAccountsDashboardStats(
     tuitionStats,
     supplierSummary,
   ] = await Promise.all([
-    txQuery<{
+    dbQuery<{
       default_year_code: string | null;
       default_year_status: string | null;
       open_periods: number;
       total_years: number;
     }>(
-      client,
       `SELECT
          (SELECT code FROM accounts.fiscal_years WHERE is_default = TRUE LIMIT 1) AS default_year_code,
          (SELECT status FROM accounts.fiscal_years WHERE is_default = TRUE LIMIT 1) AS default_year_status,
@@ -219,15 +242,13 @@ export async function getAccountsDashboardStats(
            WHERE fp.status = 'OPEN' AND fy.is_default = TRUE) AS open_periods,
          (SELECT COUNT(*)::int FROM accounts.fiscal_years) AS total_years`
     ),
-    txQuery<{ n: number }>(
-      client,
+    dbQuery<{ n: number }>(
       `SELECT COUNT(*)::int n FROM accounts.chart_of_accounts WHERE is_active = TRUE AND NOT is_group`
     ),
-    txQuery<{ n: number }>(
-      client,
+    dbQuery<{ n: number }>(
       `SELECT COUNT(*)::int n FROM accounts.cost_centers WHERE is_active = TRUE`
     ),
-    txQuery<{
+    dbQuery<{
       total: number;
       drafts: number;
       pending_review: number;
@@ -235,7 +256,6 @@ export async function getAccountsDashboardStats(
       posted: number;
       reversed: number;
     }>(
-      client,
       `SELECT
          COUNT(*)::int AS total,
          COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS drafts,
@@ -246,7 +266,6 @@ export async function getAccountsDashboardStats(
        FROM accounts.journal_entries`
     ),
     safeQuery<{ total: number; active: number; suspended: number }>(
-      client,
       `SELECT
          COUNT(*)::int AS total,
          COUNT(*) FILTER (WHERE status = 'ACTIVE')::int AS active,
@@ -254,62 +273,55 @@ export async function getAccountsDashboardStats(
        FROM accounts.student_accounts`
     ),
     safeQuery<{ balance: string }>(
-      client,
       `SELECT COALESCE(SUM(debit_amount - credit_amount), 0)::text AS balance
        FROM accounts.student_ledger_entries
        WHERE entry_type <> 'OPENING_REFERENCE'`
     ),
     safeQuery<{ n: number; total: string }>(
-      client,
       `SELECT COUNT(*)::int AS n,
               COALESCE(SUM(amount) FILTER (WHERE status = 'POSTED'), 0)::text AS total
        FROM accounts.student_collections`
     ),
     safeQuery<{ pending: number; overdue: number }>(
-      client,
       `SELECT
          COUNT(*) FILTER (WHERE status IN ('PENDING','DUE','PARTIALLY_PAID') AND outstanding_amount > 0)::int AS pending,
          COUNT(*) FILTER (WHERE status IN ('PENDING','DUE','PARTIALLY_PAID') AND outstanding_amount > 0
            AND due_date IS NOT NULL AND due_date < CURRENT_DATE)::int AS overdue
        FROM accounts.student_installments`
     ),
-    txQuery<{ total: number; active: number; draft: number; suspended: number }>(
-      client,
+    dbQuery<{ total: number; active: number; draft: number; suspended: number }>(
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'ACTIVE')::int AS active,
               COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS draft,
               COUNT(*) FILTER (WHERE status = 'SUSPENDED')::int AS suspended
        FROM accounts.cash_boxes`
     ),
-    txQuery<{ total: number; open: number; closing: number; closed: number }>(
-      client,
+    dbQuery<{ total: number; open: number; closing: number; closed: number }>(
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'OPEN')::int AS open,
               COUNT(*) FILTER (WHERE status = 'CLOSING')::int AS closing,
               COUNT(*) FILTER (WHERE status = 'CLOSED')::int AS closed
        FROM accounts.cash_box_sessions`
     ),
-    txQuery<{
+    dbQuery<{
       total: number;
       posted: number;
       receipts_total: string;
       payments_total: string;
     }>(
-      client,
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'POSTED')::int AS posted,
               COALESCE(SUM(amount) FILTER (WHERE voucher_type = 'CASH_RECEIPT' AND status = 'POSTED'), 0)::text AS receipts_total,
               COALESCE(SUM(amount) FILTER (WHERE voucher_type = 'CASH_PAYMENT' AND status = 'POSTED'), 0)::text AS payments_total
        FROM accounts.cash_vouchers`
     ),
-    txQuery<{
+    dbQuery<{
       total: number;
       draft: number;
       dispatched: number;
       received: number;
       cancelled: number;
     }>(
-      client,
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS draft,
               COUNT(*) FILTER (WHERE status = 'DISPATCHED')::int AS dispatched,
@@ -318,7 +330,6 @@ export async function getAccountsDashboardStats(
        FROM accounts.cash_transfers`
     ),
     safeQuery<{ month: string; receipts: string; payments: string }>(
-      client,
       `SELECT TO_CHAR(date_trunc('month', COALESCE(posted_at, created_at)), 'YYYY-MM') AS month,
               COALESCE(SUM(amount) FILTER (WHERE voucher_type = 'CASH_RECEIPT' AND status = 'POSTED'), 0)::text AS receipts,
               COALESCE(SUM(amount) FILTER (WHERE voucher_type = 'CASH_PAYMENT' AND status = 'POSTED'), 0)::text AS payments
@@ -327,47 +338,42 @@ export async function getAccountsDashboardStats(
        GROUP BY 1
        ORDER BY 1 ASC`
     ),
-    txQuery<{ total: number; active: number }>(
-      client,
+    dbQuery<{ total: number; active: number }>(
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE is_active)::int AS active
        FROM accounts.banks`
     ),
-    txQuery<{ total: number; active: number }>(
-      client,
+    dbQuery<{ total: number; active: number }>(
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'ACTIVE')::int AS active
        FROM accounts.bank_accounts`
     ),
-    txQuery<{
+    dbQuery<{
       total: number;
       posted: number;
       receipts_total: string;
       payments_total: string;
     }>(
-      client,
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'POSTED')::int AS posted,
               COALESCE(SUM(amount) FILTER (WHERE voucher_type = 'BANK_RECEIPT' AND status = 'POSTED'), 0)::text AS receipts_total,
               COALESCE(SUM(amount) FILTER (WHERE voucher_type = 'BANK_PAYMENT' AND status = 'POSTED'), 0)::text AS payments_total
        FROM accounts.bank_vouchers`
     ),
-    txQuery<{ total: number; posted: number; draft: number; voided: number }>(
-      client,
+    dbQuery<{ total: number; posted: number; draft: number; voided: number }>(
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'POSTED')::int AS posted,
               COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS draft,
               COUNT(*) FILTER (WHERE status = 'VOIDED')::int AS voided
        FROM accounts.bank_transfers`
     ),
-    txQuery<{
+    dbQuery<{
       total: number;
       draft: number;
       in_progress: number;
       reconciled: number;
       closed: number;
     }>(
-      client,
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS draft,
               COUNT(*) FILTER (WHERE status = 'IN_PROGRESS')::int AS in_progress,
@@ -375,14 +381,13 @@ export async function getAccountsDashboardStats(
               COUNT(*) FILTER (WHERE status = 'CLOSED')::int AS closed
        FROM accounts.bank_statements`
     ),
-    txQuery<{
+    dbQuery<{
       total: number;
       draft: number;
       approved: number;
       closed: number;
       cancelled: number;
     }>(
-      client,
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS draft,
               COUNT(*) FILTER (WHERE status = 'APPROVED')::int AS approved,
@@ -390,21 +395,19 @@ export async function getAccountsDashboardStats(
               COUNT(*) FILTER (WHERE status = 'CANCELLED')::int AS cancelled
        FROM accounts.purchase_orders`
     ),
-    txQuery<{ total: number; draft: number; posted: number }>(
-      client,
+    dbQuery<{ total: number; draft: number; posted: number }>(
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS draft,
               COUNT(*) FILTER (WHERE status = 'POSTED')::int AS posted
        FROM accounts.purchase_receipts`
     ),
-    txQuery<{
+    dbQuery<{
       total: number;
       draft: number;
       active: number;
       suspended: number;
       disposed: number;
     }>(
-      client,
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS draft,
               COUNT(*) FILTER (WHERE status = 'ACTIVE')::int AS active,
@@ -412,19 +415,16 @@ export async function getAccountsDashboardStats(
               COUNT(*) FILTER (WHERE status = 'DISPOSED')::int AS disposed
        FROM accounts.fixed_assets`
     ),
-    txQuery<{ n: number }>(
-      client,
+    dbQuery<{ n: number }>(
       `SELECT COUNT(*)::int n FROM accounts.payroll_people WHERE status = 'ACTIVE'`
     ),
-    txQuery<{ n: number }>(
-      client,
+    dbQuery<{ n: number }>(
       `SELECT COUNT(*)::int n FROM accounts.payroll_contracts WHERE status = 'ACTIVE'`
     ),
-    txQuery<{ n: number }>(
-      client,
+    dbQuery<{ n: number }>(
       `SELECT COUNT(*)::int n FROM accounts.payroll_periods WHERE status IN ('OPEN','PROCESSING')`
     ),
-    txQuery<{
+    dbQuery<{
       total: number;
       draft: number;
       calculated: number;
@@ -432,7 +432,6 @@ export async function getAccountsDashboardStats(
       approved: number;
       posted: number;
     }>(
-      client,
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS draft,
               COUNT(*) FILTER (WHERE status = 'CALCULATED')::int AS calculated,
@@ -441,14 +440,13 @@ export async function getAccountsDashboardStats(
               COUNT(*) FILTER (WHERE status IN ('POSTED','POSTING_COMPLETE'))::int AS posted
        FROM accounts.payroll_runs`
     ),
-    txQuery<{
+    dbQuery<{
       run_number: string;
       people_count: number;
       error_count: number;
       net_total: string;
       calculated_at: string | null;
     }>(
-      client,
       `SELECT run_number, people_count, error_count, net_total::text, calculated_at::text
        FROM accounts.payroll_runs
        WHERE status IN ('CALCULATED','APPROVED','REVIEW_APPROVED','POSTED','POSTING_COMPLETE')
@@ -464,7 +462,6 @@ export async function getAccountsDashboardStats(
       morning: number;
       evening: number;
     }>(
-      client,
       `SELECT
          COUNT(*)::int AS total,
          COUNT(DISTINCT NULLIF(TRIM(major), ''))::int AS departments,
@@ -479,7 +476,6 @@ export async function getAccountsDashboardStats(
        FROM student_affairs.students`
     ),
     safeQuery<{ stage: string; count: number }>(
-      client,
       `SELECT COALESCE(NULLIF(TRIM(admission_type), ''), 'unknown') AS stage,
               COUNT(*)::int AS count
        FROM student_affairs.students
@@ -490,7 +486,6 @@ export async function getAccountsDashboardStats(
          END`
     ),
     safeQuery<{ name: string; count: number }>(
-      client,
       `SELECT COALESCE(NULLIF(TRIM(major), ''), 'غير محدد') AS name,
               COUNT(*)::int AS count
        FROM student_affairs.students
@@ -504,7 +499,6 @@ export async function getAccountsDashboardStats(
       registration_pending: number;
       collected_amount: string;
     }>(
-      client,
       `SELECT
          COUNT(*) FILTER (WHERE COALESCE(payment_status,'pending') = 'paid')::int AS paid_count,
          COUNT(*) FILTER (WHERE COALESCE(payment_status,'pending') IN ('pending','partial'))::int AS unpaid_count,
@@ -512,24 +506,9 @@ export async function getAccountsDashboardStats(
          COALESCE(SUM(COALESCE(payment_amount,0)), 0)::text AS collected_amount
        FROM student_affairs.students`
     ),
-    getSupplierDashboardSummary(client).catch(() => ({
-      active_suppliers: 0,
-      total_payables: '0',
-      paid_to_suppliers: '0',
-      remaining_payables: '0',
-      cash_supplier_payments: '0',
-      bank_supplier_payments: '0',
-      cash_direct_expenses: '0',
-      bank_direct_expenses: '0',
-      draft_invoices: 0,
-      posted_invoices: 0,
-      void_invoices: 0,
-      due_invoices: 0,
-      overdue_invoices: 0,
-      recent_invoices: [],
-      recent_payments: [],
-      recent_expenses: [],
-    })),
+    withTransaction((c) =>
+      getSupplierDashboardSummary(c).catch(() => SUPPLIER_DASHBOARD_FALLBACK)
+    ).catch(() => SUPPLIER_DASHBOARD_FALLBACK),
   ]);
 
   const j = row1(journal.rows);
@@ -542,12 +521,23 @@ export async function getAccountsDashboardStats(
   const sup = supplierSummary;
 
   const pendingPromotions = await safeQuery<{ n: number }>(
-    client,
     `SELECT COUNT(*)::int AS n
      FROM student_affairs.stage_promotion_requests
      WHERE status = 'pending'`
   );
   const pendingStagePromotions = Number(row1(pendingPromotions.rows).n ?? 0);
+
+  // مبالغ التسديد الخفيفة (بدون ملخص ثقيل داخل المعاملة)
+  const settlementTotals = await safeQuery<{
+    collected: string;
+    receipts: number;
+  }>(
+    `SELECT
+       COALESCE(SUM(pay_amount), 0)::text AS collected,
+       COUNT(*)::int AS receipts
+     FROM accounts.student_settlement_receipts`
+  );
+  const settlementRow = row1(settlementTotals.rows);
 
   const byStageRaw = academicStages.rows.length
     ? academicStages.rows
@@ -583,7 +573,9 @@ export async function getAccountsDashboardStats(
       paid_count: Number(tu.paid_count ?? 0),
       unpaid_count: Number(tu.unpaid_count ?? 0),
       registration_pending: Number(tu.registration_pending ?? 0),
-      collected_amount: String(tu.collected_amount ?? '0'),
+      collected_amount: String(
+        settlementRow.collected ?? tu.collected_amount ?? '0'
+      ),
     },
     overview: {
       chart_accounts: row1(chartAccounts.rows).n ?? 0,
@@ -601,9 +593,14 @@ export async function getAccountsDashboardStats(
       total_accounts: Number(st.total ?? 0),
       active_accounts: Number(st.active ?? 0),
       suspended_accounts: Number(st.suspended ?? 0),
+      // الذمم تُحدَّث لاحقاً من ملخص التسديد خارج المعاملة إن أمكن
       total_receivable_balance: row1(studentBalance.rows).balance ?? '0',
-      posted_collections: Number(row1(collections.rows).n ?? 0),
-      collections_total: row1(collections.rows).total ?? '0',
+      posted_collections: Number(
+        settlementRow.receipts ?? row1(collections.rows).n ?? 0
+      ),
+      collections_total: String(
+        settlementRow.collected ?? row1(collections.rows).total ?? '0'
+      ),
       pending_installments: Number(row1(installments.rows).pending ?? 0),
       overdue_installments: Number(row1(installments.rows).overdue ?? 0),
       pending_stage_promotions: pendingStagePromotions,

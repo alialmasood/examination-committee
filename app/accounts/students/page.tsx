@@ -392,13 +392,13 @@ export default function AccountsStudentsPage() {
               <MoneyStatCard
                 label="المبلغ المدفوع من كل الطلبة"
                 amount={data.collected_amount}
-                hint="مجموع مبالغ الدفع المسجّلة"
+                hint="مجموع مبالغ وصولات التسديد فقط"
                 tone="success"
               />
               <MoneyStatCard
                 label="المبلغ الديون من كل الطلبة"
                 amount={data.debt_amount}
-                hint="المتبقي بعد خصم المدفوع من المستحق السنوي"
+                hint="متبقي السنة الجارية حسب دفتر التسديد"
                 tone="warning"
               />
               <StatCard
@@ -406,7 +406,7 @@ export default function AccountsStudentsPage() {
                 value={count(data.receipts_count)}
                 hint={
                   data.settlements_paid_amount > 0
-                    ? `من التسديدات: ${money(data.settlements_paid_amount)} IQD`
+                    ? `إجمالي التسديدات: ${money(data.settlements_paid_amount)} IQD`
                     : 'وصولات تسديد الأقساط'
                 }
                 tone="accent"
@@ -427,18 +427,18 @@ export default function AccountsStudentsPage() {
               <MoneyStatCard
                 label="إجمالي مبلغ التخفيض"
                 amount={data.total_discount_amount}
-                hint="قناة القبول + خصم مودال التسديد"
+                hint="خصم التسجيل + خصم إضافي من مودال التسديد"
                 tone="warning"
               />
               <MoneyStatCard
                 label="تخفيض قنوات القبول"
                 amount={data.channel_discount_amount}
-                hint="خصم شهيد / رعاية / أوائل وغيرها"
+                hint="محسوب عند التسجيل / تأكيد الدفع"
               />
               <MoneyStatCard
                 label="تخفيض مودال التسديد"
                 amount={data.settlement_discount_amount}
-                hint="خصم / تخفيض على قسط السنة الحالية"
+                hint="خصم إضافي مسجّل على وصولات التسديد"
                 tone="accent"
               />
               <StatCard

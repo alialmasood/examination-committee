@@ -239,9 +239,9 @@ export default function AccountsDashboard() {
         <Kpi
           label="المقبوضات (أقساط)"
           value={`${money(stats.tuition.collected_amount)} IQD`}
-          hint={`${num(stats.tuition.paid_count)} مسدد / ${num(stats.tuition.unpaid_count)} متبقي`}
+          hint={`${num(stats.tuition.paid_count)} مسدد / ${num(stats.tuition.unpaid_count)} متبقي · من وصولات التسديد`}
           border="#0f766e"
-          href="/accounts/installments"
+          href="/accounts/students/accounts"
         />
         <Kpi
           label="صافي حركة الصندوق"
@@ -253,7 +253,7 @@ export default function AccountsDashboard() {
         <Kpi
           label="ذمم الطلبة"
           value={`${money(stats.students.total_receivable_balance)} IQD`}
-          hint={`${num(stats.students.overdue_installments)} قسط متأخر`}
+          hint="متبقي السنوات الجارية من دفتر التسديد"
           border="#a11d2d"
           href="/accounts/students/accounts"
         />

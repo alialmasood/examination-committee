@@ -166,7 +166,6 @@ export async function GET(
          s.study_type,
          s.academic_year,
          COALESCE(NULLIF(TRIM(s.payment_status), ''), 'pending') AS payment_status,
-         COALESCE(s.payment_amount, 0)::float8 AS payment_amount,
          s.discount_percentage::float8 AS discount_percentage,
          s.final_fee_after_discount::float8 AS final_fee_after_discount
        FROM student_affairs.students s
@@ -174,6 +173,26 @@ export async function GET(
        ORDER BY s.admission_type NULLS LAST, s.university_id ASC`,
       [dept.name]
     );
+
+    const paidByStudent = new Map<string, number>();
+    if (result.rows.length > 0) {
+      try {
+        const studentIds = result.rows.map((row: { id: string }) => row.id);
+        const receiptsRes = await query(
+          `SELECT student_id::text AS student_id,
+                  COALESCE(SUM(pay_amount), 0)::float8 AS paid_amount
+           FROM accounts.student_settlement_receipts
+           WHERE student_id = ANY($1::uuid[])
+           GROUP BY student_id`,
+          [studentIds]
+        );
+        for (const row of receiptsRes.rows) {
+          paidByStudent.set(String(row.student_id), Number(row.paid_amount || 0));
+        }
+      } catch {
+        // لا وصولات تسديد بعد — يبقى المدفوع صفراً
+      }
+    }
 
     const stagesOrder = ['first', 'second', 'third', 'fourth', 'unknown'];
     const byStage: Record<string, StageBucket> = {};
@@ -207,7 +226,7 @@ export async function GET(
       const gender = normalizeGender(row.gender);
       const status = String(row.payment_status || 'pending');
       const isMarkedPaid = status === 'paid';
-      const paidAmount = Number(row.payment_amount || 0);
+      const paidAmount = paidByStudent.get(String(row.id)) || 0;
       const expected = expectedFee({
         major: row.major || dept.name,
         study_type: row.study_type,

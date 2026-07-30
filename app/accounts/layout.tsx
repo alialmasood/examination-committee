@@ -134,7 +134,7 @@ export default function AccountsLayout({
         <div className="flex items-center h-18 border border-white rounded-lg mx-1 my-2 px-4">
           <div className="w-18 h-18 ml-1 flex items-center justify-center flex-shrink-0">
             <Image 
-              src="/logos/college-logo.png" 
+              src="/wasl.png" 
               alt="شعار الكلية" 
               width={64}
               height={64}

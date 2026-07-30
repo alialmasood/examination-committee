@@ -114,15 +114,28 @@ export async function GET(request: NextRequest) {
         getStatsByStudyType('evening')
       ]);
 
-      // جلب إجمالي المبالغ المدفوعة للقسم
-      const totalAmountQuery = academicYear
-        ? `SELECT COALESCE(SUM(payment_amount), 0) as total_amount FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND payment_status = $2 AND academic_year = $3`
-        : `SELECT COALESCE(SUM(payment_amount), 0) as total_amount FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND payment_status = $2`;
-      const totalAmountParams = academicYear 
-        ? [dept.arabicName, 'paid', academicYear]
-        : [dept.arabicName, 'paid'];
-      const totalAmountResult = await query(totalAmountQuery, totalAmountParams);
-      const totalAmount = parseFloat(totalAmountResult.rows[0].total_amount);
+      // إجمالي المبالغ = مجموع pay_amount من وصولات التسديد الفعلية فقط
+      // (وليس payment_amount بعد «تأكيد الدفع» الذي يخزّن قسط السنة المتوقع)
+      let totalAmount = 0;
+      try {
+        const totalAmountQuery = academicYear
+          ? `SELECT COALESCE(SUM(r.pay_amount), 0) AS total_amount
+             FROM accounts.student_settlement_receipts r
+             INNER JOIN student_affairs.students s ON s.id = r.student_id
+             WHERE normalize_arabic(s.major) = normalize_arabic($1)
+               AND s.academic_year = $2`
+          : `SELECT COALESCE(SUM(r.pay_amount), 0) AS total_amount
+             FROM accounts.student_settlement_receipts r
+             INNER JOIN student_affairs.students s ON s.id = r.student_id
+             WHERE normalize_arabic(s.major) = normalize_arabic($1)`;
+        const totalAmountParams = academicYear
+          ? [dept.arabicName, academicYear]
+          : [dept.arabicName];
+        const totalAmountResult = await query(totalAmountQuery, totalAmountParams);
+        totalAmount = parseFloat(totalAmountResult.rows[0].total_amount);
+      } catch {
+        totalAmount = 0;
+      }
 
       return {
         id: dept.id,
