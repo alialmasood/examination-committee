@@ -78,7 +78,7 @@ const num = (v: number) => Math.round(v || 0).toLocaleString('en-US');
 const moneyShort = (v: number) => {
   const n = Math.round(v || 0);
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)} مليار`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)} م`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)} مليون`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)} ألف`;
   return num(n);
 };
@@ -270,7 +270,7 @@ export default function GeneralSupervisionPage() {
                       {num(data.students.total)}
                     </p>
                     <p className="text-[10px] text-slate-400 mt-1">
-                      كل السنوات: {num(data.students.total_all_years)}
+                      إجمالي المسجلين · جميع الأعوام: {num(data.students.total_all_years)}
                     </p>
                   </div>
                   <div

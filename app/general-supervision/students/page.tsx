@@ -307,7 +307,7 @@ export default function SupervisionStudentsPage() {
                       {loading ? '…' : num(totalStudents)}
                     </p>
                     <p className="text-[10px] text-slate-400 mt-1">
-                      كل السنوات: {loading ? '…' : num(totalAllYears)}
+                      إجمالي المسجلين · جميع الأعوام: {loading ? '…' : num(totalAllYears)}
                     </p>
                   </div>
                   <div
