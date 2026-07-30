@@ -9,9 +9,16 @@ import {
   type DepartmentTotals,
   type StudentExportRow,
 } from '@/src/lib/accounts/student-export-data';
+import type { FeeYear } from '@/app/accounts/students/lib/settlementYearLedger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
+function parseFeeYear(raw: string | null): FeeYear | '' {
+  const n = Number(raw);
+  if (n === 1 || n === 2 || n === 3 || n === 4) return n;
+  return '';
+}
 
 const HEADER_FILL = 'FF450A0A';
 const SUBTOTAL_FILL = 'FFFDE68A';
@@ -191,6 +198,7 @@ export async function GET(request: NextRequest) {
         | 'partial'
         | 'unpaid'
         | '',
+      feeYear: parseFeeYear(searchParams.get('fee_year')),
     });
 
     const wb = new ExcelJS.Workbook();

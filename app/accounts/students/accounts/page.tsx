@@ -13,7 +13,10 @@ import {
   printStudentAccountsTable,
   type StudentAccountsExportData,
 } from '../components/printStudentAccountsTable';
-import type { YearVisualEntry } from '../lib/settlementYearLedger';
+import {
+  paymentCategoryFromYearStatus,
+  type YearVisualEntry,
+} from '../lib/settlementYearLedger';
 
 type PaidStudentRow = SettlementStudent;
 
@@ -113,22 +116,18 @@ export default function StudentAccountsPage() {
   const [filterPaymentStatus, setFilterPaymentStatus] = useState<
     '' | 'settled' | 'partial' | 'unpaid'
   >('');
+  const [filterFeeYear, setFilterFeeYear] = useState<'' | 1 | 2 | 3 | 4>('');
   const [tablePage, setTablePage] = useState(1);
+  const [yearStatusReady, setYearStatusReady] = useState(false);
   const PAGE_SIZE = 50;
 
   function getPaymentCategory(
     studentId: string
   ): 'settled' | 'partial' | 'unpaid' {
-    const status = yearStatusByStudent[studentId];
-    if (!status) return 'unpaid';
-    if (status.all_completed || status.current_year == null) return 'settled';
-    const current =
-      status.years?.find((y) => y.isCurrent) ||
-      status.years?.find((y) => y.year === status.current_year);
-    if (!current) return 'unpaid';
-    if (current.remaining <= 0.01) return 'settled';
-    if (current.paid > 0.01) return 'partial';
-    return 'unpaid';
+    return paymentCategoryFromYearStatus(
+      yearStatusByStudent[studentId],
+      filterFeeYear || undefined
+    );
   }
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
@@ -154,8 +153,10 @@ export default function StudentAccountsPage() {
       const deptBody = await deptRes.json().catch(() => ({}));
       const yearBody = await yearRes.json().catch(() => ({}));
 
+      const errors: string[] = [];
+
       if (!paidRes.ok || !paidBody.success) {
-        setError(
+        errors.push(
           paidBody.error || paidBody.message || 'تعذر تحميل قائمة الطلبة المسددين'
         );
         setRows([]);
@@ -171,14 +172,25 @@ export default function StudentAccountsPage() {
 
       if (yearRes.ok && yearBody.success && yearBody.data) {
         setYearStatusByStudent(yearBody.data as Record<string, StudentYearStatus>);
+        setYearStatusReady(true);
       } else {
         setYearStatusByStudent({});
+        setYearStatusReady(false);
+        setFilterPaymentStatus('');
+        setFilterFeeYear('');
+        errors.push(
+          yearBody.error ||
+            'تعذر تحميل حالة التسديد — فلتر مسدّدون/جزئي/غير مسدّدين غير موثوق حالياً'
+        );
       }
+
+      setError(errors.join(' · '));
     } catch {
       setError('تعذر الاتصال بالخادم');
       setRows([]);
       setDepartments([]);
       setYearStatusByStudent({});
+      setYearStatusReady(false);
     } finally {
       if (!opts?.silent) setLoading(false);
     }
@@ -250,6 +262,7 @@ export default function StudentAccountsPage() {
     filterStage,
     filterStudyType,
     filterPaymentStatus,
+    filterFeeYear,
     yearStatusByStudent,
   ]);
 
@@ -269,6 +282,7 @@ export default function StudentAccountsPage() {
     filterStage,
     filterStudyType,
     filterPaymentStatus,
+    filterFeeYear,
   ]);
 
   useEffect(() => {
@@ -290,7 +304,8 @@ export default function StudentAccountsPage() {
     !!filterDepartment ||
     !!filterStage ||
     !!filterStudyType ||
-    !!filterPaymentStatus;
+    !!filterPaymentStatus ||
+    !!filterFeeYear;
 
   /** أعداد الصباحي/المسائي وفق الفلاتر الأخرى (بدون نوع الدراسة) */
   const studyTypeCounts = useMemo(() => {
@@ -332,6 +347,7 @@ export default function StudentAccountsPage() {
     filterDepartment,
     filterStage,
     filterPaymentStatus,
+    filterFeeYear,
     yearStatusByStudent,
   ]);
 
@@ -381,6 +397,7 @@ export default function StudentAccountsPage() {
     filterDepartment,
     filterStage,
     filterStudyType,
+    filterFeeYear,
     yearStatusByStudent,
   ]);
 
@@ -390,6 +407,7 @@ export default function StudentAccountsPage() {
     setFilterStage('');
     setFilterStudyType('');
     setFilterPaymentStatus('');
+    setFilterFeeYear('');
     setTablePage(1);
   }
 
@@ -401,6 +419,7 @@ export default function StudentAccountsPage() {
     if (filterStage) params.set('stage', filterStage);
     if (filterStudyType) params.set('study_type', filterStudyType);
     if (filterPaymentStatus) params.set('payment_status', filterPaymentStatus);
+    if (filterFeeYear) params.set('fee_year', String(filterFeeYear));
     const qs = params.toString();
     return qs ? `?${qs}` : '';
   }
@@ -668,7 +687,57 @@ export default function StudentAccountsPage() {
                     </div>
                     <div className="sm:col-span-12">
                       <label className="block text-xs text-gray-500 mb-1">
+                        سنة القسط
+                        <span className="text-gray-400 mr-1">
+                          (تقييم حالة التسديد حسب السنة — الافتراضي: الجارية)
+                        </span>
+                      </label>
+                      <div
+                        className="flex w-full rounded-md border border-gray-300 overflow-hidden"
+                        role="group"
+                        aria-label="فلتر سنة القسط"
+                      >
+                        {(
+                          [
+                            { value: '' as const, label: 'الجارية' },
+                            { value: 1 as const, label: 'الأولى' },
+                            { value: 2 as const, label: 'الثانية' },
+                            { value: 3 as const, label: 'الثالثة' },
+                            { value: 4 as const, label: 'الرابعة' },
+                          ] as const
+                        ).map((opt, idx) => {
+                          const active = filterFeeYear === opt.value;
+                          const disabled = !yearStatusReady && opt.value !== '';
+                          return (
+                            <button
+                              key={opt.value === '' ? 'fee-year-current' : `fee-year-${opt.value}`}
+                              type="button"
+                              disabled={disabled}
+                              onClick={() => setFilterFeeYear(opt.value)}
+                              className={[
+                                'flex-1 h-10 px-2 text-sm font-semibold whitespace-nowrap transition-colors',
+                                idx > 0 ? 'border-r border-gray-300' : '',
+                                disabled
+                                  ? 'bg-gray-50 text-gray-400 cursor-not-allowed'
+                                  : active
+                                    ? 'bg-red-950 text-white'
+                                    : 'bg-white text-gray-700 hover:bg-gray-100',
+                              ].join(' ')}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="sm:col-span-12">
+                      <label className="block text-xs text-gray-500 mb-1">
                         حالة التسديد
+                        {!yearStatusReady ? (
+                          <span className="text-amber-600 mr-1">
+                            (غير متاحة حالياً)
+                          </span>
+                        ) : null}
                       </label>
                       <div
                         className="flex w-full rounded-md border border-gray-300 overflow-hidden"
@@ -700,24 +769,28 @@ export default function StudentAccountsPage() {
                           ] as const
                         ).map((opt, idx) => {
                           const active = filterPaymentStatus === opt.value;
+                          const disabled = !yearStatusReady && opt.value !== '';
                           return (
                             <button
                               key={opt.value || 'payment-all'}
                               type="button"
+                              disabled={disabled}
                               onClick={() => setFilterPaymentStatus(opt.value)}
                               className={[
                                 'flex-1 h-10 px-2 text-sm font-semibold whitespace-nowrap transition-colors',
                                 idx > 0 ? 'border-r border-gray-300' : '',
-                                active
-                                  ? 'bg-red-950 text-white'
-                                  : 'bg-white text-gray-700 hover:bg-gray-100',
+                                disabled
+                                  ? 'bg-gray-50 text-gray-400 cursor-not-allowed'
+                                  : active
+                                    ? 'bg-red-950 text-white'
+                                    : 'bg-white text-gray-700 hover:bg-gray-100',
                               ].join(' ')}
                             >
                               {opt.label}
                               <span
                                 className={[
                                   'mr-1 inline-flex min-w-[1.1rem] justify-center rounded px-1 text-[11px] font-bold',
-                                  active
+                                  active && !disabled
                                     ? 'bg-white/20 text-white'
                                     : 'bg-gray-100 text-gray-600',
                                 ].join(' ')}

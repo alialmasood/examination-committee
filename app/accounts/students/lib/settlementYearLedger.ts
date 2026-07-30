@@ -71,6 +71,55 @@ export function getYearVisualEntries(ledger: YearLedger): YearVisualEntry[] {
   });
 }
 
+/** فئة فلتر التسديد — مطابقة لصناديق حالة السنة */
+export type PaymentFilterCategory = 'settled' | 'partial' | 'unpaid';
+
+export type FeeYearFilter = FeeYear | '' | null | undefined;
+
+function categoryFromYearEntry(
+  entry: Pick<YearVisualEntry, 'paid' | 'remaining' | 'visual'> | null | undefined
+): PaymentFilterCategory {
+  if (!entry) return 'unpaid';
+  if (entry.visual === 'completed' || entry.remaining <= 0.01) return 'settled';
+  if (entry.visual === 'current_partial' || entry.paid > 0.01) return 'partial';
+  return 'unpaid';
+}
+
+/**
+ * تصنيف حالة التسديد.
+ * - بدون feeYear: السنة الجارية في الدفتر (أو مسدّد إن اكتملت الكل).
+ * - مع feeYear 1–4: تقييم تلك السنة تحديداً.
+ */
+export function paymentCategoryFromYearStatus(
+  status: {
+    current_year: number | null;
+    all_completed: boolean;
+    years: YearVisualEntry[];
+  } | null | undefined,
+  feeYear?: FeeYearFilter
+): PaymentFilterCategory {
+  if (!status) return 'unpaid';
+
+  const selected =
+    feeYear === 1 || feeYear === 2 || feeYear === 3 || feeYear === 4
+      ? feeYear
+      : null;
+
+  if (selected != null) {
+    const entry = status.years.find((y) => y.year === selected);
+    return categoryFromYearEntry(entry);
+  }
+
+  // اكتملت كل السنوات (أو لا سنة جارية) → مسدّد
+  if (status.all_completed || status.current_year == null) return 'settled';
+
+  const current =
+    status.years.find((y) => y.isCurrent) ||
+    status.years.find((y) => y.year === status.current_year);
+
+  return categoryFromYearEntry(current);
+}
+
 function toNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;

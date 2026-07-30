@@ -4,6 +4,9 @@
 import { query } from '@/src/lib/db';
 import {
   buildYearLedger,
+  getYearVisualEntries,
+  paymentCategoryFromYearStatus,
+  type FeeYear,
   type SettlementHistoryRow,
 } from '@/app/accounts/students/lib/settlementYearLedger';
 import {
@@ -18,6 +21,8 @@ export type StudentExportFilters = {
   studyType?: string;
   /** settled = مسدّدون · partial = تسديد جزئي · unpaid = غير مسدّدين */
   paymentStatus?: 'settled' | 'partial' | 'unpaid' | '';
+  /** تقييم حالة التسديد لسنة قسط محددة (1–4)؛ فارغ = السنة الجارية */
+  feeYear?: FeeYear | '' | null;
 };
 
 export type StudentExportRow = {
@@ -181,8 +186,18 @@ export function paymentStatusOfRow(
   row: Pick<
     StudentExportRow,
     'current_year' | 'paid_current_year' | 'remaining_current_year'
-  >
+  >,
+  feeYear?: FeeYear | '' | null,
+  yearStatus?: {
+    current_year: number | null;
+    all_completed: boolean;
+    years: ReturnType<typeof getYearVisualEntries>;
+  } | null
 ): 'settled' | 'partial' | 'unpaid' {
+  if (yearStatus) {
+    return paymentCategoryFromYearStatus(yearStatus, feeYear);
+  }
+  // نفس منطق paymentCategoryFromYearStatus على السنة الجارية
   if (!row.current_year || row.remaining_current_year <= 0.01) return 'settled';
   if (row.paid_current_year > 0.01) return 'partial';
   return 'unpaid';
@@ -192,7 +207,12 @@ function matchesExportFilters(
   row: StudentExportRow,
   rawAdmissionType: string | null | undefined,
   rawStudyType: string | null | undefined,
-  filters?: StudentExportFilters
+  filters?: StudentExportFilters,
+  yearStatus?: {
+    current_year: number | null;
+    all_completed: boolean;
+    years: ReturnType<typeof getYearVisualEntries>;
+  } | null
 ): boolean {
   if (!filters) return true;
 
@@ -215,7 +235,12 @@ function matchesExportFilters(
   }
 
   if (filters.paymentStatus) {
-    if (paymentStatusOfRow(row) !== filters.paymentStatus) return false;
+    if (
+      paymentStatusOfRow(row, filters.feeYear, yearStatus) !==
+      filters.paymentStatus
+    ) {
+      return false;
+    }
   }
 
   const q = (filters.search || '').trim().toLowerCase();
@@ -327,12 +352,30 @@ export async function getStudentExportData(
 
     const receipts = receiptsByStudent.get(s.id) || [];
     const ledger = buildYearLedger(receipts, netFeeFromStudent);
-    const currentYear = ledger.currentYear;
+    const yearVisual = getYearVisualEntries(ledger);
+    const yearStatus = {
+      current_year: ledger.currentYear,
+      all_completed: ledger.allYearsCompleted,
+      years: yearVisual,
+    };
+
+    const selectedFeeYear =
+      filters?.feeYear === 1 ||
+      filters?.feeYear === 2 ||
+      filters?.feeYear === 3 ||
+      filters?.feeYear === 4
+        ? filters.feeYear
+        : null;
+
+    const currentYear = selectedFeeYear ?? ledger.currentYear;
     const currentEntry = currentYear
-      ? ledger.years.find((y) => y.year === currentYear)
+      ? ledger.years.find((y) => y.year === currentYear) || null
       : null;
 
-    const settlementDiscount = resolveSettlementDiscount(receipts, currentYear);
+    const settlementDiscount = resolveSettlementDiscount(
+      receipts,
+      selectedFeeYear ?? ledger.currentYear
+    );
 
     const discountParts = [
       channelDiscountType,
@@ -356,17 +399,23 @@ export async function getStudentExportData(
     const paidCurrentYear = currentEntry ? currentEntry.paid : 0;
     const remainingCurrentYear = currentEntry
       ? currentEntry.remaining
-      : ledger.allYearsCompleted
+      : !selectedFeeYear && ledger.allYearsCompleted
         ? 0
-        : Math.max(0, netFee - totalCollected);
+        : Math.max(0, netFee - (selectedFeeYear ? 0 : totalCollected));
 
-    const statusLabel = !currentYear
-      ? 'مسدّد — اكتملت السنوات'
-      : remainingCurrentYear <= 0.01
-        ? `السنة ${currentYear} — مسدّدة`
+    const statusLabel = selectedFeeYear
+      ? remainingCurrentYear <= 0.01
+        ? `السنة ${selectedFeeYear} — مسدّدة`
         : paidCurrentYear > 0.01
-          ? `السنة ${currentYear} — تسديد جزئي`
-          : `السنة ${currentYear} — غير مسدّدة`;
+          ? `السنة ${selectedFeeYear} — تسديد جزئي`
+          : `السنة ${selectedFeeYear} — غير مسدّدة`
+      : !ledger.currentYear
+        ? 'مسدّد — اكتملت السنوات'
+        : remainingCurrentYear <= 0.01
+          ? `السنة ${ledger.currentYear} — مسدّدة`
+          : paidCurrentYear > 0.01
+            ? `السنة ${ledger.currentYear} — تسديد جزئي`
+            : `السنة ${ledger.currentYear} — غير مسدّدة`;
 
     const row: StudentExportRow = {
       id: s.id,
@@ -387,7 +436,15 @@ export async function getStudentExportData(
       status_label: statusLabel,
     };
 
-    if (!matchesExportFilters(row, s.admission_type, s.study_type, filters)) {
+    if (
+      !matchesExportFilters(
+        row,
+        s.admission_type,
+        s.study_type,
+        filters,
+        yearStatus
+      )
+    ) {
       continue;
     }
 

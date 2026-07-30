@@ -4,9 +4,16 @@ import {
   requireAccountsAccess,
 } from '@/src/lib/accounts/auth';
 import { getStudentExportData } from '@/src/lib/accounts/student-export-data';
+import type { FeeYear } from '@/app/accounts/students/lib/settlementYearLedger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
+function parseFeeYear(raw: string | null): FeeYear | '' {
+  const n = Number(raw);
+  if (n === 1 || n === 2 || n === 3 || n === 4) return n;
+  return '';
+}
 
 export async function GET(request: NextRequest) {
   const auth = await requireAccountsAccess(request);
@@ -24,6 +31,7 @@ export async function GET(request: NextRequest) {
         | 'partial'
         | 'unpaid'
         | '',
+      feeYear: parseFeeYear(searchParams.get('fee_year')),
     });
     return NextResponse.json(
       { success: true, data },
