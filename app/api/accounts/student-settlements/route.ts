@@ -329,24 +329,6 @@ export async function POST(request: NextRequest) {
 
     const feeYear = openState.feeYear;
     const yearPaidBefore = openState.yearPaidBefore;
-    const outstandingBefore = openState.outstandingBefore;
-
-    if (outstandingBefore <= 0.01) {
-      return NextResponse.json(
-        { success: false, error: 'لا يوجد متبقي على السنة الحالية' },
-        { status: 400 }
-      );
-    }
-
-    if (payAmount > outstandingBefore + 0.0001) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `مبلغ الدفع أكبر من المتبقي للسنة الحالية (${outstandingBefore})`,
-        },
-        { status: 400 }
-      );
-    }
 
     const discountModeRaw = String(body?.discount_mode || 'none');
     let discountMode =
@@ -390,18 +372,58 @@ export async function POST(request: NextRequest) {
       afterDiscount = openState.yearTarget;
       discountBase = annualFee;
     } else {
+      // سنة جديدة: خصم مبلغ/نسبة من قسط هذه السنة فقط إن كانت ضمن السنوات المحددة
       discountBase = toMoney(body?.discount_base) || annualFee;
-      const afterDiscountRaw =
-        toMoney(body?.after_discount) ||
-        Math.max(0, discountBase - discountAmount);
-      afterDiscount =
-        annualFee > 0
-          ? Math.min(afterDiscountRaw, annualFee)
-          : afterDiscountRaw;
-      // تأكيد الاتساق مع outstanding (سنة جديدة = المستحق كاملاً)
-      if (Math.abs(afterDiscount - outstandingBefore) > 0.01) {
-        afterDiscount = outstandingBefore;
+      discountInput = toMoney(body?.discount_input);
+
+      const yearInDiscountPlan =
+        discountFeeYearsUnique.length === 0 ||
+        discountFeeYearsUnique.includes(feeYear);
+
+      // إعادة احتساب مبلغ الخصم من النسبة أو المبلغ (يشمل خصم السيد العميد)
+      if (discountMode === 'percent' && yearInDiscountPlan) {
+        const pct = Math.max(0, Math.min(discountInput, 100));
+        discountInput = pct;
+        discountAmount = Math.round(((discountBase * pct) / 100) * 100) / 100;
+      } else if (discountMode === 'amount' && yearInDiscountPlan) {
+        discountAmount = Math.max(
+          0,
+          Math.min(toMoney(body?.discount_amount) || discountInput, discountBase)
+        );
+        discountInput = discountAmount;
+      } else {
+        discountMode = 'none';
+        discountAmount = 0;
+        discountInput = 0;
       }
+
+      afterDiscount = Math.max(0, discountBase - discountAmount);
+      if (annualFee > 0) {
+        afterDiscount = Math.min(afterDiscount, annualFee);
+      }
+    }
+
+    // المتبقي الفعلي لهذه السنة (بعد الخصم عند أول وصل)
+    const outstandingBefore =
+      openState.receiptsCount > 0
+        ? openState.outstandingBefore
+        : Math.max(0, afterDiscount - yearPaidBefore);
+
+    if (outstandingBefore <= 0.01) {
+      return NextResponse.json(
+        { success: false, error: 'لا يوجد متبقي على السنة الحالية' },
+        { status: 400 }
+      );
+    }
+
+    if (payAmount > outstandingBefore + 0.0001) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `مبلغ الدفع أكبر من المتبقي للسنة الحالية (${outstandingBefore})`,
+        },
+        { status: 400 }
+      );
     }
 
     const remainingAmount = Math.max(0, outstandingBefore - payAmount);

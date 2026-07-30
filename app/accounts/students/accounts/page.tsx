@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import StudentsNav from '../components/StudentsNav';
 import SettlementModal, {
@@ -97,7 +96,6 @@ function compareStudentsByName(
 }
 
 export default function StudentAccountsPage() {
-  const router = useRouter();
   const [rows, setRows] = useState<PaidStudentRow[]>([]);
   const [departments, setDepartments] = useState<DepartmentStat[]>([]);
   const [loading, setLoading] = useState(true);
@@ -133,8 +131,8 @@ export default function StudentAccountsPage() {
     return 'unpaid';
   }
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError('');
     try {
       const [paidRes, deptRes, yearRes] = await Promise.all([
@@ -182,7 +180,7 @@ export default function StudentAccountsPage() {
       setDepartments([]);
       setYearStatusByStudent({});
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
@@ -869,9 +867,10 @@ export default function StudentAccountsPage() {
         open={!!settlementStudent}
         student={settlementStudent}
         onClose={() => setSettlementStudent(null)}
-        onSaved={(receipt) => {
+        onSaved={() => {
           setSettlementStudent(null);
-          router.push(`/accounts/students/accounts/student/${receipt.student_id}`);
+          // البقاء في نفس الصفحة مع الحفاظ على الفلاتر، وتحديث البيانات بصمت
+          void load({ silent: true });
         }}
       />
     </div>

@@ -6,6 +6,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { printSettlementReceipt } from '../../../components/printSettlementReceipt';
 import { printStudentFinancialReport } from '../../../components/printStudentFinancialReport';
 import {
+  formatAdmissionChannelLabel,
+  getAdmissionChannelDef,
+} from '../../../lib/admissionChannels';
+import {
   buildYearLedger,
   feeYearLabel,
   type FeeYear,
@@ -19,6 +23,7 @@ type PaidStudentRow = {
   study_type: string | null;
   admission_type: string | null;
   academic_year?: string | null;
+  admission_channel?: string | null;
   payment_amount?: number | string | null;
   final_fee?: number | string | null;
   discount_percentage?: number | string | null;
@@ -48,6 +53,7 @@ type SettlementReceipt = {
   periods: number | string;
   per_period_amount: number | string;
   fee_year?: number | string | null;
+  discount_channel?: string | null;
   created_at?: string;
 };
 
@@ -410,6 +416,31 @@ export default function StudentAccountsStudentPage() {
         : Math.max(0, totalInstallment - paidAmount);
     const paidInstallmentsCount = receipts.length;
 
+    const channelFromStudent = String(student?.admission_channel || '').trim();
+    const channelFromReceipt =
+      receipts
+        .map((r) => String(r.discount_channel || '').trim())
+        .find((ch) => Boolean(ch)) || '';
+    const discountChannelKey = channelFromStudent || channelFromReceipt;
+    const discountChannelDef = getAdmissionChannelDef(discountChannelKey);
+    const hasDiscountType = Boolean(
+      discountChannelDef && discountChannelDef.key !== 'general'
+    );
+
+    let discountTypeLabel = '';
+    if (hasDiscountType && discountChannelDef) {
+      discountTypeLabel = formatAdmissionChannelLabel(discountChannelDef.key);
+      const pct = toNumber(student?.discount_percentage, 0);
+      const amt = toNumber(student?.discount_amount, 0);
+      if (pct > 0) {
+        discountTypeLabel += ` (${pct}%)`;
+      } else if (amt > 0) {
+        discountTypeLabel += ` (${money(amt)} IQD)`;
+      } else if (discountChannelDef.fixedPercent != null && discountChannelDef.fixedPercent > 0) {
+        discountTypeLabel += ` (${discountChannelDef.fixedPercent}%)`;
+      }
+    }
+
     return {
       name: student?.name?.trim() || 'الطالب',
       universityId: student?.university_id?.trim() || '—',
@@ -425,6 +456,8 @@ export default function StudentAccountsStudentPage() {
       paidInstallmentsCount,
       duration: DEFAULT_INSTALLMENT_DURATION,
       ledger,
+      hasDiscountType,
+      discountTypeLabel,
     };
   }, [student, receipts]);
 
@@ -547,6 +580,9 @@ export default function StudentAccountsStudentPage() {
             <InfoRow label="نوع الدراسة" value={view.studyType} />
             <InfoRow label="المرحلة" value={view.stage} />
             <InfoRow label="المرحلة الحالية" value={view.currentStage} />
+            {view.hasDiscountType && (
+              <InfoRow label="نوع التخفيض" value={view.discountTypeLabel} />
+            )}
             <InfoRow label="مدة القسط" value={view.duration} />
             <InfoRow
               label="عدد الأقساط المدفوعة"

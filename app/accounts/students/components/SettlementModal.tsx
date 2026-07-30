@@ -27,6 +27,8 @@ export type SettlementStudent = {
   admission_channel?: string | null;
   payment_amount?: number | string | null;
   final_fee?: number | string | null;
+  discount_percentage?: number | string | null;
+  discount_amount?: number | string | null;
 };
 
 type DiscountMode = 'none' | 'amount' | 'percent';
@@ -74,6 +76,40 @@ function toNumber(value: unknown, fallback = 0): number {
 
 function money(n: number): string {
   return new Intl.NumberFormat('en-US').format(Math.round(n || 0));
+}
+
+function resolveChannelDiscount(
+  def: ReturnType<typeof getAdmissionChannelDef>,
+  annual: number,
+  valueRaw: string,
+  deanMode: DeanValueMode
+): { mode: DiscountMode; input: number; amount: number } {
+  if (!def) return { mode: 'none', input: 0, amount: 0 };
+
+  if (def.allowAmountOrPercent) {
+    const mode: DiscountMode = deanMode === 'amount' ? 'amount' : 'percent';
+    const input = toNumber(valueRaw, 0);
+    if (mode === 'amount') {
+      return {
+        mode,
+        input,
+        amount: Math.max(0, Math.min(input, annual)),
+      };
+    }
+    const pct = Math.max(0, Math.min(input, 100));
+    return { mode, input: pct, amount: (annual * pct) / 100 };
+  }
+
+  if (def.fixedPercent != null) {
+    return {
+      mode: 'percent',
+      input: def.fixedPercent,
+      amount: (annual * def.fixedPercent) / 100,
+    };
+  }
+
+  const pct = Math.max(0, Math.min(toNumber(valueRaw, 0), 100));
+  return { mode: 'percent', input: pct, amount: (annual * pct) / 100 };
 }
 
 function todayInputDate(): string {
@@ -127,6 +163,12 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const [discountFeeYears, setDiscountFeeYears] = useState<number[]>([1]);
   const [deanValueMode, setDeanValueMode] = useState<DeanValueMode>('percent');
   const [discountValue, setDiscountValue] = useState('');
+  const [extraDiscountEnabled, setExtraDiscountEnabled] = useState(false);
+  const [extraChannel, setExtraChannel] = useState<AdmissionChannelKey | ''>('');
+  const [extraDiscountFeeYears, setExtraDiscountFeeYears] = useState<number[]>([1]);
+  const [extraDeanValueMode, setExtraDeanValueMode] =
+    useState<DeanValueMode>('percent');
+  const [extraDiscountValue, setExtraDiscountValue] = useState('');
   const [formMessage, setFormMessage] = useState('');
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -141,6 +183,23 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
     registeredChannelDef && registeredChannelDef.key !== 'general'
   );
 
+  /**
+   * إن وُجد final_fee بعد تأكيد الدفع من الأقساط، فالقسط أصبح بعد خصم التسجيل.
+   * لا يُعاد خصم القناة المسجّلة مرة أخرى في نموذج التسديد.
+   */
+  const primaryDiscountAlreadyApplied = useMemo(() => {
+    if (!student) return false;
+    const finalFee = toNumber(student.final_fee, 0);
+    if (finalFee <= 0) return false;
+    const pct = toNumber(student.discount_percentage, 0);
+    const amt = toNumber(student.discount_amount, 0);
+    return hasRegisteredChannel || pct > 0 || amt > 0;
+  }, [student, hasRegisteredChannel]);
+
+  const primaryActive = hasRegisteredChannel || discountEnabled;
+  /** الخصم الرئيسي يُحتسب في التسديد فقط إن لم يكن مدمجاً مسبقاً في القسط */
+  const primaryCountsInCalc = primaryActive && !primaryDiscountAlreadyApplied;
+
   const activeChannelKey = (
     hasRegisteredChannel
       ? registeredChannel
@@ -149,16 +208,20 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
         : ''
   ) as AdmissionChannelKey | '';
   const activeChannelDef = getAdmissionChannelDef(activeChannelKey);
+  const extraChannelDef = getAdmissionChannelDef(extraChannel);
+
+  const catalogAnnual = useMemo(() => {
+    if (!student) return 0;
+    const dept = student.department?.trim() || '';
+    return getAnnualTuitionFee(dept, student.study_type);
+  }, [student]);
 
   const baseTotal = useMemo(() => {
     if (!student) return 0;
-    const dept = student.department?.trim() || '';
-    const annual = getAnnualTuitionFee(dept, student.study_type);
     const finalFee = toNumber(student.final_fee, 0);
-    return finalFee > 0 ? finalFee : annual;
-  }, [student]);
-
-  const fourYearsTotal = baseTotal * 4;
+    // القسط المعتمد: بعد خصم التسجيل إن وُجد، وإلا القسط الأساسي من الجدول
+    return finalFee > 0 ? finalFee : catalogAnnual;
+  }, [student, catalogAnnual]);
 
   const ledger: YearLedger = useMemo(
     () => buildYearLedger(historyRows, baseTotal),
@@ -185,12 +248,18 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       setSelectedChannel('');
       setDeanValueMode('percent');
       setDiscountValue('');
+      setExtraDiscountEnabled(false);
+      setExtraChannel('');
+      setExtraDiscountFeeYears([1]);
+      setExtraDeanValueMode('percent');
+      setExtraDiscountValue('');
       setFormMessage('');
       setFormError('');
       setSaving(false);
       setHistoryRows([]);
       setHistoryReady(false);
       setYearLocked(false);
+      setDiscountFeeYears([1]);
       setLoadingHistory(true);
 
       const existingChannel = String(student!.admission_channel || '').trim();
@@ -233,23 +302,22 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
 
         const state = getOpenYearState(rows, annual);
         const openYear = state.feeYear || 1;
-        setDiscountFeeYears([openYear]);
+        // مبدأياً: الخصم لسنة واحدة فقط (السنة الأولى) — توسيع السنوات يدوياً من الخانة
+        setDiscountFeeYears([1]);
 
-        // استرجاع خطة تخفيض سابقة إن وُجدت على أي وصل
+        // استرجاع قناة التخفيض من وصل سابق إن لم تكن مسجّلة على ملف الطالب
         const planReceipt = rows.find(
-          (r) =>
-            String(r.discount_channel || '').trim() ||
-            parseDiscountFeeYears(r.discount_fee_years).length > 0
+          (r) => String(r.discount_channel || '').trim()
         );
-
-        if (planReceipt) {
-          const years = parseDiscountFeeYears(planReceipt.discount_fee_years);
-          if (years.length > 0) setDiscountFeeYears(years);
+        if (planReceipt && !hasExistingDiscountChannel) {
           const ch = String(planReceipt.discount_channel || '').trim();
           const chDef = getAdmissionChannelDef(ch);
-          if (chDef && !hasExistingDiscountChannel) {
+          if (chDef) {
             setDiscountEnabled(true);
             setSelectedChannel(chDef.key);
+            if (chDef.fixedPercent != null) {
+              setDiscountValue(String(chDef.fixedPercent));
+            }
           }
         }
 
@@ -257,8 +325,10 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
           setYearLocked(true);
           const first = state.firstReceipt;
           const mode = String(first.discount_mode || 'none');
+          // سنة جارية بدأ تسديدها: ثبّت السنوات كما حُفظت في أول وصل
           const years = parseDiscountFeeYears(first.discount_fee_years);
           if (years.length > 0) setDiscountFeeYears(years);
+          else setDiscountFeeYears([openYear]);
           const ch = String(first.discount_channel || existingChannel || '').trim();
           const chDef = getAdmissionChannelDef(ch);
           if (mode === 'none' || !chDef) {
@@ -296,50 +366,141 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const resolvedDiscount = useMemo(() => {
     const annual = Math.max(0, baseTotal);
     const currentYearNum = currentYear || 1;
-    const appliesToCurrentYear = discountFeeYears.includes(currentYearNum);
+
+    const primary = primaryCountsInCalc
+      ? resolveChannelDiscount(
+          activeChannelDef,
+          annual,
+          discountValue,
+          deanValueMode
+        )
+      : { mode: 'none' as DiscountMode, input: 0, amount: 0 };
+
+    const extra =
+      extraDiscountEnabled && extraChannelDef
+        ? resolveChannelDiscount(
+            extraChannelDef,
+            annual,
+            extraDiscountValue,
+            extraDeanValueMode
+          )
+        : { mode: 'none' as DiscountMode, input: 0, amount: 0 };
+
+    const primaryApplies =
+      primaryCountsInCalc && discountFeeYears.includes(currentYearNum);
+    const extraApplies =
+      extraDiscountEnabled &&
+      Boolean(extraChannelDef) &&
+      extraDiscountFeeYears.includes(currentYearNum);
+
+    const primaryAmount = primaryApplies ? primary.amount : 0;
+    const extraAmount = extraApplies ? extra.amount : 0;
+    const amount = Math.max(0, Math.min(annual, primaryAmount + extraAmount));
+
+    const planAmountForYear = (year: number) => {
+      let d = 0;
+      if (
+        primaryCountsInCalc &&
+        primary.amount > 0 &&
+        discountFeeYears.includes(year)
+      ) {
+        d += primary.amount;
+      }
+      if (
+        extraDiscountEnabled &&
+        extra.amount > 0 &&
+        extraDiscountFeeYears.includes(year)
+      ) {
+        d += extra.amount;
+      }
+      return Math.max(0, Math.min(annual, d));
+    };
+
+    const channelActive =
+      (primaryCountsInCalc && Boolean(activeChannelDef)) ||
+      (extraDiscountEnabled && Boolean(extraChannelDef));
 
     let mode: DiscountMode = 'none';
     let input = 0;
-    let amount = 0;
-
-    const shouldApply =
-      appliesToCurrentYear &&
-      Boolean(activeChannelDef) &&
-      (hasRegisteredChannel || discountEnabled);
-
-    if (shouldApply && activeChannelDef) {
-      if (activeChannelDef.allowAmountOrPercent) {
-        mode = deanValueMode === 'amount' ? 'amount' : 'percent';
-        input = toNumber(discountValue, 0);
-        if (mode === 'amount') {
-          amount = Math.max(0, Math.min(input, annual));
-        } else {
-          const pct = Math.max(0, Math.min(input, 100));
-          amount = (annual * pct) / 100;
-          input = pct;
-        }
-      } else if (activeChannelDef.fixedPercent != null) {
-        mode = 'percent';
-        input = activeChannelDef.fixedPercent;
-        amount = (annual * input) / 100;
-      } else {
-        mode = 'percent';
-        input = Math.max(0, Math.min(toNumber(discountValue, 0), 100));
-        amount = (annual * input) / 100;
-      }
+    if (primaryApplies && extraApplies) {
+      mode = 'amount';
+      input = amount;
+    } else if (primaryApplies) {
+      mode = primary.mode;
+      input = primary.input;
+    } else if (extraApplies) {
+      mode = extra.mode;
+      input = extra.input;
     }
 
-    return { mode, input, amount, appliesToCurrentYear };
+    const allPlanYears = [
+      ...new Set([
+        ...(primaryCountsInCalc ? discountFeeYears : []),
+        ...(extraDiscountEnabled ? extraDiscountFeeYears : []),
+      ]),
+    ].sort((a, b) => a - b);
+
+    return {
+      mode,
+      input,
+      amount,
+      primaryAmount,
+      extraAmount,
+      primary,
+      extra,
+      planAmountForYear,
+      planAmount: planAmountForYear(currentYearNum),
+      appliesToCurrentYear: primaryApplies || extraApplies,
+      channelActive,
+      allPlanYears,
+      primaryApplies,
+      extraApplies,
+      primaryDiscountAlreadyApplied,
+    };
   }, [
     baseTotal,
     currentYear,
     discountFeeYears,
     activeChannelDef,
-    hasRegisteredChannel,
-    discountEnabled,
+    primaryCountsInCalc,
+    primaryDiscountAlreadyApplied,
     deanValueMode,
     discountValue,
+    extraDiscountEnabled,
+    extraChannelDef,
+    extraDiscountFeeYears,
+    extraDeanValueMode,
+    extraDiscountValue,
   ]);
+
+  /** إجمالي 4 سنوات بعد تطبيق التخفيضات على السنوات المحددة */
+  const fourYearsTotal = useMemo(() => {
+    const annual = Math.max(0, baseTotal);
+
+    return ([1, 2, 3, 4] as FeeYear[]).reduce((sum, year) => {
+      const entry = ledger.years.find((y) => y.year === year);
+      if (entry && entry.receiptsCount > 0) {
+        return sum + entry.target;
+      }
+      return sum + Math.max(0, annual - resolvedDiscount.planAmountForYear(year));
+    }, 0);
+  }, [baseTotal, ledger.years, resolvedDiscount]);
+
+  /** أهداف السنوات للعرض: السنوات غير المبدوءة تعكس خطة الخصم الحالية */
+  const yearTargetsPreview = useMemo(() => {
+    const annual = Math.max(0, baseTotal);
+
+    return ledger.years.map((entry) => {
+      if (entry.receiptsCount > 0) return entry;
+      return {
+        ...entry,
+        target: Math.max(
+          0,
+          annual - resolvedDiscount.planAmountForYear(entry.year)
+        ),
+      };
+    });
+  }, [ledger.years, baseTotal, resolvedDiscount]);
 
   const calc = useMemo(() => {
     const annual = Math.max(0, baseTotal);
@@ -369,10 +530,17 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       outstandingBefore,
       annual > 0 ? annual : outstandingBefore
     );
-    const rawPay = Math.max(0, toNumber(payAmount, 0));
-    const paid = Math.min(rawPay, maxPay);
-    const remaining = Math.max(0, outstandingBefore - paid);
     const periodCount = Math.max(1, Math.min(10, periods));
+    const requiresFullPay = periodCount === 1;
+    const rawPay = Math.max(0, toNumber(payAmount, 0));
+    const fullPayMismatch =
+      requiresFullPay &&
+      outstandingBefore > 0 &&
+      Math.abs(rawPay - outstandingBefore) > 0.01;
+    const paidAmount =
+      requiresFullPay && !fullPayMismatch
+        ? outstandingBefore
+        : Math.min(rawPay, maxPay);
     const perPeriod =
       periodCount > 0 ? outstandingBefore / periodCount : outstandingBefore;
 
@@ -389,11 +557,13 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       yearPaidBefore,
       outstandingBefore,
       maxPay,
-      paid,
-      remaining,
+      paid: paidAmount,
+      remaining: Math.max(0, outstandingBefore - paidAmount),
       periodCount,
       perPeriod,
-      exceedsMax: rawPay > maxPay + 0.0001,
+      requiresFullPay,
+      fullPayMismatch,
+      exceedsMax: !requiresFullPay && rawPay > maxPay + 0.0001,
       historyCount: historyRows.length,
       appliesDiscount: resolvedDiscount.appliesToCurrentYear && discountMode !== 'none',
     };
@@ -405,6 +575,22 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
     currentYear,
     openState,
     historyRows.length,
+  ]);
+
+  // فترة واحدة = دفع المتبقي كاملاً: تثبيت مبلغ الدفع على المتبقي
+  useEffect(() => {
+    if (!open || loadingHistory || !historyReady) return;
+    if (periods !== 1) return;
+    const due = calc.outstandingBefore;
+    if (due <= 0) return;
+    const next = String(Math.round(due));
+    setPayAmount((prev) => (prev === next ? prev : next));
+  }, [
+    open,
+    loadingHistory,
+    historyReady,
+    periods,
+    calc.outstandingBefore,
   ]);
 
   if (!open || !student) return null;
@@ -434,6 +620,12 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       setFormError('يرجى إدخال مبلغ الدفع الحالي');
       return;
     }
+    if (calc.requiresFullPay && calc.fullPayMismatch) {
+      setFormError(
+        `عند اختيار فترة واحدة يجب أن يساوي مبلغ الدفع المتبقي بذمة الطالب تماماً (${money(calc.outstandingBefore)} IQD)`
+      );
+      return;
+    }
     if (calc.exceedsMax) {
       setFormError(
         `مبلغ الدفع أكبر من المسموح لهذه السنة (${money(calc.maxPay)} IQD)`
@@ -441,34 +633,75 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       return;
     }
 
-    const wantsDiscount =
-      (hasRegisteredChannel || discountEnabled) && discountFeeYears.length > 0;
-    if (wantsDiscount && !activeChannelDef) {
-      setFormError('يرجى اختيار قناة التخفيض');
+    const wantsPrimary =
+      primaryCountsInCalc && discountFeeYears.length > 0;
+    if (wantsPrimary && !activeChannelDef) {
+      setFormError('يرجى اختيار قناة التخفيض الرئيسية');
       return;
     }
-    if (wantsDiscount && discountFeeYears.length === 0) {
-      setFormError('يرجى تحديد السنوات التي يسري عليها التخفيض');
+    if (wantsPrimary && discountFeeYears.length === 0) {
+      setFormError('يرجى تحديد سنوات التخفيض للخصم الرئيسي');
       return;
     }
     if (
-      wantsDiscount &&
+      wantsPrimary &&
       activeChannelDef &&
       !activeChannelDef.allowAmountOrPercent &&
       activeChannelDef.fixedPercent == null &&
       toNumber(discountValue, 0) <= 0
     ) {
-      setFormError('يرجى إدخال نسبة التخفيض لهذه القناة');
+      setFormError('يرجى إدخال نسبة التخفيض للخصم الرئيسي');
       return;
     }
     if (
-      wantsDiscount &&
+      wantsPrimary &&
       activeChannelDef?.allowAmountOrPercent &&
       toNumber(discountValue, 0) <= 0
     ) {
-      setFormError('يرجى إدخال قيمة تخفيض موافقة السيد العميد');
+      setFormError('يرجى إدخال قيمة تخفيض موافقة السيد العميد (الرئيسي)');
       return;
     }
+
+    if (extraDiscountEnabled) {
+      if (!extraChannelDef) {
+        setFormError('يرجى اختيار قناة الخصم الإضافي');
+        return;
+      }
+      if (extraDiscountFeeYears.length === 0) {
+        setFormError('يرجى تحديد سنوات الخصم الإضافي');
+        return;
+      }
+      if (
+        !extraChannelDef.allowAmountOrPercent &&
+        extraChannelDef.fixedPercent == null &&
+        toNumber(extraDiscountValue, 0) <= 0
+      ) {
+        setFormError('يرجى إدخال نسبة الخصم الإضافي');
+        return;
+      }
+      if (
+        extraChannelDef.allowAmountOrPercent &&
+        toNumber(extraDiscountValue, 0) <= 0
+      ) {
+        setFormError('يرجى إدخال قيمة الخصم الإضافي');
+        return;
+      }
+    }
+
+    const saveMode =
+      resolvedDiscount.primaryApplies && resolvedDiscount.extraApplies
+        ? 'amount'
+        : calc.discountMode;
+    const saveInput =
+      resolvedDiscount.primaryApplies && resolvedDiscount.extraApplies
+        ? calc.discountAmount
+        : calc.discountInput;
+    const saveChannel =
+      activeChannelDef?.key || extraChannelDef?.key || null;
+    const saveYears =
+      resolvedDiscount.allPlanYears.length > 0
+        ? resolvedDiscount.allPlanYears
+        : discountFeeYears;
 
     setSaving(true);
     try {
@@ -487,14 +720,14 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
           annual_fee: baseTotal,
           four_years_total: fourYearsTotal,
           fee_year: calc.feeYear,
-          discount_mode: calc.discountMode,
-          discount_years: Math.max(1, discountFeeYears.length),
-          discount_fee_years: discountFeeYears,
-          discount_channel: activeChannelDef?.key || null,
+          discount_mode: saveMode,
+          discount_years: Math.max(1, saveYears.length),
+          discount_fee_years: saveYears,
+          discount_channel: saveChannel,
           assign_admission_channel:
             !hasRegisteredChannel && discountEnabled && Boolean(activeChannelDef),
           discount_base: calc.discountBase,
-          discount_input: calc.discountInput,
+          discount_input: saveInput,
           discount_amount: calc.discountAmount,
           after_discount: calc.yearTarget,
           pay_amount: calc.paid,
@@ -611,7 +844,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                 </p>
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                {ledger.years.map((y) => (
+                {yearTargetsPreview.map((y) => (
                   <div
                     key={y.year}
                     className={`rounded-md border px-2.5 py-2 text-xs ${
@@ -635,17 +868,36 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
 
           <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-lg border border-gray-200 px-3 py-3">
-              <p className="text-xs text-gray-500 mb-1">القسط الكلي (سنوي)</p>
+              <p className="text-xs text-gray-500 mb-1">
+                {primaryDiscountAlreadyApplied
+                  ? 'القسط المعتمد (بعد خصم التسجيل)'
+                  : 'القسط الكلي (سنوي)'}
+              </p>
               <p className="text-base font-bold text-gray-900" dir="ltr">
                 {money(baseTotal)} IQD
               </p>
+              {primaryDiscountAlreadyApplied &&
+                catalogAnnual > 0 &&
+                catalogAnnual !== baseTotal && (
+                  <p className="text-[11px] text-gray-500 mt-1" dir="ltr">
+                    القسط الأساسي قبل الخصم: {money(catalogAnnual)} IQD
+                  </p>
+                )}
             </div>
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-3">
-              <p className="text-xs text-red-800/80 mb-1">إجمالي 4 سنوات (مرجعي)</p>
+              <p className="text-xs text-red-800/80 mb-1">إجمالي 4 سنوات</p>
               <p className="text-base font-bold text-red-950" dir="ltr">
                 {money(fourYearsTotal)} IQD
               </p>
-              <p className="text-[11px] text-red-800/70 mt-1">لا يُخلط مع تسديد السنة</p>
+              <p className="text-[11px] text-red-800/70 mt-1">
+                {resolvedDiscount.channelActive &&
+                resolvedDiscount.allPlanYears.length > 0 &&
+                ([1, 2, 3, 4] as FeeYear[]).some(
+                  (y) => resolvedDiscount.planAmountForYear(y) > 0
+                )
+                  ? `يشمل التخفيض على ${resolvedDiscount.allPlanYears.length} سنة محددة`
+                  : 'بدون تخفيض · القسط السنوي × 4'}
+              </p>
             </div>
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3">
               <p className="text-xs text-emerald-800/80 mb-1">مستحق السنة الحالية</p>
@@ -676,22 +928,35 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                   </label>
                   <input
                     type="number"
-                    min={0}
+                    min={calc.requiresFullPay ? calc.outstandingBefore : 0}
                     max={calc.maxPay || undefined}
                     step="1000"
                     value={payAmount}
-                    onChange={(e) => setPayAmount(e.target.value)}
+                    onChange={(e) => {
+                      if (periods === 1) return;
+                      setPayAmount(e.target.value);
+                    }}
                     placeholder="أدخل المبلغ المراد دفعه الآن"
+                    readOnly={periods === 1}
                     disabled={
-                      loadingHistory || !calc.feeYear || calc.maxPay <= 0
+                      loadingHistory ||
+                      !calc.feeYear ||
+                      calc.maxPay <= 0 ||
+                      periods === 1
                     }
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50 disabled:text-gray-400"
                     dir="ltr"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    الحد الأعلى لهذه الدفعة: {money(calc.maxPay)} IQD (لا يتجاوز
-                    القسط السنوي ولا متبقي السنة)
+                    {periods === 1
+                      ? `فترة واحدة: يجب دفع المتبقي كاملاً (${money(calc.outstandingBefore)} IQD) — لا أقل ولا أكثر`
+                      : `الحد الأعلى لهذه الدفعة: ${money(calc.maxPay)} IQD (لا يتجاوز القسط السنوي ولا متبقي السنة)`}
                   </p>
+                  {calc.fullPayMismatch && (
+                    <p className="text-xs text-red-700 mt-1">
+                      مبلغ الدفع يجب أن يساوي المتبقي {money(calc.outstandingBefore)} IQD
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -746,19 +1011,36 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                 </p>
               )}
 
+              {/* —— الخصم الرئيسي —— */}
               {hasRegisteredChannel && registeredChannelDef ? (
-                <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
+                <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-950 space-y-1">
                   <p className="font-semibold">
-                    الطالب مشمول بتخفيض:{' '}
+                    الخصم الرئيسي:{' '}
                     {formatAdmissionChannelLabel(registeredChannelDef.key)}
-                  </p>
-                  <p className="text-xs text-indigo-800/80 mt-0.5">
                     {registeredChannelDef.fixedPercent != null
-                      ? `نسبة التخفيض الثابتة: ${registeredChannelDef.fixedPercent}%`
-                      : registeredChannelDef.allowAmountOrPercent
-                        ? 'تخفيض موافقة السيد العميد — نسبة أو مبلغ'
-                        : 'أدخل نسبة التخفيض يدوياً لهذه القناة'}
+                      ? ` (${registeredChannelDef.fixedPercent}%)`
+                      : toNumber(student.discount_percentage, 0) > 0
+                        ? ` (${toNumber(student.discount_percentage, 0)}%)`
+                        : ''}
                   </p>
+                  {primaryDiscountAlreadyApplied ? (
+                    <p className="text-xs text-indigo-800/90 leading-5">
+                      هذا التخفيض مُحتسب مسبقاً ضمن القسط المعتمد (
+                      {money(baseTotal)} IQD
+                      {catalogAnnual > 0 && catalogAnnual !== baseTotal
+                        ? ` من أصل ${money(catalogAnnual)}`
+                        : ''}
+                      ). لن يُخصم مرة أخرى هنا — يمكنك إضافة خصم آخر فقط إن لزم.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-indigo-800/80 mt-0.5">
+                      {registeredChannelDef.fixedPercent != null
+                        ? `نسبة التخفيض الثابتة: ${registeredChannelDef.fixedPercent}%`
+                        : registeredChannelDef.allowAmountOrPercent
+                          ? 'تخفيض موافقة السيد العميد — نسبة أو مبلغ'
+                          : 'أدخل نسبة التخفيض يدوياً لهذه القناة'}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-3 text-sm">
@@ -774,7 +1056,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                         setDiscountValue('');
                       }}
                     />
-                    بدون خصم / تخفيض
+                    بدون خصم رئيسي
                   </label>
                   <label className="inline-flex items-center gap-1.5">
                     <input
@@ -782,19 +1064,24 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                       name="discountToggle"
                       checked={discountEnabled}
                       disabled={yearLocked}
-                      onChange={() => setDiscountEnabled(true)}
+                      onChange={() => {
+                        setDiscountEnabled(true);
+                        if (!yearLocked) setDiscountFeeYears([1]);
+                      }}
                     />
-                    إضافة تخفيض حسب قناة القبول
+                    إضافة خصم رئيسي حسب قناة القبول
                   </label>
                 </div>
               )}
 
-              {(hasRegisteredChannel || discountEnabled) && (
-                <div className="space-y-3">
+              {primaryCountsInCalc && (
+                <div className="space-y-3 rounded-md border border-slate-100 bg-slate-50/60 p-3">
+                  <p className="text-xs font-semibold text-slate-700">الخصم الرئيسي</p>
+
                   {!hasRegisteredChannel && (
                     <div>
                       <label className="block text-sm text-gray-700 mb-1">
-                        قناة التخفيض
+                        قناة التخفيض الرئيسية
                       </label>
                       <select
                         value={selectedChannel}
@@ -833,11 +1120,14 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
 
                   <div>
                     <p className="text-sm text-gray-700 mb-1.5">
-                      السنوات التي يسري عليها التخفيض
+                      السنوات التي يسري عليها التخفيض الرئيسي
+                    </p>
+                    <p className="text-xs text-gray-500 mb-2">
+                      مبدئياً السنة الأولى فقط. أضف سنوات أخرى إن لزم.
                     </p>
                     <div className="flex flex-wrap gap-3 text-sm">
                       {([1, 2, 3, 4] as FeeYear[]).map((year) => (
-                        <label key={year} className="inline-flex items-center gap-1.5">
+                        <label key={`p-${year}`} className="inline-flex items-center gap-1.5">
                           <input
                             type="checkbox"
                             checked={discountFeeYears.includes(year)}
@@ -847,7 +1137,8 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                                 if (e.target.checked) {
                                   return [...prev, year].sort((a, b) => a - b);
                                 }
-                                return prev.filter((y) => y !== year);
+                                const next = prev.filter((y) => y !== year);
+                                return next.length === 0 ? [1] : next;
                               });
                             }}
                           />
@@ -855,12 +1146,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                         </label>
                       ))}
                     </div>
-                    {calc.feeYear && !discountFeeYears.includes(calc.feeYear) && (
-                      <p className="text-xs text-amber-700 mt-1">
-                        السنة الجارية ({feeYearLabel(calc.feeYear)}) غير مشمولة
-                        بالتخفيض — سيُحتسب القسط كاملاً لهذه السنة.
-                      </p>
-                    )}
                   </div>
 
                   {activeChannelDef?.allowAmountOrPercent && (
@@ -939,13 +1224,223 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                       نسبة القناة الثابتة: {activeChannelDef.fixedPercent}%
                     </p>
                   )}
+                </div>
+              )}
 
-                  <p className="text-xs text-gray-500">
-                    قيمة الخصم على السنة الحالية:{' '}
-                    {money(calc.discountAmount)} IQD من القسط السنوي
-                    {activeChannelDef
-                      ? ` · ${formatAdmissionChannelLabel(activeChannelDef.key)}`
+              {/* —— خصم إضافي —— */}
+              <div className="rounded-md border border-dashed border-amber-200 bg-amber-50/40 p-3 space-y-3">
+                <label className="inline-flex items-center gap-2 text-sm font-medium text-amber-950">
+                  <input
+                    type="checkbox"
+                    checked={extraDiscountEnabled}
+                    disabled={yearLocked}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setExtraDiscountEnabled(on);
+                      if (on && !yearLocked) {
+                        setExtraDiscountFeeYears([1]);
+                        setExtraChannel('');
+                        setExtraDiscountValue('');
+                        setExtraDeanValueMode('percent');
+                      }
+                    }}
+                  />
+                  إضافة خصم آخر للطالب
+                </label>
+                <p className="text-xs text-amber-900/70">
+                  حتى مع وجود خصم سابق/رئيسي يمكن إضافة خصم ثانٍ (مثلاً موافقة
+                  العميد)، مع تحديد سنوات سريانه بشكل مستقل.
+                </p>
+
+                {extraDiscountEnabled && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1">
+                        قناة الخصم الإضافي
+                      </label>
+                      <select
+                        value={extraChannel}
+                        disabled={yearLocked}
+                        onChange={(e) => {
+                          const key = e.target.value as AdmissionChannelKey | '';
+                          setExtraChannel(key);
+                          const def = getAdmissionChannelDef(key);
+                          if (def?.fixedPercent != null) {
+                            setExtraDiscountValue(String(def.fixedPercent));
+                          } else {
+                            setExtraDiscountValue('');
+                          }
+                          if (def?.allowAmountOrPercent) {
+                            setExtraDeanValueMode('percent');
+                          }
+                        }}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
+                      >
+                        <option value="">اختر قناة الخصم الإضافي</option>
+                        {ADMISSION_CHANNEL_DEFS.filter((c) => c.key !== 'general').map(
+                          (channel) => (
+                            <option key={channel.key} value={channel.key}>
+                              {channel.label}
+                              {channel.fixedPercent != null
+                                ? ` (${channel.fixedPercent}%)`
+                                : channel.allowAmountOrPercent
+                                  ? ' (نسبة أو مبلغ)'
+                                  : ' (نسبة يدوية)'}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </div>
+
+                    <div>
+                      <p className="text-sm text-gray-700 mb-1.5">
+                        السنوات التي يسري عليها الخصم الإضافي
+                      </p>
+                      <p className="text-xs text-gray-500 mb-2">
+                        مبدئياً السنة الأولى فقط — نفس سلوك الخصم الرئيسي.
+                      </p>
+                      <div className="flex flex-wrap gap-3 text-sm">
+                        {([1, 2, 3, 4] as FeeYear[]).map((year) => (
+                          <label
+                            key={`e-${year}`}
+                            className="inline-flex items-center gap-1.5"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={extraDiscountFeeYears.includes(year)}
+                              disabled={yearLocked}
+                              onChange={(e) => {
+                                setExtraDiscountFeeYears((prev) => {
+                                  if (e.target.checked) {
+                                    return [...prev, year].sort((a, b) => a - b);
+                                  }
+                                  const next = prev.filter((y) => y !== year);
+                                  return next.length === 0 ? [1] : next;
+                                });
+                              }}
+                            />
+                            {feeYearLabel(year)}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    {extraChannelDef?.allowAmountOrPercent && (
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-3 text-sm">
+                          <label className="inline-flex items-center gap-1.5">
+                            <input
+                              type="radio"
+                              name="extraDeanMode"
+                              checked={extraDeanValueMode === 'percent'}
+                              disabled={yearLocked}
+                              onChange={() => {
+                                setExtraDeanValueMode('percent');
+                                setExtraDiscountValue('');
+                              }}
+                            />
+                            نسبة مئوية
+                          </label>
+                          <label className="inline-flex items-center gap-1.5">
+                            <input
+                              type="radio"
+                              name="extraDeanMode"
+                              checked={extraDeanValueMode === 'amount'}
+                              disabled={yearLocked}
+                              onChange={() => {
+                                setExtraDeanValueMode('amount');
+                                setExtraDiscountValue('');
+                              }}
+                            />
+                            مبلغ (IQD)
+                          </label>
+                        </div>
+                        <input
+                          type="number"
+                          min={0}
+                          max={
+                            extraDeanValueMode === 'percent'
+                              ? 100
+                              : baseTotal || undefined
+                          }
+                          step={extraDeanValueMode === 'percent' ? '0.1' : '1000'}
+                          value={extraDiscountValue}
+                          disabled={yearLocked}
+                          onChange={(e) => setExtraDiscountValue(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
+                          dir="ltr"
+                          placeholder={
+                            extraDeanValueMode === 'percent'
+                              ? 'أدخل نسبة التخفيض'
+                              : 'أدخل مبلغ التخفيض'
+                          }
+                        />
+                      </div>
+                    )}
+
+                    {extraChannelDef &&
+                      !extraChannelDef.allowAmountOrPercent &&
+                      extraChannelDef.fixedPercent == null && (
+                        <div>
+                          <label className="block text-sm text-gray-700 mb-1">
+                            نسبة الخصم الإضافي (%)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step="0.1"
+                            value={extraDiscountValue}
+                            disabled={yearLocked}
+                            onChange={(e) => setExtraDiscountValue(e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
+                            dir="ltr"
+                            placeholder="أدخل نسبة التخفيض"
+                          />
+                        </div>
+                      )}
+
+                    {extraChannelDef?.fixedPercent != null && (
+                      <p className="text-xs text-gray-600">
+                        نسبة القناة الثابتة: {extraChannelDef.fixedPercent}%
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {(primaryCountsInCalc || extraDiscountEnabled) && (
+                <div className="text-xs text-gray-600 space-y-1 border-t border-gray-100 pt-2">
+                  {calc.feeYear &&
+                    !discountFeeYears.includes(calc.feeYear) &&
+                    primaryCountsInCalc && (
+                      <p className="text-amber-700">
+                        السنة الجارية غير مشمولة بالخصم الرئيسي — القسط بدون هذا
+                        الخصم لهذه السنة.
+                      </p>
+                    )}
+                  {calc.feeYear &&
+                    extraDiscountEnabled &&
+                    !extraDiscountFeeYears.includes(calc.feeYear) && (
+                      <p className="text-amber-700">
+                        السنة الجارية غير مشمولة بالخصم الإضافي.
+                      </p>
+                    )}
+                  <p>
+                    خصم السنة الحالية:{' '}
+                    {money(calc.discountAmount)} IQD
+                    {resolvedDiscount.primaryAmount > 0
+                      ? ` (رئيسي ${money(resolvedDiscount.primaryAmount)}`
                       : ''}
+                    {resolvedDiscount.extraAmount > 0
+                      ? `${resolvedDiscount.primaryAmount > 0 ? ' +' : ' ('}إضافي ${money(resolvedDiscount.extraAmount)}`
+                      : ''}
+                    {resolvedDiscount.primaryAmount > 0 ||
+                    resolvedDiscount.extraAmount > 0
+                      ? ')'
+                      : ''}{' '}
+                    · من {money(calc.discountBase)} → بعد الخصم{' '}
+                    {money(calc.yearTarget)} IQD
                   </p>
                 </div>
               )}
@@ -993,7 +1488,8 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                 loadingHistory ||
                 !historyReady ||
                 !calc.feeYear ||
-                calc.outstandingBefore <= 0
+                calc.outstandingBefore <= 0 ||
+                calc.fullPayMismatch
               }
               className="bg-red-900 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-red-800 disabled:opacity-60 disabled:cursor-not-allowed"
             >
