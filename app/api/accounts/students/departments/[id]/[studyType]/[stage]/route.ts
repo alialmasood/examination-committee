@@ -17,10 +17,10 @@ import {
   buildYearLedger,
   paymentCategoryFromYearStatus,
   getYearVisualEntries,
+  type FeeYear,
   type SettlementHistoryRow,
 } from '@/app/accounts/students/lib/settlementYearLedger';
 import {
-  computeDebtFromBase,
   primaryYearSettlementDiscount,
   resolveStudentFeeDiscount,
 } from '@/app/accounts/students/lib/studentFeeDiscount';
@@ -41,6 +41,14 @@ const STAGE_LABELS: Record<string, string> = {
 const STUDY_LABELS: Record<string, string> = {
   morning: 'الدراسة الصباحية',
   evening: 'الدراسة المسائية',
+};
+
+/** سنة القسط المطابقة لمرحلة القبول المعروضة في الصفحة */
+const STAGE_TO_FEE_YEAR: Record<string, FeeYear> = {
+  first: 1,
+  second: 2,
+  third: 3,
+  fourth: 4,
 };
 
 type ReceiptRow = SettlementHistoryRow & {
@@ -287,16 +295,27 @@ export async function GET(
         (r) => Math.max(0, Number(r.pay_amount || 0)) > 0
       ).length;
 
-      // دفتر السنوات على الأساس السنوي؛ هدف السنة يأتي من after_discount في الوصولات
-      const annualForLedger = annualBase > 0 ? annualBase : netDue;
+      // دفتر السنوات — الحالة تُقيَّم على سنة القسط المطابقة لهذه المرحلة فقط
+      const annualForLedger = netDue > 0 ? netDue : annualBase > 0 ? annualBase : 0;
       const ledger = buildYearLedger(receipts, annualForLedger);
-      // الدين = القسط الأساسي − (المدفوع + التخفيض)
-      const studentDebt = computeDebtFromBase(annualBase, paid, discountTotal);
-      const category = paymentCategoryFromYearStatus({
-        current_year: ledger.currentYear,
-        all_completed: ledger.allYearsCompleted,
-        years: getYearVisualEntries(ledger),
-      });
+      const yearVisual = getYearVisualEntries(ledger);
+      const stageFeeYear = STAGE_TO_FEE_YEAR[stage] ?? 1;
+      const category = paymentCategoryFromYearStatus(
+        {
+          current_year: ledger.currentYear,
+          all_completed: ledger.allYearsCompleted,
+          years: yearVisual,
+        },
+        stageFeeYear
+      );
+      const yearEntry = yearVisual.find((y) => y.year === stageFeeYear);
+      const paidForStageYear = yearEntry ? yearEntry.paid : 0;
+      // الدين لهذه المرحلة/السنة فقط: مستحق السنة − المدفوع لها
+      const stageYearTarget =
+        yearEntry && yearEntry.target > 0
+          ? yearEntry.target
+          : annualForLedger;
+      const studentDebt = Math.max(0, stageYearTarget - paidForStageYear);
 
       const g = String(row.gender || '')
         .trim()
@@ -357,10 +376,10 @@ export async function GET(
 
       const statusLabel =
         category === 'settled'
-          ? 'مسدد بالكامل'
+          ? `مسدد بالكامل — السنة ${stageFeeYear}`
           : category === 'partial'
-            ? 'تسديد جزئي'
-            : 'غير مسدد';
+            ? `تسديد جزئي — السنة ${stageFeeYear}`
+            : `غير مسدد — السنة ${stageFeeYear}`;
 
       students.push({
         id: row.id,
@@ -379,11 +398,12 @@ export async function GET(
         discount_amount: discountTotal,
         channel_discount: attributedChannel,
         settlement_discount: attributedSettlement,
-        paid_amount: paid,
+        paid_amount: paidForStageYear,
         debt_amount: studentDebt,
         receipts_count: receiptsForStudent,
         payment_category: category,
         status_label: statusLabel,
+        fee_year: stageFeeYear,
         expected_four_years: netDue * 4,
       });
     }

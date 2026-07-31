@@ -105,17 +105,14 @@ export async function GET(request: NextRequest) {
 
     for (const student of students) {
       const dept = student.department || '';
-      const annualFromTable = getAnnualTuitionFee(dept, student.study_type);
       const annual =
-        student.final_fee != null && Number(student.final_fee) > 0
-          ? Number(student.final_fee)
-          : expectedAnnualFee({
-              major: dept,
-              study_type: student.study_type,
-              admission_channel: student.admission_channel,
-              discount_percentage: student.discount_percentage,
-              final_fee_after_discount: student.final_fee,
-            }) || annualFromTable;
+        expectedAnnualFee({
+          major: dept,
+          study_type: student.study_type,
+          admission_channel: student.admission_channel,
+          discount_percentage: student.discount_percentage,
+          final_fee_after_discount: student.final_fee,
+        }) || getAnnualTuitionFee(dept, student.study_type);
 
       const receipts = receiptsByStudent.get(student.id) || [];
       const ledger = buildYearLedger(receipts, annual);

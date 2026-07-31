@@ -160,6 +160,44 @@ function clampYearTarget(raw: number, annual: number): number {
 }
 
 /**
+ * هدف السنة من أول وصل، مع إعادة الاحتساب عند تغيّر جدول الأقساط.
+ * - نسبة: يُعاد احتسابها من القسط الحالي
+ * - بدون خصم و after_discount < القسط الحالي: يُعتبر قسطاً قديماً → القسط الحالي
+ * - خصم بمبلغ: القسط الحالي − مبلغ الخصم
+ */
+export function resolveYearTargetFromReceipt(
+  row: SettlementHistoryRow,
+  annualFee: number
+): number {
+  const annual = Math.max(0, annualFee);
+  const mode = String(row.discount_mode || 'none');
+  const discountInput = Math.max(0, toNumber(row.discount_input, 0));
+  const discountAmount = Math.max(0, toNumber(row.discount_amount, 0));
+  const afterDiscount = toNumber(row.after_discount, annual);
+
+  if (mode === 'percent' && discountInput > 0) {
+    const pct = Math.min(100, discountInput);
+    return clampYearTarget(annual - (annual * pct) / 100, annual);
+  }
+
+  if (mode === 'amount' && discountAmount > 0) {
+    return clampYearTarget(annual - discountAmount, annual);
+  }
+
+  // بدون تخفيض: إن كان after_discount أقل من الجدول الحالي فهو قسط قديم مثبت
+  if (
+    (mode === 'none' || discountAmount <= 0) &&
+    annual > 0 &&
+    afterDiscount > 0 &&
+    afterDiscount < annual - 0.5
+  ) {
+    return annual;
+  }
+
+  return clampYearTarget(afterDiscount > 0 ? afterDiscount : annual, annual);
+}
+
+/**
  * بناء دفتر السنوات: كل سنة مستقلة وسقفها القسط السنوي.
  * المتبقي = مستحق السنة − مجموع المدفوع لهذه السنة فقط.
  */
@@ -186,10 +224,7 @@ export function buildYearLedger(
     const year = resolveFeeYear(row);
 
     if (targetByYear[year] == null) {
-      targetByYear[year] = clampYearTarget(
-        toNumber(row.after_discount, annual),
-        annual
-      );
+      targetByYear[year] = resolveYearTargetFromReceipt(row, annual);
     }
 
     paidByYear[year] += pay;
@@ -310,10 +345,7 @@ export function recalculateRemainingByReceipt(
     const year = resolveFeeYear(row);
     const pay = Math.max(0, toNumber(row.pay_amount, 0));
     if (targetByYear[year] == null) {
-      targetByYear[year] = clampYearTarget(
-        toNumber(row.after_discount, annual),
-        annual
-      );
+      targetByYear[year] = resolveYearTargetFromReceipt(row, annual);
     }
     paidByYear[year] += pay;
     const target = targetByYear[year] ?? annual;

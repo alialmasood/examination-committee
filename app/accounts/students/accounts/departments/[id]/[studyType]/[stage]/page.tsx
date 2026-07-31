@@ -441,10 +441,10 @@ export default function StudentAccountsDepartmentStagePage() {
                       <th className="px-3 py-2.5 text-right font-medium">القسط</th>
                       <th className="px-3 py-2.5 text-right font-medium">التخفيض</th>
                       <th className="px-3 py-2.5 text-right font-medium">المطلوب</th>
-                      <th className="px-3 py-2.5 text-right font-medium">المدفوع</th>
-                      <th className="px-3 py-2.5 text-right font-medium">الدين</th>
+                      <th className="px-3 py-2.5 text-right font-medium">المدفوع (السنة)</th>
+                      <th className="px-3 py-2.5 text-right font-medium">الدين (السنة)</th>
                       <th className="px-3 py-2.5 text-right font-medium">الوصولات</th>
-                      <th className="px-3 py-2.5 text-right font-medium">الحالة</th>
+                      <th className="px-3 py-2.5 text-right font-medium">الحالة (سنة المرحلة)</th>
                       <th className="px-3 py-2.5 text-right font-medium">إجراء</th>
                     </tr>
                   </thead>
