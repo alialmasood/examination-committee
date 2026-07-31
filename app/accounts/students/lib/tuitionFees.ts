@@ -59,21 +59,30 @@ export function expectedAnnualFee(row: {
   study_type?: string | null;
   admission_channel?: string | null;
   discount_percentage?: number | null;
+  discount_amount?: number | null;
   final_fee_after_discount?: number | null;
 }): number {
-  if (
-    row.final_fee_after_discount != null &&
-    Number(row.final_fee_after_discount) > 0
-  ) {
-    return Number(row.final_fee_after_discount);
-  }
   const annual = getAnnualTuitionFee(row.major, row.study_type);
-  const channel = row.admission_channel || 'general';
+  const channel = String(row.admission_channel || 'general').trim() || 'general';
   const discountPct =
     row.discount_percentage != null && Number(row.discount_percentage) >= 0
       ? Number(row.discount_percentage)
       : FIXED_CHANNEL_DISCOUNTS[channel] ?? 0;
-  return Math.max(0, annual - (annual * discountPct) / 100);
+  const computedNet = Math.max(0, annual - (annual * discountPct) / 100);
+  const profileDiscount = Math.max(0, Number(row.discount_amount || 0));
+  const finalFee = Math.max(0, Number(row.final_fee_after_discount || 0));
+
+  const hasExplicitDiscount =
+    discountPct > 0.5 ||
+    profileDiscount > 0.5 ||
+    (channel !== 'general' && (FIXED_CHANNEL_DISCOUNTS[channel] ?? 0) > 0);
+
+  // final_fee موثوق فقط عند وجود تخفيض صريح — وإلا قد يكون قسطاً قديماً مثبتاً قبل تعديل الجدول
+  if (finalFee > 0 && hasExplicitDiscount) {
+    return finalFee;
+  }
+
+  return computedNet;
 }
 
 export function normalizeDeptKey(value?: string | null): string {

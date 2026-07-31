@@ -3,6 +3,8 @@
  * الدين المستهدف: القسط الأساسي − (المدفوع + التخفيض).
  */
 
+import { FIXED_CHANNEL_DISCOUNTS } from '@/app/accounts/students/lib/tuitionFees';
+
 export type StudentFeeDiscountBreakdown = {
   channelDiscount: number;
   settlementDiscount: number;
@@ -82,6 +84,7 @@ export function primaryYearSettlementDiscount(
 
 /**
  * يفك تداخل خصم القناة (ملف الطالب) مع خصم المودال (الوصل).
+ * لا يُشتق تخفيض وهمي من فرق القسط الحالي عن final_fee القديم (مثلاً بعد رفع قسط النفط من 2.5M إلى 3M).
  */
 export function resolveStudentFeeDiscount(input: {
   annualBase: number;
@@ -89,14 +92,28 @@ export function resolveStudentFeeDiscount(input: {
   expectedNet: number;
   finalFeeAfterDiscount?: number | null;
   settlementDiscountAmount: number;
+  discountPercentage?: number | null;
+  admissionChannel?: string | null;
 }): StudentFeeDiscountBreakdown {
   const annual = Math.max(0, Number(input.annualBase) || 0);
   const settlement = Math.max(0, Number(input.settlementDiscountAmount) || 0);
   const expectedNet = Math.max(0, Number(input.expectedNet) || 0);
   const finalFee = Math.max(0, Number(input.finalFeeAfterDiscount || 0));
   const profileRaw = Math.max(0, Number(input.profileDiscountAmount || 0));
-  const profile =
-    profileRaw > 0.5 ? profileRaw : Math.max(0, annual - expectedNet);
+  const pct = Math.max(0, Number(input.discountPercentage || 0));
+  const channel = String(input.admissionChannel || '')
+    .trim()
+    .toLowerCase();
+
+  const hasExplicitDiscount =
+    settlement > 0.5 ||
+    profileRaw > 0.5 ||
+    pct > 0.5 ||
+    (channel !== '' &&
+      channel !== 'general' &&
+      (FIXED_CHANNEL_DISCOUNTS[channel] ?? 0) > 0);
+
+  const profile = profileRaw > 0.5 ? profileRaw : 0;
 
   const pack = (
     channelDiscount: number,
@@ -109,42 +126,42 @@ export function resolveStudentFeeDiscount(input: {
     netDue: Math.max(0, annual - Math.max(0, totalDiscount)),
   });
 
-  if (finalFee > 0 && annual > 0) {
-    const derivedTotal = Math.max(0, annual - finalFee);
-
-    if (settlement > 0.5) {
-      // خصم الوصل كُتب أيضاً على final_fee → لا تضاعف
-      if (nearlyEqual(derivedTotal, settlement)) {
-        return pack(0, settlement, settlement);
-      }
-      // final_fee = بعد خصم القناة فقط، وخصم الوصل إضافي فوقه
-      if (nearlyEqual(derivedTotal, profile) && settlement > 0.5) {
-        return pack(derivedTotal, settlement, derivedTotal + settlement);
-      }
-      // مشتق أكبر من خصم الوصل: جزء قناة + وصل
-      if (derivedTotal > settlement + 0.5) {
-        return pack(derivedTotal - settlement, settlement, derivedTotal);
-      }
-      // خصم الوصل أكبر أو يساوي المشتق → الوصل مرجع
-      return pack(0, settlement, settlement);
-    }
-
-    return pack(derivedTotal, 0, derivedTotal);
-  }
-
+  // خصم الوصل هو المرجع الأقوى عند وجوده
   if (settlement > 0.5) {
-    // نفس المبلغ على الملف والوصل (بعد تسديد يسجّل القناة)
-    if (nearlyEqual(profile, settlement)) {
-      return pack(0, settlement, settlement);
+    if (profile > 0.5 && !nearlyEqual(profile, settlement) && settlement < profile - 1) {
+      return pack(profile, settlement, profile + settlement);
     }
-    // الوصل يشمل خصم القناة (أو أكبر منه)
-    if (settlement >= profile - 1) {
-      return pack(0, settlement, settlement);
+    if (
+      hasExplicitDiscount &&
+      finalFee > 0 &&
+      nearlyEqual(Math.max(0, annual - finalFee), profile) &&
+      profile > 0.5 &&
+      !nearlyEqual(profile, settlement)
+    ) {
+      return pack(profile, settlement, profile + settlement);
     }
-    return pack(profile, settlement, profile + settlement);
+    return pack(0, settlement, settlement);
   }
 
-  return pack(profile, 0, profile);
+  if (profile > 0.5) {
+    return pack(profile, 0, profile);
+  }
+
+  // اشتقاق من final_fee فقط عند تخفيض صريح (قناة/نسبة) — لا من فرق جدول قديم
+  if (hasExplicitDiscount && finalFee > 0 && annual > 0) {
+    const derivedTotal = Math.max(0, annual - finalFee);
+    if (derivedTotal > 0.5) {
+      return pack(derivedTotal, 0, derivedTotal);
+    }
+  }
+
+  // بدون تخفيض صريح: لا تُحسب الفروقات عن final_fee القديم تخفيضاً
+  const fallbackProfile =
+    expectedNet > 0 && expectedNet < annual - 0.5 && hasExplicitDiscount
+      ? Math.max(0, annual - expectedNet)
+      : 0;
+
+  return pack(fallbackProfile, 0, fallbackProfile);
 }
 
 /** الدين = القسط الأساسي − (المدفوع + التخفيض) */

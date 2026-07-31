@@ -251,6 +251,7 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
       study_type: isEvening ? 'evening' : row.study_type,
       admission_channel: row.admission_channel,
       discount_percentage: row.discount_percentage,
+      discount_amount: row.discount_amount,
       final_fee_after_discount: row.final_fee_after_discount,
     });
 
@@ -261,10 +262,7 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
       0
     );
 
-    const profileDiscount =
-      Number(row.discount_amount || 0) > 0
-        ? Number(row.discount_amount)
-        : Math.max(0, annualBase - expected);
+    const profileDiscount = Math.max(0, Number(row.discount_amount || 0));
     const settlementFromReceipt = primaryYearSettlementDiscount(receipts);
     const resolved = resolveStudentFeeDiscount({
       annualBase,
@@ -272,6 +270,8 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
       expectedNet: expected,
       finalFeeAfterDiscount: row.final_fee_after_discount,
       settlementDiscountAmount: settlementFromReceipt,
+      discountPercentage: row.discount_percentage,
+      admissionChannel: row.admission_channel,
     });
     const channelDiscount = resolved.channelDiscount;
     const settlementDiscount = resolved.settlementDiscount;

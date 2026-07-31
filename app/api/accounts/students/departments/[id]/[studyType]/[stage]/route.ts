@@ -259,13 +259,11 @@ export async function GET(
         study_type: studyType,
         admission_channel: row.admission_channel,
         discount_percentage: row.discount_percentage,
+        discount_amount: row.discount_amount,
         final_fee_after_discount: row.final_fee_after_discount,
       });
 
-      const channelFromProfile =
-        Number(row.discount_amount || 0) > 0
-          ? Number(row.discount_amount)
-          : Math.max(0, annualBase - expectedNet);
+      const channelFromProfile = Math.max(0, Number(row.discount_amount || 0));
 
       const receipts = receiptsByStudent.get(String(row.id)) || [];
       const settlementFromReceipt = primaryYearSettlementDiscount(receipts);
@@ -275,6 +273,8 @@ export async function GET(
         expectedNet,
         finalFeeAfterDiscount: row.final_fee_after_discount,
         settlementDiscountAmount: settlementFromReceipt,
+        discountPercentage: row.discount_percentage,
+        admissionChannel: row.admission_channel,
       });
       const discountTotal = resolved.totalDiscount;
       const netDue = resolved.netDue;
