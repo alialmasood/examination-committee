@@ -14,11 +14,15 @@ import {
 } from '@/app/accounts/students/lib/admissionChannels';
 import {
   buildYearLedger,
-  getOpenYearState,
   paymentCategoryFromYearStatus,
   getYearVisualEntries,
   type SettlementHistoryRow,
 } from '@/app/accounts/students/lib/settlementYearLedger';
+import {
+  computeDebtFromBase,
+  primaryYearSettlementDiscount,
+  resolveStudentFeeDiscount,
+} from '@/app/accounts/students/lib/studentFeeDiscount';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -42,32 +46,6 @@ type ReceiptRow = SettlementHistoryRow & {
   student_id?: string;
   pay_amount?: number | string | null;
 };
-
-function receiptTime(row: ReceiptRow): number {
-  const a = Date.parse(String(row.created_at || ''));
-  if (Number.isFinite(a)) return a;
-  const b = Date.parse(String(row.settlement_date || ''));
-  return Number.isFinite(b) ? b : 0;
-}
-
-function settlementDiscountForStudent(receipts: ReceiptRow[]): number {
-  const byYear = new Map<number, ReceiptRow[]>();
-  for (const row of receipts) {
-    const year = Math.max(1, Math.min(4, Number(row.fee_year) || 1));
-    const list = byYear.get(year) || [];
-    list.push(row);
-    byYear.set(year, list);
-  }
-  let total = 0;
-  for (const [, list] of byYear) {
-    const first = [...list].sort((a, b) => receiptTime(a) - receiptTime(b))[0];
-    if (!first) continue;
-    const mode = String(first.discount_mode || 'none');
-    const amount = Math.max(0, Number(first.discount_amount || 0));
-    if (mode !== 'none' && amount > 0) total += amount;
-  }
-  return total;
-}
 
 function matchesStudyType(
   raw: string | null | undefined,
@@ -217,14 +195,24 @@ export async function GET(
         final_fee_after_discount: row.final_fee_after_discount,
       });
 
-      const channelDiscount =
+      const channelFromProfile =
         Number(row.discount_amount || 0) > 0
           ? Number(row.discount_amount)
           : Math.max(0, annualBase - expectedNet);
 
       const receipts = receiptsByStudent.get(String(row.id)) || [];
-      const settlementDiscount = settlementDiscountForStudent(receipts);
-      const discountTotal = channelDiscount + settlementDiscount;
+      const settlementFromReceipt = primaryYearSettlementDiscount(receipts);
+      const resolved = resolveStudentFeeDiscount({
+        annualBase,
+        profileDiscountAmount: channelFromProfile,
+        expectedNet,
+        finalFeeAfterDiscount: row.final_fee_after_discount,
+        settlementDiscountAmount: settlementFromReceipt,
+      });
+      const channelDiscount = resolved.channelDiscount;
+      const settlementDiscount = resolved.settlementDiscount;
+      const discountTotal = resolved.totalDiscount;
+      const netDue = resolved.netDue;
 
       const paid = receipts.reduce(
         (sum, r) => sum + Math.max(0, Number(r.pay_amount || 0)),
@@ -234,11 +222,11 @@ export async function GET(
         (r) => Math.max(0, Number(r.pay_amount || 0)) > 0
       ).length;
 
-      const annualForLedger =
-        expectedNet > 0 ? expectedNet : annualBase > 0 ? annualBase : 0;
+      // دفتر السنوات على الأساس السنوي؛ هدف السنة يأتي من after_discount في الوصولات
+      const annualForLedger = annualBase > 0 ? annualBase : netDue;
       const ledger = buildYearLedger(receipts, annualForLedger);
-      const openState = getOpenYearState(receipts, annualForLedger);
-      const studentDebt = Math.max(0, openState.outstandingBefore);
+      // الدين = القسط الأساسي − (المدفوع + التخفيض)
+      const studentDebt = computeDebtFromBase(annualBase, paid, discountTotal);
       const category = paymentCategoryFromYearStatus({
         current_year: ledger.currentYear,
         all_completed: ledger.allYearsCompleted,
@@ -260,7 +248,7 @@ export async function GET(
       collected += paid;
       debt += studentDebt;
       annualBaseTotal += annualBase;
-      expectedAnnualTotal += expectedNet;
+      expectedAnnualTotal += netDue;
       channelDiscountTotal += channelDiscount;
       settlementDiscountTotal += settlementDiscount;
       if (discountTotal > 0.5) studentsWithDiscount += 1;
@@ -320,7 +308,7 @@ export async function GET(
         admission_channel: channelKey,
         admission_channel_label: formatAdmissionChannelLabel(channelKey),
         annual_fee: annualBase,
-        expected_fee: expectedNet,
+        expected_fee: netDue,
         discount_amount: discountTotal,
         channel_discount: channelDiscount,
         settlement_discount: settlementDiscount,
@@ -329,7 +317,7 @@ export async function GET(
         receipts_count: receiptsForStudent,
         payment_category: category,
         status_label: statusLabel,
-        expected_four_years: expectedNet * 4,
+        expected_four_years: netDue * 4,
       });
     }
 
