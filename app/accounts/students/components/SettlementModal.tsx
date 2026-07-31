@@ -17,7 +17,6 @@ import {
   type AdmissionChannelKey,
 } from '../lib/admissionChannels';
 import {
-  expectedAnnualFee,
   getAnnualTuitionFee,
   type TuitionFeeLookupMap,
 } from '../lib/tuitionFees';
@@ -161,25 +160,19 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const [yearLocked, setYearLocked] = useState(false);
   const [feeMap, setFeeMap] = useState<TuitionFeeLookupMap | null>(null);
 
-  const registeredChannel = String(student?.admission_channel || '').trim();  const registeredChannelDef = getAdmissionChannelDef(registeredChannel);
+  const registeredChannel = String(student?.admission_channel || '').trim();
+  const registeredChannelDef = getAdmissionChannelDef(registeredChannel);
   const hasRegisteredChannel = Boolean(
     registeredChannelDef && registeredChannelDef.key !== 'general'
   );
 
-  /**
-   * إن وُجد تخفيض صريح (قناة/نسبة/مبلغ) مدمج في القسط، لا يُعاد خصم القناة في المودال.
-   * لا نعتمد على final_fee وحده لأنه قد يكون قسطاً قديماً قبل تعديل الجدول.
-   */
-  const primaryDiscountAlreadyApplied = useMemo(() => {
-    if (!student) return false;
-    const pct = toNumber(student.discount_percentage, 0);
-    const amt = toNumber(student.discount_amount, 0);
-    return hasRegisteredChannel || pct > 0 || amt > 0;
-  }, [student, hasRegisteredChannel]);
-
+  /** الخصم الرئيسي نشط إن وُجدت قناة مسجّلة أو فعّل المستخدم الخصم يدوياً */
   const primaryActive = hasRegisteredChannel || discountEnabled;
-  /** الخصم الرئيسي يُحتسب في التسديد فقط إن لم يكن مدمجاً مسبقاً في القسط */
-  const primaryCountsInCalc = primaryActive && !primaryDiscountAlreadyApplied;
+  /**
+   * الخصم يُحتسب على السنوات المحددة فقط (افتراضياً السنة الأولى)،
+   * وليس بدمجه في القسط السنوي لكل السنوات الأربع.
+   */
+  const primaryCountsInCalc = primaryActive;
 
   const activeChannelKey = (
     hasRegisteredChannel
@@ -191,27 +184,15 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const activeChannelDef = getAdmissionChannelDef(activeChannelKey);
   const extraChannelDef = getAdmissionChannelDef(extraChannel);
 
+  /** القسط الأصلي من أقساط الأقسام — قبل أي تخفيض */
   const catalogAnnual = useMemo(() => {
     if (!student) return 0;
     const dept = student.department?.trim() || '';
     return getAnnualTuitionFee(dept, student.study_type, feeMap);
   }, [student, feeMap]);
 
-  /** القسط المعتمد من الجدول الحالي (+ خصم صريح إن وُجد) — يتجاهل final_fee القديم */
-  const baseTotal = useMemo(() => {
-    if (!student) return 0;
-    return expectedAnnualFee(
-      {
-        major: student.department?.trim() || '',
-        study_type: student.study_type,
-        admission_channel: student.admission_channel,
-        discount_percentage: toNumber(student.discount_percentage, 0),
-        discount_amount: toNumber(student.discount_amount, 0),
-        final_fee_after_discount: toNumber(student.final_fee, 0),
-      },
-      feeMap
-    );
-  }, [student, feeMap]);
+  /** أساس احتساب السنوات = القسط الأصلي (لا يُدمج خصم الملف هنا) */
+  const baseTotal = catalogAnnual;
 
   const ledger: YearLedger = useMemo(
     () => buildYearLedger(historyRows, baseTotal),
@@ -279,6 +260,14 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
         setSelectedChannel(existingDef.key);
         if (existingDef.fixedPercent != null) {
           setDiscountValue(String(existingDef.fixedPercent));
+        } else if (toNumber(student!.discount_percentage, 0) > 0) {
+          setDeanValueMode('percent');
+          setDiscountValue(String(toNumber(student!.discount_percentage, 0)));
+        } else if (toNumber(student!.discount_amount, 0) > 0) {
+          setDeanValueMode(
+            existingDef.allowAmountOrPercent ? 'amount' : 'percent'
+          );
+          setDiscountValue(String(toNumber(student!.discount_amount, 0)));
         }
       }
 
@@ -300,15 +289,9 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
         setHistoryRows(rows);
         setHistoryReady(true);
 
-        const annual = expectedAnnualFee(
-          {
-            major: student!.department?.trim() || '',
-            study_type: student!.study_type,
-            admission_channel: student!.admission_channel,
-            discount_percentage: toNumber(student!.discount_percentage, 0),
-            discount_amount: toNumber(student!.discount_amount, 0),
-            final_fee_after_discount: toNumber(student!.final_fee, 0),
-          },
+        const annual = getAnnualTuitionFee(
+          student!.department?.trim() || '',
+          student!.study_type,
           feeMap
         );
 
@@ -467,7 +450,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       allPlanYears,
       primaryApplies,
       extraApplies,
-      primaryDiscountAlreadyApplied,
     };
   }, [
     baseTotal,
@@ -475,7 +457,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
     discountFeeYears,
     activeChannelDef,
     primaryCountsInCalc,
-    primaryDiscountAlreadyApplied,
     deanValueMode,
     discountValue,
     extraDiscountEnabled,
@@ -880,21 +861,13 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
 
           <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-lg border border-gray-200 px-3 py-3">
-              <p className="text-xs text-gray-500 mb-1">
-                {primaryDiscountAlreadyApplied
-                  ? 'القسط المعتمد (بعد خصم التسجيل)'
-                  : 'القسط الكلي (سنوي)'}
-              </p>
+              <p className="text-xs text-gray-500 mb-1">القسط الأصلي (سنوي)</p>
               <p className="text-base font-bold text-gray-900" dir="ltr">
                 {money(baseTotal)} IQD
               </p>
-              {primaryDiscountAlreadyApplied &&
-                catalogAnnual > 0 &&
-                catalogAnnual !== baseTotal && (
-                  <p className="text-[11px] text-gray-500 mt-1" dir="ltr">
-                    القسط الأساسي قبل الخصم: {money(catalogAnnual)} IQD
-                  </p>
-                )}
+              <p className="text-[11px] text-gray-500 mt-1">
+                من أقساط الأقسام · قبل التخفيض
+              </p>
             </div>
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-3">
               <p className="text-xs text-red-800/80 mb-1">إجمالي 4 سنوات</p>
@@ -1031,28 +1004,17 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                     {formatAdmissionChannelLabel(registeredChannelDef.key)}
                     {registeredChannelDef.fixedPercent != null
                       ? ` (${registeredChannelDef.fixedPercent}%)`
-                      : toNumber(student.discount_percentage, 0) > 0
-                        ? ` (${toNumber(student.discount_percentage, 0)}%)`
+                      : toNumber(discountValue, 0) > 0
+                        ? deanValueMode === 'amount'
+                          ? ` (${money(toNumber(discountValue, 0))} IQD)`
+                          : ` (${toNumber(discountValue, 0)}%)`
                         : ''}
                   </p>
-                  {primaryDiscountAlreadyApplied ? (
-                    <p className="text-xs text-indigo-800/90 leading-5">
-                      هذا التخفيض مُحتسب مسبقاً ضمن القسط المعتمد (
-                      {money(baseTotal)} IQD
-                      {catalogAnnual > 0 && catalogAnnual !== baseTotal
-                        ? ` من أصل ${money(catalogAnnual)}`
-                        : ''}
-                      ). لن يُخصم مرة أخرى هنا — يمكنك إضافة خصم آخر فقط إن لزم.
-                    </p>
-                  ) : (
-                    <p className="text-xs text-indigo-800/80 mt-0.5">
-                      {registeredChannelDef.fixedPercent != null
-                        ? `نسبة التخفيض الثابتة: ${registeredChannelDef.fixedPercent}%`
-                        : registeredChannelDef.allowAmountOrPercent
-                          ? 'تخفيض موافقة السيد العميد — نسبة أو مبلغ'
-                          : 'أدخل نسبة التخفيض يدوياً لهذه القناة'}
-                    </p>
-                  )}
+                  <p className="text-xs text-indigo-800/90 leading-5">
+                    قناة مسجّلة على ملف الطالب. التخفيض يُطبَّق فقط على السنوات
+                    المحددة أدناه (افتراضياً السنة الأولى) — وليس على السنوات
+                    الأربع تلقائياً.
+                  </p>
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-3 text-sm">
