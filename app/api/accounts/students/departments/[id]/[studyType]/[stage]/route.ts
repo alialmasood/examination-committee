@@ -11,6 +11,7 @@ import {
 } from '@/app/accounts/students/lib/tuitionFees';
 import {
   formatAdmissionChannelLabel,
+  getAdmissionChannelDef,
 } from '@/app/accounts/students/lib/admissionChannels';
 import {
   buildYearLedger,
@@ -46,6 +47,71 @@ type ReceiptRow = SettlementHistoryRow & {
   student_id?: string;
   pay_amount?: number | string | null;
 };
+
+function receiptTime(row: ReceiptRow): number {
+  const a = Date.parse(String(row.created_at || ''));
+  if (Number.isFinite(a)) return a;
+  const b = Date.parse(String(row.settlement_date || ''));
+  return Number.isFinite(b) ? b : 0;
+}
+
+/** قناة التخفيض من ملف الطالب أو أول وصل يحمل قناة */
+function resolveDiscountChannelKey(
+  admissionChannel: string | null | undefined,
+  receipts: ReceiptRow[]
+): string {
+  const fromStudent = String(admissionChannel || '')
+    .trim()
+    .toLowerCase();
+  if (fromStudent && fromStudent !== 'general') return fromStudent;
+
+  const sorted = [...receipts].sort((a, b) => receiptTime(a) - receiptTime(b));
+  for (const r of sorted) {
+    const ch = String(r.discount_channel || '')
+      .trim()
+      .toLowerCase();
+    if (ch && ch !== 'general') return ch;
+  }
+  return '';
+}
+
+/**
+ * تصنيف نوع التخفيض للجدول:
+ * - إن وُجدت قناة قبول معروفة → نوعها + تصنيف «قناة قبول»
+ * - وإلا إن وُجد تخفيض على الوصل/الملف بدون قناة → «خصم عند التسديد»
+ */
+function resolveDiscountTypeBucket(
+  admissionChannel: string | null | undefined,
+  receipts: ReceiptRow[]
+): { key: string; label: string; kind: 'channel' | 'settlement' } | null {
+  const channelKey = resolveDiscountChannelKey(admissionChannel, receipts);
+  if (channelKey) {
+    const def = getAdmissionChannelDef(channelKey);
+    return {
+      key: `channel:${channelKey}`,
+      label: def?.label || formatAdmissionChannelLabel(channelKey),
+      kind: 'channel',
+    };
+  }
+
+  const hasSettlementDiscount = receipts.some((r) => {
+    const mode = String(r.discount_mode || 'none');
+    return mode !== 'none' && Math.max(0, Number(r.discount_amount || 0)) > 0.5;
+  });
+  if (hasSettlementDiscount) {
+    return {
+      key: 'settlement:modal',
+      label: 'خصم عند التسديد',
+      kind: 'settlement',
+    };
+  }
+
+  return {
+    key: 'settlement:profile',
+    label: 'تخفيض على ملف الطالب',
+    kind: 'settlement',
+  };
+}
 
 function matchesStudyType(
   raw: string | null | undefined,
@@ -140,6 +206,7 @@ export async function GET(
              discount_mode,
              discount_input,
              discount_amount,
+             discount_channel,
              settlement_date,
              created_at
            FROM accounts.student_settlement_receipts
@@ -209,8 +276,6 @@ export async function GET(
         finalFeeAfterDiscount: row.final_fee_after_discount,
         settlementDiscountAmount: settlementFromReceipt,
       });
-      const channelDiscount = resolved.channelDiscount;
-      const settlementDiscount = resolved.settlementDiscount;
       const discountTotal = resolved.totalDiscount;
       const netDue = resolved.netDue;
 
@@ -249,43 +314,45 @@ export async function GET(
       debt += studentDebt;
       annualBaseTotal += annualBase;
       expectedAnnualTotal += netDue;
-      channelDiscountTotal += channelDiscount;
-      settlementDiscountTotal += settlementDiscount;
       if (discountTotal > 0.5) studentsWithDiscount += 1;
 
-      const channelKey = String(row.admission_channel || 'general').trim() || 'general';
-      if (channelDiscount > 0.5) {
-        const key = `channel:${channelKey}`;
-        let bucket = discountTypes.get(key);
-        if (!bucket) {
-          bucket = {
-            key,
-            label: formatAdmissionChannelLabel(channelKey),
-            kind: 'channel',
-            students_count: 0,
-            amount: 0,
-          };
-          discountTypes.set(key, bucket);
-        }
-        bucket.students_count += 1;
-        bucket.amount += channelDiscount;
-      }
+      const resolvedChannelKey =
+        resolveDiscountChannelKey(row.admission_channel, receipts) ||
+        String(row.admission_channel || 'general').trim() ||
+        'general';
 
-      if (settlementDiscount > 0.5) {
-        const key = 'settlement:extra';
-        let bucket = discountTypes.get(key);
-        if (!bucket) {
-          bucket = {
-            key,
-            label: 'خصم إضافي عند التسديد',
-            kind: 'settlement',
-            students_count: 0,
-            amount: 0,
-          };
-          discountTypes.set(key, bucket);
+      let attributedChannel = 0;
+      let attributedSettlement = 0;
+
+      // جدول أنواع التخفيض: يُنسب حسب القناة الفعلية (ملف/وصل) وليس حسب تقسيم المبالغ الداخلي
+      if (discountTotal > 0.5) {
+        const typeMeta = resolveDiscountTypeBucket(
+          row.admission_channel,
+          receipts
+        );
+        if (typeMeta) {
+          let bucket = discountTypes.get(typeMeta.key);
+          if (!bucket) {
+            bucket = {
+              key: typeMeta.key,
+              label: typeMeta.label,
+              kind: typeMeta.kind,
+              students_count: 0,
+              amount: 0,
+            };
+            discountTypes.set(typeMeta.key, bucket);
+          }
+          bucket.students_count += 1;
+          bucket.amount += discountTotal;
+
+          if (typeMeta.kind === 'channel') {
+            attributedChannel = discountTotal;
+            channelDiscountTotal += discountTotal;
+          } else {
+            attributedSettlement = discountTotal;
+            settlementDiscountTotal += discountTotal;
+          }
         }
-        bucket.students_count += 1;
-        bucket.amount += settlementDiscount;
       }
 
       const statusLabel =
@@ -305,13 +372,13 @@ export async function GET(
             : ['female', 'f', 'أنثى', 'انثى', 'ا'].includes(g)
               ? 'أنثى'
               : '—',
-        admission_channel: channelKey,
-        admission_channel_label: formatAdmissionChannelLabel(channelKey),
+        admission_channel: resolvedChannelKey,
+        admission_channel_label: formatAdmissionChannelLabel(resolvedChannelKey),
         annual_fee: annualBase,
         expected_fee: netDue,
         discount_amount: discountTotal,
-        channel_discount: channelDiscount,
-        settlement_discount: settlementDiscount,
+        channel_discount: attributedChannel,
+        settlement_discount: attributedSettlement,
         paid_amount: paid,
         debt_amount: studentDebt,
         receipts_count: receiptsForStudent,

@@ -330,7 +330,7 @@ export default function StudentAccountsDepartmentStagePage() {
               <div className="px-4 py-3 bg-red-950 text-white">
                 <p className="text-sm font-semibold">أنواع التخفيضات في هذه المرحلة</p>
                 <p className="text-xs text-red-100/80 mt-0.5">
-                  كل نوع · عدد المستفيدين · إجمالي المبلغ
+                  حسب قناة القبول أو خصم التسديد · عدد المستفيدين · إجمالي المبلغ
                 </p>
               </div>
               {data.discount_types.length === 0 ? (
