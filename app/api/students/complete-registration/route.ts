@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/src/lib/db';
 import { verifyAccessToken, validateUser } from '@/src/lib/auth';
 import { logAuditDirect } from '@/src/lib/audit';
+import {
+  activateStudentsAsPaid,
+  syncStudentAccountsAfterActivation,
+} from '@/src/lib/accounts/activate-student-after-registration';
 
 // POST /api/students/complete-registration
-// إتمام تسجيل كل الطلبة قيد التسجيل، أو طلبة قسم محدد.
+// إتمام تسجيل الطلبة قيد التسجيل وترحيلهم مباشرة إلى حسابات الطلبة (paid).
 export async function POST(request: NextRequest) {
   try {
     const accessToken = request.cookies.get('access_token')?.value;
@@ -28,7 +32,11 @@ export async function POST(request: NextRequest) {
     let departmentCondition = '';
     let scopeDescription = 'جميع الأقسام';
 
-    if (department === '__other__' || department === 'other' || department === 'أخرى') {
+    if (
+      department === '__other__' ||
+      department === 'other' ||
+      department === 'أخرى'
+    ) {
       const knownDepartments = [
         'تقنيات التخدير',
         'تقنيات الاشعة',
@@ -65,17 +73,24 @@ export async function POST(request: NextRequest) {
       scopeDescription = `قسم ${department}`;
     }
 
-    const result = await query(
-      `UPDATE student_affairs.students
-       SET payment_status = 'pending',
-           updated_at = NOW()
+    const pendingRes = await query(
+      `SELECT id
+       FROM student_affairs.students
        WHERE TRIM(COALESCE(payment_status, '')) = 'registration_pending'
        ${departmentCondition}
-       RETURNING id`,
+       ORDER BY created_at DESC NULLS LAST`,
       params
     );
 
-    const completedCount = result.rowCount ?? 0;
+    const candidateIds = pendingRes.rows.map((r: { id: string }) => String(r.id));
+    const { updatedIds } = await activateStudentsAsPaid({
+      studentIds: candidateIds,
+      fromStatuses: ['registration_pending'],
+    });
+
+    const completedCount = updatedIds.length;
+
+    await syncStudentAccountsAfterActivation(user.id, updatedIds);
 
     const ipAddress =
       request.headers.get('x-forwarded-for') ||
@@ -90,13 +105,13 @@ export async function POST(request: NextRequest) {
       action_type: 'bulk_complete_registration',
       entity_type: 'student',
       entity_name: scopeDescription,
-      description: `تم إتمام تسجيل ${completedCount} طالب ضمن ${scopeDescription}`,
+      description: `تم إتمام تسجيل ${completedCount} طالب وترحيلهم إلى حسابات الطلبة ضمن ${scopeDescription}`,
       old_values: {
         payment_status: 'registration_pending',
         department: department || null,
       },
       new_values: {
-        payment_status: 'pending',
+        payment_status: 'paid',
         completed_count: completedCount,
       },
       ip_address: ipAddress,
@@ -108,7 +123,7 @@ export async function POST(request: NextRequest) {
       completed_count: completedCount,
       message:
         completedCount > 0
-          ? `تم إتمام تسجيل ${completedCount} طالب بنجاح`
+          ? `تم إتمام تسجيل ${completedCount} طالب — سيظهرون في حسابات الطلبة لإصدار وصل التسديد`
           : `لا يوجد طلاب قيد التسجيل ضمن ${scopeDescription}`,
     });
   } catch (error) {

@@ -319,8 +319,8 @@ export async function resolveDefaultStudentReceivableGlId(
 }
 
 /**
- * إنشاء حسابات مالية للطلبة الذين أكملوا الدفع من صفحة الأقساط
- * ولم يُنشأ لهم حساب في accounts.student_accounts بعد.
+ * إنشاء حسابات مالية للطلبة المفعّلين (paid) إن لم يكن لهم حساب بعد.
+ * يُستدعى بعد إتمام التسجيل أو تفعيل طلبة عالقين من الأقساط.
  */
 export async function ensureStudentAccountsForPaidStudents(
   client: TxClient,

@@ -483,7 +483,7 @@ export default function StudentAccountsPage() {
       <div className="mb-4">
         <h1 className="text-xl font-semibold text-gray-900">الحسابات</h1>
         <p className="text-sm text-gray-600 mt-1">
-          الطلبة الذين تم تأكيد دفعهم من صفحة الأقساط
+          الطلبة المفعّلون بعد إتمام التسجيل من شؤون الطلبة
         </p>
       </div>
 
@@ -545,7 +545,7 @@ export default function StudentAccountsPage() {
             <div className="py-12 text-center border border-dashed border-gray-300 rounded-lg">
               <p className="text-gray-700 font-medium">لا يوجد طلبة مسددون حالياً</p>
               <p className="text-sm text-gray-500 mt-1">
-                يظهر هنا الطلبة بعد تأكيد الدفع من صفحة الأقساط.
+                يظهر هنا الطلبة بعد إتمام التسجيل من شؤون الطلبة. استخدم «تسديد» لإصدار وصل القبض الرسمي.
               </p>
             </div>
           ) : rows.length > 0 ? (

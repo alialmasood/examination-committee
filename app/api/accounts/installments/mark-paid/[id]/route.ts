@@ -5,9 +5,15 @@ import {
   isAuthFailure,
   requireAccountsAccess,
 } from '@/src/lib/accounts/auth';
-import { ensureStudentAccountsForPaidStudents } from '@/src/lib/accounts/student-accounts';
-import { withTransaction } from '@/src/lib/accounts/with-transaction';
+import {
+  activateStudentsAsPaid,
+  syncStudentAccountsAfterActivation,
+} from '@/src/lib/accounts/activate-student-after-registration';
 
+/**
+ * POST /api/accounts/installments/mark-paid/[id]
+ * مسار انتقالي لطلبة عالقين بحالة pending — يفعّلهم إلى paid.
+ */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -16,103 +22,57 @@ export async function POST(
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
     const amount = Number(body?.amount ?? 0) || null;
-    let discountPercentage = Number(body?.discount_percentage ?? 0) || 0;
 
-    // الحصول على معلومات الطالب قبل التحديث (القسم، نوع الدراسة، قناة القبول)
     const studentResult = await query(
-      `SELECT major, university_id, study_type, admission_channel FROM student_affairs.students WHERE id = $1`,
+      `SELECT major, university_id, study_type, admission_channel, payment_status
+       FROM student_affairs.students WHERE id = $1`,
       [id]
     );
 
     if (studentResult.rows.length === 0) {
-      return NextResponse.json({ success: false, error: 'الطالب غير موجود' }, { status: 404 });
+      return NextResponse.json(
+        { success: false, error: 'الطالب غير موجود' },
+        { status: 404 }
+      );
     }
 
     const department = studentResult.rows[0].major;
-    const studyType = studentResult.rows[0].study_type;
-    const admissionChannel = studentResult.rows[0].admission_channel;
     const systemPath = getSystemPathByDepartment(department);
+    const status = String(studentResult.rows[0].payment_status || '').trim();
 
-    // تحديد النسب الثابتة لكل قناة
-    const fixedDiscounts: Record<string, number> = {
-      'general': 0,
-      'martyrs': 50,
-      'social_care': 50,
-      'siblings_married': 10,
-      'top_students': 10,
-      'health_ministry': 20
-    };
-
-    // إذا كانت قناة القبول لديها نسبة ثابتة، نستخدم القيمة الثابتة ونتجاهل القيمة المرسلة
-    if (admissionChannel && Object.prototype.hasOwnProperty.call(fixedDiscounts, admissionChannel)) {
-      discountPercentage = fixedDiscounts[admissionChannel];
+    if (status === 'paid') {
+      return NextResponse.json({
+        success: true,
+        systemPath: systemPath || null,
+        department: department || null,
+        message: 'الطالب مفعّل مسبقاً في حسابات الطلبة',
+      });
     }
 
-    // حساب القسط السنوي (نفس منطق الواجهة الأمامية)
-    const getAnnualTuitionFee = (dept: string, st?: string) => {
-      const isEvening = st === 'evening';
-      const fees: Record<string, number> = {
-        'تقنيات التخدير': isEvening ? 2750000 : 3000000,
-        'تقنيات الاشعة': isEvening ? 2750000 : 3000000,
-        'تقنيات صناعة الاسنان': isEvening ? 2250000 : 2500000,
-        'تقنيات البصريات': 2750000,
-        'تقنيات طب الطوارئ': 2750000,
-        'تقنيات صحة المجتمع': 2750000,
-        'تقنيات العلاج الطبيعي': 2750000,
-        'هندسة تقنيات البناء والانشاءات': 2500000,
-        'تقنيات البناء والاستشارات': 2500000,
-        'تقنيات هندسة النفط والغاز': 3000000,
-        'تقنيات الفيزياء الصحية': 2500000,
-        'هندسة تقنيات الامن السيبراني والحوسبة السحابية': 3000000,
-        'تقنيات الامن السيبراني': 3000000,
-        'تقنيات الأمن السيبراني': 3000000,
-      };
-      return fees[dept] || 0;
-    };
-
-    const annualFee = getAnnualTuitionFee(department, studyType);
-    const discountAmount = (annualFee * discountPercentage) / 100;
-    const finalFeeAfterDiscount = annualFee - discountAmount;
-
-    try {
-      await query(`
-        ALTER TABLE student_affairs.students
-        ADD COLUMN IF NOT EXISTS discount_percentage DECIMAL(5,2) DEFAULT 0
-      `);
-      await query(`
-        ALTER TABLE student_affairs.students
-        ADD COLUMN IF NOT EXISTS discount_amount DECIMAL(12,2) DEFAULT 0
-      `);
-      await query(`
-        ALTER TABLE student_affairs.students
-        ADD COLUMN IF NOT EXISTS final_fee_after_discount DECIMAL(12,2) DEFAULT 0
-      `);
-    } catch (error) {
-      console.log('الأعمدة موجودة بالفعل أو حدث خطأ في التحقق:', error);
+    if (status !== 'pending' && status !== 'registration_pending') {
+      return NextResponse.json(
+        { success: false, error: 'حالة الطالب لا تسمح بتأكيد الدفع' },
+        { status: 400 }
+      );
     }
 
-    await query(
-      `UPDATE student_affairs.students 
-       SET payment_status = 'paid', 
-           payment_amount = COALESCE($2, payment_amount), 
-           payment_date = COALESCE(payment_date, NOW()), 
-           discount_percentage = $3,
-           discount_amount = $4,
-           final_fee_after_discount = $5,
-           updated_at = NOW() 
-       WHERE id = $1`,
-      [id, amount, discountPercentage, discountAmount, finalFeeAfterDiscount]
-    );
+    const { updatedIds } = await activateStudentsAsPaid({
+      studentIds: [id],
+      paymentAmount: amount,
+      fromStatuses: [status],
+    });
 
-    // إنشاء حساب مالي للطالب المسدد إن لم يكن موجوداً
+    if (updatedIds.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'تعذر تأكيد الدفع' },
+        { status: 400 }
+      );
+    }
+
     try {
       const auth = await requireAccountsAccess(req);
       if (!isAuthFailure(auth)) {
-        await withTransaction((client) =>
-          ensureStudentAccountsForPaidStudents(client, auth.user.id, {
-            studentIds: [id],
-          })
-        );
+        await syncStudentAccountsAfterActivation(auth.user.id, updatedIds);
       }
     } catch (syncErr) {
       console.error('تعذر مزامنة الحساب المالي بعد تأكيد الدفع:', syncErr);
@@ -121,10 +81,13 @@ export async function POST(
     return NextResponse.json({
       success: true,
       systemPath: systemPath || null,
-      department: department || null
+      department: department || null,
     });
   } catch (e) {
     console.error('خطأ في تحديث حالة الدفع:', e);
-    return NextResponse.json({ success: false, error: 'خطأ في تحديث حالة الدفع' }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: 'خطأ في تحديث حالة الدفع' },
+      { status: 500 }
+    );
   }
 }

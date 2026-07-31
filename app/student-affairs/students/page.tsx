@@ -1695,7 +1695,7 @@ export default function StudentsPage() {
           ? `قسم ${selectedDepartment}`
           : 'جميع الأقسام';
     const confirmed = confirm(
-      `هل أنت متأكد من إتمام تسجيل جميع الطلبة قيد التسجيل ضمن ${scopeName}؟\n\nسيتم ترحيلهم إلى صفحة الحسابات.`
+      `هل أنت متأكد من إتمام تسجيل جميع الطلبة قيد التسجيل ضمن ${scopeName}؟\n\nسيُرحَّلون مباشرة إلى حسابات الطلبة لإصدار وصل التسديد.`
     );
 
     if (!confirmed) return;
@@ -3560,14 +3560,14 @@ export default function StudentsPage() {
                           {student.payment_status === 'registration_pending' && (
                             <button 
                               onClick={async () => {
-                                if (confirm('هل أنت متأكد من إتمام التسجيل؟ سيتم ترحيل الطالب إلى صفحة الحسابات.')) {
+                                if (confirm('هل أنت متأكد من إتمام التسجيل؟ سيُرحَّل الطالب مباشرة إلى حسابات الطلبة لإصدار وصل التسديد.')) {
                                   try {
                                     const response = await fetch(`/api/students/${student.id}/complete-registration`, {
                                       method: 'POST'
                                     });
                                     const result = await response.json();
                                     if (result.success) {
-                                      alert('تم إتمام التسجيل بنجاح! سيتم ترحيل الطالب إلى صفحة الحسابات.');
+                                      alert('تم إتمام التسجيل بنجاح! سيظهر الطالب في حسابات الطلبة.');
                                       await fetchStudents();
                                       await fetchDepartmentCounts();
                                     } else {
