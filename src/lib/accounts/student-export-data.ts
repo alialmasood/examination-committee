@@ -13,6 +13,7 @@ import {
   expectedAnnualFee,
   getAnnualTuitionFee,
 } from '@/app/accounts/students/lib/tuitionFees';
+import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 
 export type StudentExportFilters = {
   search?: string;
@@ -315,6 +316,7 @@ export async function getStudentExportData(
   const rows: StudentExportRow[] = [];
   const deptMap = new Map<string, DepartmentTotals>();
   const totals = emptyTotals('الإجمالي العام');
+  const feeMap = await loadTuitionFeeMap();
 
   for (const s of students) {
     const department = String(s.department || '').trim() || 'غير محدد';
@@ -323,18 +325,22 @@ export async function getStudentExportData(
 
     const annualFee = getAnnualTuitionFee(
       department,
-      isEvening ? 'evening' : 'morning'
+      isEvening ? 'evening' : 'morning',
+      feeMap
     );
     const netFeeFromStudent =
       s.final_fee != null && Number(s.final_fee) > 0
         ? Number(s.final_fee)
-        : expectedAnnualFee({
-            major: department,
-            study_type: isEvening ? 'evening' : s.study_type,
-            admission_channel: s.admission_channel,
-            discount_percentage: s.discount_percentage,
-            final_fee_after_discount: s.final_fee,
-          });
+        : expectedAnnualFee(
+            {
+              major: department,
+              study_type: isEvening ? 'evening' : s.study_type,
+              admission_channel: s.admission_channel,
+              discount_percentage: s.discount_percentage,
+              final_fee_after_discount: s.final_fee,
+            },
+            feeMap
+          );
 
     const channelDiscountAmount =
       Number(s.discount_amount || 0) > 0

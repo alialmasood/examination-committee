@@ -24,6 +24,7 @@ import {
   primaryYearSettlementDiscount,
   resolveStudentFeeDiscount,
 } from '@/app/accounts/students/lib/studentFeeDiscount';
+import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -232,6 +233,8 @@ export async function GET(
       }
     }
 
+    const feeMap = await loadTuitionFeeMap();
+
     type DiscountBucket = {
       key: string;
       label: string;
@@ -261,15 +264,18 @@ export async function GET(
 
     for (const row of filtered) {
       const major = row.major || dept.name;
-      const annualBase = getAnnualTuitionFee(major, studyType);
-      const expectedNet = expectedAnnualFee({
-        major,
-        study_type: studyType,
-        admission_channel: row.admission_channel,
-        discount_percentage: row.discount_percentage,
-        discount_amount: row.discount_amount,
-        final_fee_after_discount: row.final_fee_after_discount,
-      });
+      const annualBase = getAnnualTuitionFee(major, studyType, feeMap);
+      const expectedNet = expectedAnnualFee(
+        {
+          major,
+          study_type: studyType,
+          admission_channel: row.admission_channel,
+          discount_percentage: row.discount_percentage,
+          discount_amount: row.discount_amount,
+          final_fee_after_discount: row.final_fee_after_discount,
+        },
+        feeMap
+      );
 
       const channelFromProfile = Math.max(0, Number(row.discount_amount || 0));
 

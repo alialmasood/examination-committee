@@ -128,6 +128,16 @@ export default function PlatformAdminLayout({
             >
               إدارة حسابات الأنظمة
             </Link>
+            <Link
+              href="/platform-admin/accounts"
+              className={`px-4 py-2.5 text-sm border-b-2 transition-colors ${
+                pathname.startsWith('/platform-admin/accounts')
+                  ? 'border-amber-400 text-white'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              نظام الحسابات
+            </Link>
           </div>
         </nav>
       </header>

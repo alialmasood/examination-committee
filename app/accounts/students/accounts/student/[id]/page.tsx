@@ -14,6 +14,8 @@ import {
   feeYearLabel,
   type FeeYear,
 } from '../../../lib/settlementYearLedger';
+import { getAnnualTuitionFee, type TuitionFeeLookupMap } from '../../../lib/tuitionFees';
+import { fetchTuitionFeeMap } from '../../../lib/clientTuitionFees';
 
 type PaidStudentRow = {
   id: string;
@@ -121,30 +123,6 @@ function discountYearsLabel(years: number): string {
   if (years === 2) return 'من قسط سنتين';
   if (years === 3) return 'من قسط 3 سنوات';
   return 'من قسط 4 سنوات';
-}
-
-function getAnnualTuitionFee(department: string, studyType?: string | null): number {
-  const isEvening = studyType === 'evening';
-  const fees: Record<string, number> = {
-    'تقنيات التخدير': isEvening ? 2750000 : 3000000,
-    'تقنيات الاشعة': isEvening ? 2750000 : 3000000,
-    'تقنيات الأشعة': isEvening ? 2750000 : 3000000,
-    'تقنيات صناعة الاسنان': isEvening ? 2250000 : 2500000,
-    'تقنيات صناعة الأسنان': isEvening ? 2250000 : 2500000,
-    'تقنيات البصريات': 2750000,
-    'تقنيات طب الطوارئ': 2750000,
-    'تقنيات صحة المجتمع': 2750000,
-    'تقنيات العلاج الطبيعي': 2750000,
-    'هندسة تقنيات البناء والانشاءات': 2500000,
-    'تقنيات البناء والاستشارات': 2500000,
-    'تقنيات هندسة النفط والغاز': 3000000,
-    'تقنيات الفيزياء الصحية': 2500000,
-    'هندسة تقنيات الامن السيبراني والحوسبة السحابية': 3000000,
-    'تقنيات الامن السيبراني': 3000000,
-    'تقنيات الأمن السيبراني': 3000000,
-    القانون: 0,
-  };
-  return fees[department] || 0;
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -336,6 +314,7 @@ export default function StudentAccountsStudentPage() {
   const id = String(params?.id || '');
   const [student, setStudent] = useState<PaidStudentRow | null>(null);
   const [receipts, setReceipts] = useState<SettlementReceipt[]>([]);
+  const [feeMap, setFeeMap] = useState<TuitionFeeLookupMap>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [receiptsError, setReceiptsError] = useState('');
@@ -350,7 +329,7 @@ export default function StudentAccountsStudentPage() {
     setError('');
     setReceiptsError('');
     try {
-      const [paidRes, settlementsRes] = await Promise.all([
+      const [paidRes, settlementsRes, map] = await Promise.all([
         fetch('/api/accounts/installments/paid/list', {
           credentials: 'include',
           cache: 'no-store',
@@ -359,7 +338,9 @@ export default function StudentAccountsStudentPage() {
           credentials: 'include',
           cache: 'no-store',
         }),
+        fetchTuitionFeeMap(),
       ]);
+      setFeeMap(map);
 
       const paidBody = await paidRes.json().catch(() => ({}));
       if (!paidRes.ok || !paidBody.success || !Array.isArray(paidBody.data)) {
@@ -399,7 +380,7 @@ export default function StudentAccountsStudentPage() {
   const view = useMemo(() => {
     const department = student?.department?.trim() || 'غير محدد';
     const studyType = student?.study_type || null;
-    const annual = getAnnualTuitionFee(department, studyType);
+    const annual = getAnnualTuitionFee(department, studyType, feeMap);
     const totalInstallment = toNumber(student?.final_fee, annual > 0 ? annual : 0);
     const settlementsPaid = receipts.reduce(
       (sum, r) => sum + toNumber(r.pay_amount),
@@ -459,7 +440,7 @@ export default function StudentAccountsStudentPage() {
       hasDiscountType,
       discountTypeLabel,
     };
-  }, [student, receipts]);
+  }, [student, receipts, feeMap]);
 
   const receiptsByYear = useMemo(() => {
     return ([1, 2, 3, 4] as FeeYear[]).map((year) => {

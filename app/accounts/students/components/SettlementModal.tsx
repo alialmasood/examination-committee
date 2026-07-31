@@ -19,7 +19,9 @@ import {
 import {
   expectedAnnualFee,
   getAnnualTuitionFee,
+  type TuitionFeeLookupMap,
 } from '../lib/tuitionFees';
+import { fetchTuitionFeeMap } from '../lib/clientTuitionFees';
 
 export type SettlementStudent = {
   id: string;
@@ -157,9 +159,9 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const [historyReady, setHistoryReady] = useState(false);
   const [historyRows, setHistoryRows] = useState<SettlementHistoryRow[]>([]);
   const [yearLocked, setYearLocked] = useState(false);
+  const [feeMap, setFeeMap] = useState<TuitionFeeLookupMap | null>(null);
 
-  const registeredChannel = String(student?.admission_channel || '').trim();
-  const registeredChannelDef = getAdmissionChannelDef(registeredChannel);
+  const registeredChannel = String(student?.admission_channel || '').trim();  const registeredChannelDef = getAdmissionChannelDef(registeredChannel);
   const hasRegisteredChannel = Boolean(
     registeredChannelDef && registeredChannelDef.key !== 'general'
   );
@@ -192,21 +194,24 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const catalogAnnual = useMemo(() => {
     if (!student) return 0;
     const dept = student.department?.trim() || '';
-    return getAnnualTuitionFee(dept, student.study_type);
-  }, [student]);
+    return getAnnualTuitionFee(dept, student.study_type, feeMap);
+  }, [student, feeMap]);
 
   /** القسط المعتمد من الجدول الحالي (+ خصم صريح إن وُجد) — يتجاهل final_fee القديم */
   const baseTotal = useMemo(() => {
     if (!student) return 0;
-    return expectedAnnualFee({
-      major: student.department?.trim() || '',
-      study_type: student.study_type,
-      admission_channel: student.admission_channel,
-      discount_percentage: toNumber(student.discount_percentage, 0),
-      discount_amount: toNumber(student.discount_amount, 0),
-      final_fee_after_discount: toNumber(student.final_fee, 0),
-    });
-  }, [student]);
+    return expectedAnnualFee(
+      {
+        major: student.department?.trim() || '',
+        study_type: student.study_type,
+        admission_channel: student.admission_channel,
+        discount_percentage: toNumber(student.discount_percentage, 0),
+        discount_amount: toNumber(student.discount_amount, 0),
+        final_fee_after_discount: toNumber(student.final_fee, 0),
+      },
+      feeMap
+    );
+  }, [student, feeMap]);
 
   const ledger: YearLedger = useMemo(
     () => buildYearLedger(historyRows, baseTotal),
@@ -219,6 +224,23 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   );
 
   const currentYear: FeeYear | null = openState.feeYear;
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    async function loadFees() {
+      try {
+        const map = await fetchTuitionFeeMap();
+        if (!cancelled) setFeeMap(map);
+      } catch {
+        // يبقى الاحتياطي من القيم الافتراضية
+      }
+    }
+    void loadFees();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open || !student) return;
@@ -278,14 +300,17 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
         setHistoryRows(rows);
         setHistoryReady(true);
 
-        const annual = expectedAnnualFee({
-          major: student!.department?.trim() || '',
-          study_type: student!.study_type,
-          admission_channel: student!.admission_channel,
-          discount_percentage: toNumber(student!.discount_percentage, 0),
-          discount_amount: toNumber(student!.discount_amount, 0),
-          final_fee_after_discount: toNumber(student!.final_fee, 0),
-        });
+        const annual = expectedAnnualFee(
+          {
+            major: student!.department?.trim() || '',
+            study_type: student!.study_type,
+            admission_channel: student!.admission_channel,
+            discount_percentage: toNumber(student!.discount_percentage, 0),
+            discount_amount: toNumber(student!.discount_amount, 0),
+            final_fee_after_discount: toNumber(student!.final_fee, 0),
+          },
+          feeMap
+        );
 
         const state = getOpenYearState(rows, annual);
         const openYear = state.feeYear || 1;
@@ -348,7 +373,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
     return () => {
       cancelled = true;
     };
-  }, [open, student]);
+  }, [open, student, feeMap]);
 
   const resolvedDiscount = useMemo(() => {
     const annual = Math.max(0, baseTotal);

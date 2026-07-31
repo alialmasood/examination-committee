@@ -3,11 +3,13 @@ import { query } from '@/src/lib/db';
 import {
   expectedAnnualFee,
   getAnnualTuitionFee,
+  type TuitionFeeLookupMap,
 } from '@/app/accounts/students/lib/tuitionFees';
 import {
   getOpenYearState,
   type SettlementHistoryRow,
 } from '@/app/accounts/students/lib/settlementYearLedger';
+import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -127,25 +129,31 @@ function settlementDiscountForStudent(receipts: ReceiptRow[]): number {
   return total;
 }
 
-function channelDiscountAmount(row: {
-  major: string;
-  study_type: string | null;
-  admission_channel: string | null;
-  discount_percentage: number | null;
-  discount_amount: number | null;
-  final_fee_after_discount: number | null;
-}): number {
-  const annual = getAnnualTuitionFee(row.major, row.study_type);
+function channelDiscountAmount(
+  row: {
+    major: string;
+    study_type: string | null;
+    admission_channel: string | null;
+    discount_percentage: number | null;
+    discount_amount: number | null;
+    final_fee_after_discount: number | null;
+  },
+  feeMap: TuitionFeeLookupMap
+): number {
+  const annual = getAnnualTuitionFee(row.major, row.study_type, feeMap);
   if (Number(row.discount_amount || 0) > 0) {
     return Number(row.discount_amount);
   }
-  const expected = expectedAnnualFee({
-    major: row.major,
-    study_type: row.study_type,
-    admission_channel: row.admission_channel,
-    discount_percentage: row.discount_percentage,
-    final_fee_after_discount: row.final_fee_after_discount,
-  });
+  const expected = expectedAnnualFee(
+    {
+      major: row.major,
+      study_type: row.study_type,
+      admission_channel: row.admission_channel,
+      discount_percentage: row.discount_percentage,
+      final_fee_after_discount: row.final_fee_after_discount,
+    },
+    feeMap
+  );
   return Math.max(0, annual - expected);
 }
 
@@ -241,6 +249,7 @@ export async function GET(
     let totalDebt = 0;
     let morning = 0;
     let evening = 0;
+    const feeMap = await loadTuitionFeeMap();
 
     const unpaidStudents: Array<{
       university_id: string;
@@ -263,27 +272,33 @@ export async function GET(
       const major = row.major || dept.name;
       const receipts = receiptsByStudent.get(String(row.id)) || [];
 
-      const annualBase = getAnnualTuitionFee(major, row.study_type);
-      const channelDiscount = channelDiscountAmount({
-        major,
-        study_type: row.study_type,
-        admission_channel: row.admission_channel,
-        discount_percentage: row.discount_percentage,
-        discount_amount: row.discount_amount,
-        final_fee_after_discount: row.final_fee_after_discount,
-      });
+      const annualBase = getAnnualTuitionFee(major, row.study_type, feeMap);
+      const channelDiscount = channelDiscountAmount(
+        {
+          major,
+          study_type: row.study_type,
+          admission_channel: row.admission_channel,
+          discount_percentage: row.discount_percentage,
+          discount_amount: row.discount_amount,
+          final_fee_after_discount: row.final_fee_after_discount,
+        },
+        feeMap
+      );
       const settlementDiscount = settlementDiscountForStudent(receipts);
       // التخفيض ليس ديناً — يُعرض منفصلاً
       const discountTotal = channelDiscount + settlementDiscount;
 
       // المطلوب بعد التخفيض (قناة)
-      const expectedNet = expectedAnnualFee({
-        major,
-        study_type: row.study_type,
-        admission_channel: row.admission_channel,
-        discount_percentage: row.discount_percentage,
-        final_fee_after_discount: row.final_fee_after_discount,
-      });
+      const expectedNet = expectedAnnualFee(
+        {
+          major,
+          study_type: row.study_type,
+          admission_channel: row.admission_channel,
+          discount_percentage: row.discount_percentage,
+          final_fee_after_discount: row.final_fee_after_discount,
+        },
+        feeMap
+      );
 
       const paidAmount = receipts.reduce(
         (sum, r) => sum + Math.max(0, Number(r.pay_amount || 0)),

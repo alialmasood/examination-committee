@@ -7,6 +7,7 @@ import {
   FIXED_CHANNEL_DISCOUNTS,
   getAnnualTuitionFee,
 } from '@/app/accounts/students/lib/tuitionFees';
+import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 import { ensureStudentAccountsForPaidStudents } from '@/src/lib/accounts/student-accounts';
 import { withTransaction } from '@/src/lib/accounts/with-transaction';
 
@@ -29,12 +30,13 @@ export async function ensureStudentPaymentColumns(): Promise<void> {
   `).catch(() => undefined);
 }
 
-export function computeRegistrationFeeFields(row: {
+export async function computeRegistrationFeeFields(row: {
   major?: string | null;
   study_type?: string | null;
   admission_channel?: string | null;
-}): RegistrationFeeFields {
-  const annualFee = getAnnualTuitionFee(row.major || '', row.study_type);
+}): Promise<RegistrationFeeFields> {
+  const feeMap = await loadTuitionFeeMap();
+  const annualFee = getAnnualTuitionFee(row.major || '', row.study_type, feeMap);
   const channel = String(row.admission_channel || 'general').trim() || 'general';
   const discountPercentage = Object.prototype.hasOwnProperty.call(
     FIXED_CHANNEL_DISCOUNTS,
@@ -84,7 +86,7 @@ export async function activateStudentsAsPaid(options: {
   const updatedIds: string[] = [];
 
   for (const row of studentsRes.rows) {
-    const fees = computeRegistrationFeeFields(row);
+    const fees = await computeRegistrationFeeFields(row);
     const paymentAmount =
       options.paymentAmount != null && Number(options.paymentAmount) > 0
         ? Number(options.paymentAmount)

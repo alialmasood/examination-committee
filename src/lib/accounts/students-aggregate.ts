@@ -20,6 +20,7 @@ import {
   primaryYearSettlementDiscount,
   resolveStudentFeeDiscount,
 } from '@/app/accounts/students/lib/studentFeeDiscount';
+import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 
 type StudentRow = {
   id: string;
@@ -325,6 +326,8 @@ export async function buildStudentsAggregateData(): Promise<StudentsAggregateDat
   let partialPaid = 0;
   let unpaid = 0;
 
+  const feeMap = await loadTuitionFeeMap();
+
   for (const row of students) {
     const studyRaw = String(row.study_type || '').toLowerCase();
     const isEvening = studyRaw === 'evening' || studyRaw === 'مسائي';
@@ -333,15 +336,18 @@ export async function buildStudentsAggregateData(): Promise<StudentsAggregateDat
     else morning += 1;
 
     const major = row.major || '';
-    const annualBase = getAnnualTuitionFee(major, studyKey);
-    const expected = expectedAnnualFee({
-      major,
-      study_type: studyKey,
-      admission_channel: row.admission_channel,
-      discount_percentage: row.discount_percentage,
-      discount_amount: row.discount_amount,
-      final_fee_after_discount: row.final_fee_after_discount,
-    });
+    const annualBase = getAnnualTuitionFee(major, studyKey, feeMap);
+    const expected = expectedAnnualFee(
+      {
+        major,
+        study_type: studyKey,
+        admission_channel: row.admission_channel,
+        discount_percentage: row.discount_percentage,
+        discount_amount: row.discount_amount,
+        final_fee_after_discount: row.final_fee_after_discount,
+      },
+      feeMap
+    );
 
     const receipts = receiptsByStudent.get(row.id) || [];
     const paid = receipts.reduce(

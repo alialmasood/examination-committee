@@ -1,4 +1,3 @@
-import { query } from '@/src/lib/db';
 import {
   STUDENT_DEPARTMENTS,
   expectedAnnualFee,
@@ -11,6 +10,8 @@ import {
   primaryYearSettlementDiscount,
   resolveStudentFeeDiscount,
 } from '@/app/accounts/students/lib/studentFeeDiscount';
+import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
+import { query } from '@/src/lib/db';
 
 type StudentRow = {
   id: string;
@@ -238,6 +239,8 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
     byStage.set(stage, emptyStage(stage));
   }
 
+  const feeMap = await loadTuitionFeeMap();
+
   for (const row of students) {
     const studyType = String(row.study_type || '').toLowerCase();
     const isEvening = studyType === 'evening' || studyType === 'مسائي';
@@ -245,15 +248,22 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
     else morning += 1;
 
     const major = row.major || '';
-    const annualBase = getAnnualTuitionFee(major, isEvening ? 'evening' : 'morning');
-    const expected = expectedAnnualFee({
+    const annualBase = getAnnualTuitionFee(
       major,
-      study_type: isEvening ? 'evening' : row.study_type,
-      admission_channel: row.admission_channel,
-      discount_percentage: row.discount_percentage,
-      discount_amount: row.discount_amount,
-      final_fee_after_discount: row.final_fee_after_discount,
-    });
+      isEvening ? 'evening' : 'morning',
+      feeMap
+    );
+    const expected = expectedAnnualFee(
+      {
+        major,
+        study_type: isEvening ? 'evening' : row.study_type,
+        admission_channel: row.admission_channel,
+        discount_percentage: row.discount_percentage,
+        discount_amount: row.discount_amount,
+        final_fee_after_discount: row.final_fee_after_discount,
+      },
+      feeMap
+    );
 
     // مصدر الحقيقة: وصولات التسديد فقط (نفس منطق صفحات حسابات الطلبة)
     const receipts = receiptsByStudent.get(row.id) || [];

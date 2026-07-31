@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import {
+  getAnnualTuitionFee as resolveAnnualTuitionFee,
+  type TuitionFeeLookupMap,
+} from '@/app/accounts/students/lib/tuitionFees';
+import { fetchTuitionFeeMap } from '@/app/accounts/students/lib/clientTuitionFees';
 
 interface DepartmentStat {
   id: string;
@@ -69,6 +74,7 @@ export default function AccountsInstallmentsPage() {
   const [paidDepartmentFilter, setPaidDepartmentFilter] = useState<string>('');
   const [paidTablePage, setPaidTablePage] = useState(1);
   const PAID_PAGE_SIZE = 50;
+  const [tuitionFeeMap, setTuitionFeeMap] = useState<TuitionFeeLookupMap>({});
 
   const totalStudentsAcrossDepartments = useMemo(() => {
     return departments.reduce((sum, department) => sum + (department.total || 0), 0);
@@ -164,6 +170,22 @@ export default function AccountsInstallmentsPage() {
   useEffect(() => {
     setPaidTablePage(1);
   }, [paidSearchTerm, paidDepartmentFilter]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTuitionFees() {
+      try {
+        const map = await fetchTuitionFeeMap();
+        if (!cancelled) setTuitionFeeMap(map);
+      } catch {
+        // يبقى الاحتياطي من القيم الافتراضية
+      }
+    }
+    void loadTuitionFees();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (paidTablePage > paidTotalPages) {
@@ -620,28 +642,8 @@ export default function AccountsInstallmentsPage() {
     return `${day}/${month}/${year}`;
   };
 
-  const getAnnualTuitionFee = (department: string, studyType?: string) => {
-    const isEvening = studyType === 'evening';
-    
-    const fees: Record<string, number> = {
-      'تقنيات التخدير': isEvening ? 2750000 : 3000000,
-      'تقنيات الاشعة': isEvening ? 2750000 : 3000000,
-      'تقنيات صناعة الاسنان': isEvening ? 2250000 : 2500000,
-      'تقنيات البصريات': 2750000,
-      'تقنيات طب الطوارئ': 2750000,
-      'تقنيات صحة المجتمع': 2750000,
-      'تقنيات العلاج الطبيعي': 2750000,
-      'هندسة تقنيات البناء والانشاءات': 2500000,
-      'تقنيات البناء والاستشارات': 2500000, // للتوافق مع البيانات القديمة
-      'تقنيات هندسة النفط والغاز': 3000000,
-      'تقنيات الفيزياء الصحية': 2500000,
-      'هندسة تقنيات الامن السيبراني والحوسبة السحابية': 3000000,
-      'تقنيات الامن السيبراني': 3000000, // للتوافق مع البيانات القديمة
-      'تقنيات الأمن السيبراني': 3000000, // للتوافق مع البيانات القديمة
-    };
-    
-    return fees[department] || 0;
-  };
+  const getAnnualTuitionFee = (department: string, studyType?: string) =>
+    resolveAnnualTuitionFee(department, studyType, tuitionFeeMap);
 
   const calculateRemainingAmount = (department: string, studyType: string | undefined, paidAmount: string, discountPercent: string = '0') => {
     const annualFee = getAnnualTuitionFee(department, studyType);
