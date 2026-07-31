@@ -16,6 +16,10 @@ import {
   parseDiscountFeeYears,
   type AdmissionChannelKey,
 } from '../lib/admissionChannels';
+import {
+  expectedAnnualFee,
+  getAnnualTuitionFee,
+} from '../lib/tuitionFees';
 
 export type SettlementStudent = {
   id: string;
@@ -120,29 +124,6 @@ function todayInputDate(): string {
   return `${y}-${m}-${day}`;
 }
 
-function getAnnualTuitionFee(department: string, studyType?: string | null): number {
-  const isEvening = studyType === 'evening';
-  const fees: Record<string, number> = {
-    'تقنيات التخدير': isEvening ? 2750000 : 3000000,
-    'تقنيات الاشعة': isEvening ? 2750000 : 3000000,
-    'تقنيات الأشعة': isEvening ? 2750000 : 3000000,
-    'تقنيات صناعة الاسنان': isEvening ? 2250000 : 2500000,
-    'تقنيات صناعة الأسنان': isEvening ? 2250000 : 2500000,
-    'تقنيات البصريات': 2750000,
-    'تقنيات طب الطوارئ': 2750000,
-    'تقنيات صحة المجتمع': 2750000,
-    'تقنيات العلاج الطبيعي': 2750000,
-    'هندسة تقنيات البناء والانشاءات': 2500000,
-    'تقنيات البناء والاستشارات': 2500000,
-    'تقنيات هندسة النفط والغاز': 3000000,
-    'تقنيات الفيزياء الصحية': 2500000,
-    'هندسة تقنيات الامن السيبراني والحوسبة السحابية': 3000000,
-    'تقنيات الامن السيبراني': 3000000,
-    'تقنيات الأمن السيبراني': 3000000,
-  };
-  return fees[department] || 0;
-}
-
 function yearStatusLabel(status: string): string {
   switch (status) {
     case 'completed':
@@ -184,13 +165,11 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   );
 
   /**
-   * إن وُجد final_fee بعد تأكيد الدفع من الأقساط، فالقسط أصبح بعد خصم التسجيل.
-   * لا يُعاد خصم القناة المسجّلة مرة أخرى في نموذج التسديد.
+   * إن وُجد تخفيض صريح (قناة/نسبة/مبلغ) مدمج في القسط، لا يُعاد خصم القناة في المودال.
+   * لا نعتمد على final_fee وحده لأنه قد يكون قسطاً قديماً قبل تعديل الجدول.
    */
   const primaryDiscountAlreadyApplied = useMemo(() => {
     if (!student) return false;
-    const finalFee = toNumber(student.final_fee, 0);
-    if (finalFee <= 0) return false;
     const pct = toNumber(student.discount_percentage, 0);
     const amt = toNumber(student.discount_amount, 0);
     return hasRegisteredChannel || pct > 0 || amt > 0;
@@ -216,12 +195,18 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
     return getAnnualTuitionFee(dept, student.study_type);
   }, [student]);
 
+  /** القسط المعتمد من الجدول الحالي (+ خصم صريح إن وُجد) — يتجاهل final_fee القديم */
   const baseTotal = useMemo(() => {
     if (!student) return 0;
-    const finalFee = toNumber(student.final_fee, 0);
-    // القسط المعتمد: بعد خصم التسجيل إن وُجد، وإلا القسط الأساسي من الجدول
-    return finalFee > 0 ? finalFee : catalogAnnual;
-  }, [student, catalogAnnual]);
+    return expectedAnnualFee({
+      major: student.department?.trim() || '',
+      study_type: student.study_type,
+      admission_channel: student.admission_channel,
+      discount_percentage: toNumber(student.discount_percentage, 0),
+      discount_amount: toNumber(student.discount_amount, 0),
+      final_fee_after_discount: toNumber(student.final_fee, 0),
+    });
+  }, [student]);
 
   const ledger: YearLedger = useMemo(
     () => buildYearLedger(historyRows, baseTotal),
@@ -293,12 +278,14 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
         setHistoryRows(rows);
         setHistoryReady(true);
 
-        const annual = (() => {
-          const dept = student!.department?.trim() || '';
-          const a = getAnnualTuitionFee(dept, student!.study_type);
-          const finalFee = toNumber(student!.final_fee, 0);
-          return finalFee > 0 ? finalFee : a;
-        })();
+        const annual = expectedAnnualFee({
+          major: student!.department?.trim() || '',
+          study_type: student!.study_type,
+          admission_channel: student!.admission_channel,
+          discount_percentage: toNumber(student!.discount_percentage, 0),
+          discount_amount: toNumber(student!.discount_amount, 0),
+          final_fee_after_discount: toNumber(student!.final_fee, 0),
+        });
 
         const state = getOpenYearState(rows, annual);
         const openYear = state.feeYear || 1;

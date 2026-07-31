@@ -72,17 +72,27 @@ export function expectedAnnualFee(row: {
   const profileDiscount = Math.max(0, Number(row.discount_amount || 0));
   const finalFee = Math.max(0, Number(row.final_fee_after_discount || 0));
 
-  const hasExplicitDiscount =
-    discountPct > 0.5 ||
-    profileDiscount > 0.5 ||
-    (channel !== 'general' && (FIXED_CHANNEL_DISCOUNTS[channel] ?? 0) > 0);
+  const hasPercentDiscount = discountPct > 0.5;
+  const hasAmountDiscount = profileDiscount > 0.5;
+  const hasChannelFixed =
+    channel !== 'general' && (FIXED_CHANNEL_DISCOUNTS[channel] ?? 0) > 0;
 
-  // final_fee موثوق فقط عند وجود تخفيض صريح — وإلا قد يكون قسطاً قديماً مثبتاً قبل تعديل الجدول
-  if (finalFee > 0 && hasExplicitDiscount) {
-    return finalFee;
+  // نسب ثابتة/قناة: أعد الاحتساب من الجدول الحالي (يتجاهل final_fee القديم بعد تعديل القسط)
+  if (hasPercentDiscount || hasChannelFixed) {
+    return computedNet;
   }
 
-  return computedNet;
+  // خصم بمبلغ صريح على الملف
+  if (hasAmountDiscount) {
+    return Math.max(0, annual - Math.min(profileDiscount, annual));
+  }
+
+  // بدون تخفيض: تجاهل final_fee القديم (مثل 2.5M نفط قبل التعديل إلى 3M)
+  if (finalFee > 0 && Math.abs(finalFee - annual) < 1) {
+    return annual;
+  }
+
+  return annual;
 }
 
 export function normalizeDeptKey(value?: string | null): string {
