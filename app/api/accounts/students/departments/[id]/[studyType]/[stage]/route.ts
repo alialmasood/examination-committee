@@ -252,6 +252,7 @@ export async function GET(
     let debt = 0;
     let annualBaseTotal = 0;
     let expectedAnnualTotal = 0;
+    let expectedFourYearsTotal = 0;
     let channelDiscountTotal = 0;
     let settlementDiscountTotal = 0;
     let studentsWithDiscount = 0;
@@ -286,6 +287,12 @@ export async function GET(
       );
       const discountTotal = settlementDiscount;
       const netDue = stageYearTarget;
+      // 4 سنوات: كل سنة بمستحقها من الدفتر
+      // (سنوات بلا وصولات = القسط الأصلي كاملاً · التخفيض فقط للسنوات المحددة في الوصولات)
+      const expectedFourYears = ledger.years.reduce(
+        (sum, entry) => sum + Math.max(0, entry.target),
+        0
+      );
 
       const paid = receipts.reduce(
         (sum, r) => sum + Math.max(0, Number(r.pay_amount || 0)),
@@ -311,6 +318,7 @@ export async function GET(
       debt += studentDebt;
       annualBaseTotal += annualBase;
       expectedAnnualTotal += netDue;
+      expectedFourYearsTotal += expectedFourYears;
       if (discountTotal > 0.5) studentsWithDiscount += 1;
 
       const resolvedChannelKey =
@@ -384,7 +392,7 @@ export async function GET(
         payment_category: category,
         status_label: statusLabel,
         fee_year: stageFeeYear,
-        expected_four_years: annualBase * 4 - discountTotal,
+        expected_four_years: expectedFourYears,
       });
     }
 
@@ -429,7 +437,7 @@ export async function GET(
             debt_amount: debt,
             annual_base_total: annualBaseTotal,
             expected_annual_total: expectedAnnualTotal,
-            expected_four_years_total: expectedAnnualTotal * 4,
+            expected_four_years_total: expectedFourYearsTotal,
             channel_discount_amount: channelDiscountTotal,
             settlement_discount_amount: settlementDiscountTotal,
             total_discount_amount: totalDiscount,

@@ -289,12 +289,12 @@ export default function StudentAccountsDepartmentStagePage() {
               <StatCard
                 label="المتوقع لسنة واحدةة"
                 value={`${money(data.summary.expected_annual_total)} IQD`}
-                hint="بعد طرح التخفيضات"
+                hint="مستحق سنة هذه المرحلة بعد خصم الوصولات"
               />
               <StatCard
                 label="المتوقع لـ 4 سنوات"
                 value={`${money(data.summary.expected_four_years_total)} IQD`}
-                hint="×4 من المتوقع السنوي"
+                hint="مجموع السنوات 1–4 · التخفيض فقط للسنوات المحددة في الوصولات"
               />
             </div>
           </section>
