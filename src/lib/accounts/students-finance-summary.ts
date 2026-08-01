@@ -1,14 +1,17 @@
 import {
   STUDENT_DEPARTMENTS,
-  expectedAnnualFee,
   getAnnualTuitionFee,
   normalizeDeptKey,
 } from '@/app/accounts/students/lib/tuitionFees';
-import { type SettlementHistoryRow } from '@/app/accounts/students/lib/settlementYearLedger';
 import {
-  computeDebtFromBase,
-  primaryYearSettlementDiscount,
-  resolveStudentFeeDiscount,
+  buildYearLedger,
+  getYearVisualEntries,
+  paymentCategoryFromYearStatus,
+  type SettlementHistoryRow,
+} from '@/app/accounts/students/lib/settlementYearLedger';
+import {
+  settlementDiscountForFeeYear,
+  sumSettlementDiscountsByYear,
 } from '@/app/accounts/students/lib/studentFeeDiscount';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 import { query } from '@/src/lib/db';
@@ -193,6 +196,8 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
            student_id::text AS student_id,
            COALESCE(fee_year, 1)::int AS fee_year,
            discount_mode,
+           discount_channel,
+           discount_input,
            COALESCE(discount_amount, 0)::float8 AS discount_amount,
            COALESCE(after_discount, 0)::float8 AS after_discount,
            COALESCE(pay_amount, 0)::float8 AS pay_amount,
@@ -222,6 +227,7 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
   let debtAmount = 0;
   let annualBaseTotal = 0;
   let expectedAnnualTotal = 0;
+  let expectedFourYearsTotal = 0;
   let discountsCount = 0;
   let fullyPaidCount = 0;
   let partialPaidCount = 0;
@@ -253,60 +259,63 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
       isEvening ? 'evening' : 'morning',
       feeMap
     );
-    const expected = expectedAnnualFee(
-      {
-        major,
-        study_type: isEvening ? 'evening' : row.study_type,
-        admission_channel: row.admission_channel,
-        discount_percentage: row.discount_percentage,
-        discount_amount: row.discount_amount,
-        final_fee_after_discount: row.final_fee_after_discount,
-      },
-      feeMap
-    );
 
-    // مصدر الحقيقة: وصولات التسديد فقط (نفس منطق صفحات حسابات الطلبة)
     const receipts = receiptsByStudent.get(row.id) || [];
     const paid = receipts.reduce(
       (sum, r) => sum + Math.max(0, Number(r.pay_amount || 0)),
       0
     );
 
-    const profileDiscount = Math.max(0, Number(row.discount_amount || 0));
-    const settlementFromReceipt = primaryYearSettlementDiscount(receipts);
-    const resolved = resolveStudentFeeDiscount({
-      annualBase,
-      profileDiscountAmount: profileDiscount,
-      expectedNet: expected,
-      finalFeeAfterDiscount: row.final_fee_after_discount,
-      settlementDiscountAmount: settlementFromReceipt,
-      discountPercentage: row.discount_percentage,
-      admissionChannel: row.admission_channel,
+    // دفتر السنوات — الخصم من وصولات المودال فقط
+    const ledger = buildYearLedger(receipts, annualBase);
+    const yearVisual = getYearVisualEntries(ledger);
+    const category = paymentCategoryFromYearStatus({
+      current_year: ledger.currentYear,
+      all_completed: ledger.allYearsCompleted,
+      years: yearVisual,
     });
-    const channelDiscount = resolved.channelDiscount;
-    const settlementDiscount = resolved.settlementDiscount;
-    const studentTotalDiscount = resolved.totalDiscount;
-    const netDue = resolved.netDue;
-    const debt = computeDebtFromBase(annualBase, paid, studentTotalDiscount);
+
+    const currentEntry = ledger.currentYear
+      ? ledger.years.find((y) => y.year === ledger.currentYear)
+      : null;
+    // الدين = متبقي السنة الجارية فقط (كما في تلميح البطاقة)
+    const debt = currentEntry ? Math.max(0, currentEntry.remaining) : 0;
+    const netDue = currentEntry
+      ? Math.max(0, currentEntry.target)
+      : ledger.allYearsCompleted
+        ? 0
+        : annualBase;
+    const expectedFourYears = ledger.years.reduce(
+      (sum, entry) => sum + Math.max(0, entry.target),
+      0
+    );
+
+    const settlementDiscount = sumSettlementDiscountsByYear(receipts);
+    const currentYearDiscount = ledger.currentYear
+      ? settlementDiscountForFeeYear(receipts, ledger.currentYear)
+      : 0;
+    const channelFromReceipt = receipts
+      .map((r) =>
+        String((r as { discount_channel?: string }).discount_channel || '').trim()
+      )
+      .find((ch) => ch && ch !== 'general');
+    const attributedChannel =
+      settlementDiscount > 0.5 && channelFromReceipt ? settlementDiscount : 0;
+    const attributedSettlement =
+      settlementDiscount > 0.5 && !channelFromReceipt ? settlementDiscount : 0;
 
     annualBaseTotal += annualBase;
     expectedAnnualTotal += netDue;
+    expectedFourYearsTotal += expectedFourYears;
     debtAmount += debt;
-    channelDiscountTotal += channelDiscount;
-    settlementDiscountTotal += settlementDiscount;
+    channelDiscountTotal += attributedChannel;
+    settlementDiscountTotal += attributedSettlement;
 
-    if (paid <= 0.01 && debt > 0.01) {
-      unpaidCount += 1;
-    } else if (paid > 0.01 && debt > 0.01) {
-      partialPaidCount += 1;
-    } else {
-      fullyPaidCount += 1;
-    }
+    if (category === 'settled') fullyPaidCount += 1;
+    else if (category === 'partial') partialPaidCount += 1;
+    else unpaidCount += 1;
 
-    const hasDiscount =
-      studentTotalDiscount > 0.5 ||
-      Number(row.discount_percentage || 0) > 0 ||
-      (annualBase > 0 && netDue < annualBase - 0.5);
+    const hasDiscount = settlementDiscount > 0.5 || currentYearDiscount > 0.5;
     if (hasDiscount) discountsCount += 1;
 
     const key = normalizeDeptKey(major);
@@ -323,10 +332,10 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
     dept.debt_amount += debt;
     dept.annual_base_total += annualBase;
     dept.expected_annual_total += netDue;
-    dept.expected_four_years_total += netDue * 4;
-    dept.channel_discount_amount += channelDiscount;
-    dept.settlement_discount_amount += settlementDiscount;
-    dept.total_discount_amount += studentTotalDiscount;
+    dept.expected_four_years_total += expectedFourYears;
+    dept.channel_discount_amount += attributedChannel;
+    dept.settlement_discount_amount += attributedSettlement;
+    dept.total_discount_amount += settlementDiscount;
     if (hasDiscount) dept.discounts_count += 1;
 
     const stageKey = normalizeStage(row.admission_type);
@@ -409,7 +418,7 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
     discount_impact_percent: discountImpactPercent,
     annual_base_total: annualBaseTotal,
     expected_annual_total: expectedAnnualTotal,
-    expected_four_years_total: expectedAnnualTotal * 4,
+    expected_four_years_total: expectedFourYearsTotal,
     expected_four_years_base_total: annualBaseTotal * 4,
     by_stage: byStageList,
     top_departments: topDepartments,
