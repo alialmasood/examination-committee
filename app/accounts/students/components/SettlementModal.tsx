@@ -5,6 +5,7 @@ import {
   buildYearLedger,
   feeYearLabel,
   getOpenYearState,
+  perPeriodFromRemaining,
   type FeeYear,
   type SettlementHistoryRow,
   type YearLedger,
@@ -157,7 +158,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyReady, setHistoryReady] = useState(false);
   const [historyRows, setHistoryRows] = useState<SettlementHistoryRow[]>([]);
-  const [yearLocked, setYearLocked] = useState(false);
   const [feeMap, setFeeMap] = useState<TuitionFeeLookupMap | null>(null);
 
   const registeredChannel = String(student?.admission_channel || '').trim();
@@ -166,8 +166,8 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
     registeredChannelDef && registeredChannelDef.key !== 'general'
   );
 
-  /** الخصم الرئيسي نشط إن وُجدت قناة مسجّلة أو فعّل المستخدم الخصم يدوياً */
-  const primaryActive = hasRegisteredChannel || discountEnabled;
+  /** الخصم الرئيسي يُفعَّل يدوياً من المودال فقط (يمكن إلغاؤه لاحقاً) */
+  const primaryActive = discountEnabled;
   /**
    * الخصم يُحتسب على السنوات المحددة فقط (افتراضياً السنة الأولى)،
    * وليس بدمجه في القسط السنوي لكل السنوات الأربع.
@@ -175,11 +175,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const primaryCountsInCalc = primaryActive;
 
   const activeChannelKey = (
-    hasRegisteredChannel
-      ? registeredChannel
-      : discountEnabled
-        ? selectedChannel
-        : ''
+    discountEnabled ? selectedChannel : ''
   ) as AdmissionChannelKey | '';
   const activeChannelDef = getAdmissionChannelDef(activeChannelKey);
   const extraChannelDef = getAdmissionChannelDef(extraChannel);
@@ -246,7 +242,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       setSaving(false);
       setHistoryRows([]);
       setHistoryReady(false);
-      setYearLocked(false);
       setDiscountFeeYears([1]);
       setLoadingHistory(true);
 
@@ -316,18 +311,36 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
           }
         }
 
-        if (state.firstReceipt && state.receiptsCount > 0) {
-          setYearLocked(true);
-          const first = state.firstReceipt;
-          const mode = String(first.discount_mode || 'none');
-          // سنة جارية بدأ تسديدها: ثبّت السنوات كما حُفظت في أول وصل
-          const years = parseDiscountFeeYears(first.discount_fee_years);
+        // تعبئة من آخر وصل للسنة الجارية — بدون قفل؛ التعديل متاح حتى اكتمال السنة
+        const yearRows = rows
+          .filter(
+            (r) =>
+              toNumber(r.pay_amount, 0) > 0 &&
+              Math.max(1, Math.min(4, toNumber(r.fee_year, 1))) === openYear
+          )
+          .sort((a, b) => {
+            const ta =
+              Date.parse(String(a.created_at || a.settlement_date || '')) || 0;
+            const tb =
+              Date.parse(String(b.created_at || b.settlement_date || '')) || 0;
+            return ta - tb;
+          });
+        const latestYearReceipt =
+          yearRows[yearRows.length - 1] || state.firstReceipt;
+
+        if (latestYearReceipt && state.receiptsCount > 0) {
+          const latest = latestYearReceipt;
+          const mode = String(latest.discount_mode || 'none');
+          const years = parseDiscountFeeYears(latest.discount_fee_years);
           if (years.length > 0) setDiscountFeeYears(years);
           else setDiscountFeeYears([openYear]);
-          const ch = String(first.discount_channel || existingChannel || '').trim();
+          const ch = String(
+            latest.discount_channel || existingChannel || ''
+          ).trim();
           const chDef = getAdmissionChannelDef(ch);
           if (mode === 'none' || !chDef) {
             setDiscountEnabled(false);
+            setSelectedChannel('');
             setDiscountValue('');
           } else {
             setDiscountEnabled(true);
@@ -335,12 +348,13 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
             if (chDef.allowAmountOrPercent) {
               setDeanValueMode(mode === 'amount' ? 'amount' : 'percent');
             }
-            const input = toNumber(first.discount_input, 0);
-            setDiscountValue(input > 0 ? String(input) : '');
+            const input = toNumber(latest.discount_input, 0);
+            if (input > 0) setDiscountValue(String(input));
+            else if (chDef.fixedPercent != null) {
+              setDiscountValue(String(chDef.fixedPercent));
+            }
           }
-          setPeriods(
-            Math.max(1, Math.min(10, toNumber(state.firstReceipt.periods, 2)))
-          );
+          setPeriods(Math.max(1, Math.min(10, toNumber(latest.periods, 2))));
         }
       } catch {
         if (!cancelled) {
@@ -501,23 +515,11 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
     const discountMode = resolvedDiscount.mode;
     const discountAmount = resolvedDiscount.amount;
 
-    // مصدر الحقيقة: مجموع المدفوع السابق للسنة من الوصولات المحفوظة
-    let yearTarget = openState.yearTarget;
-    let yearPaidBefore = openState.yearPaidBefore;
-    let outstandingBefore = openState.outstandingBefore;
-
-    if (openState.receiptsCount === 0) {
-      // سنة جديدة: المستحق من نموذج الخصم الحالي
-      yearTarget = Math.max(0, discountBase - discountAmount);
-      if (annual > 0) yearTarget = Math.min(yearTarget, annual);
-      yearPaidBefore = 0;
-      outstandingBefore = yearTarget;
-    } else {
-      // سنة جارية: لا نعيد احتساب المستحق من الصفر
-      yearTarget = openState.yearTarget;
-      yearPaidBefore = openState.yearPaidBefore;
-      outstandingBefore = openState.outstandingBefore;
-    }
+    // مصدر الحقيقة للمدفوع السابق: الوصولات. المستحق يُعاد من نموذج الخصم الحالي.
+    const yearPaidBefore = openState.yearPaidBefore;
+    let yearTarget = Math.max(0, discountBase - discountAmount);
+    if (annual > 0) yearTarget = Math.min(yearTarget, annual);
+    const outstandingBefore = Math.max(0, yearTarget - yearPaidBefore);
 
     const maxPay = Math.min(
       outstandingBefore,
@@ -534,18 +536,14 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       requiresFullPay && !fullPayMismatch
         ? outstandingBefore
         : Math.min(rawPay, maxPay);
-    const perPeriod =
-      periodCount > 0 ? outstandingBefore / periodCount : outstandingBefore;
+    const perPeriod = perPeriodFromRemaining(outstandingBefore, periodCount);
 
     return {
       feeYear: currentYear,
       discountMode,
       discountInput: resolvedDiscount.input,
       discountBase,
-      discountAmount:
-        openState.receiptsCount > 0
-          ? Math.max(0, annual - yearTarget)
-          : discountAmount,
+      discountAmount,
       yearTarget,
       yearPaidBefore,
       outstandingBefore,
@@ -968,8 +966,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                 <select
                   value={periods}
                   onChange={(e) => setPeriods(Number(e.target.value))}
-                  disabled={yearLocked}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
                 >
                   {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
                     <option key={n} value={n}>
@@ -977,11 +974,38 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  {calc.periodCount === 1
-                    ? `دفع كامل متبقي السنة: ${money(calc.perPeriod)} IQD`
-                    : `تجزئة متبقي السنة: ${money(calc.perPeriod)} IQD لكل فترة`}
-                </p>
+                <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 space-y-1">
+                  <p>
+                    مستحق السنة:{' '}
+                    <span className="font-semibold" dir="ltr">
+                      {money(calc.yearTarget)} IQD
+                    </span>
+                  </p>
+                  <p>
+                    مدفوع سابقاً لهذه السنة:{' '}
+                    <span className="font-semibold" dir="ltr">
+                      {money(calc.yearPaidBefore)} IQD
+                    </span>
+                  </p>
+                  <p>
+                    المتبقي للتجزئة:{' '}
+                    <span className="font-semibold text-amber-800" dir="ltr">
+                      {money(calc.outstandingBefore)} IQD
+                    </span>
+                  </p>
+                  <p className="pt-1 border-t border-slate-200 mt-1">
+                    {calc.periodCount === 1
+                      ? 'فترة واحدة — يُدفع المتبقي كاملاً: '
+                      : `${calc.periodCount} فترات × `}
+                    <span className="font-bold text-gray-900" dir="ltr">
+                      {money(calc.perPeriod)} IQD
+                    </span>
+                    {calc.periodCount > 1 ? ' لكل فترة' : ''}
+                  </p>
+                  <p className="text-slate-500">
+                    يُقسَّم المتبقي فقط (بعد طرح المدفوع)، وليس كامل مستحق السنة.
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -989,41 +1013,25 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
               <p className="text-sm font-medium text-gray-800">
                 خصم / تخفيض على قسط السنوات المحددة
               </p>
-              {yearLocked && (
-                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-md px-2 py-1.5">
-                  تم تثبيت الخصم والفترات حسب أول تسديد لهذه السنة حتى لا تختلط
-                  الحسابات.
-                </p>
-              )}
+              <p className="text-xs text-gray-500">
+                الخصم يُحتسب فقط من هذا النموذج عند قطع الوصل. يمكن تعديله أو
+                إلغاؤه في أي وقت ما دام متبقي على السنة الحالية.
+              </p>
 
               {/* —— الخصم الرئيسي —— */}
-              {hasRegisteredChannel && registeredChannelDef ? (
-                <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-950 space-y-1">
-                  <p className="font-semibold">
-                    الخصم الرئيسي:{' '}
-                    {formatAdmissionChannelLabel(registeredChannelDef.key)}
-                    {registeredChannelDef.fixedPercent != null
-                      ? ` (${registeredChannelDef.fixedPercent}%)`
-                      : toNumber(discountValue, 0) > 0
-                        ? deanValueMode === 'amount'
-                          ? ` (${money(toNumber(discountValue, 0))} IQD)`
-                          : ` (${toNumber(discountValue, 0)}%)`
-                        : ''}
-                  </p>
-                  <p className="text-xs text-indigo-800/90 leading-5">
-                    قناة مسجّلة على ملف الطالب. التخفيض يُطبَّق فقط على السنوات
-                    المحددة أدناه (افتراضياً السنة الأولى) — وليس على السنوات
-                    الأربع تلقائياً.
-                  </p>
+              {hasRegisteredChannel && registeredChannelDef && (
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  ملاحظة: ملف الطالب يحمل قناة «
+                  {formatAdmissionChannelLabel(registeredChannelDef.key)}»
+                  — يمكنك الإبقاء عليها أو اختيار «بدون خصم رئيسي» أدناه.
                 </div>
-              ) : (
-                <div className="flex flex-wrap gap-3 text-sm">
+              )}
+              <div className="flex flex-wrap gap-3 text-sm">
                   <label className="inline-flex items-center gap-1.5">
                     <input
                       type="radio"
                       name="discountToggle"
                       checked={!discountEnabled}
-                      disabled={yearLocked}
                       onChange={() => {
                         setDiscountEnabled(false);
                         setSelectedChannel('');
@@ -1037,29 +1045,37 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                       type="radio"
                       name="discountToggle"
                       checked={discountEnabled}
-                      disabled={yearLocked}
                       onChange={() => {
                         setDiscountEnabled(true);
-                        if (!yearLocked) setDiscountFeeYears([1]);
+                        setDiscountFeeYears([1]);
+                        if (
+                          hasRegisteredChannel &&
+                          registeredChannelDef &&
+                          !selectedChannel
+                        ) {
+                          setSelectedChannel(registeredChannelDef.key);
+                          if (registeredChannelDef.fixedPercent != null) {
+                            setDiscountValue(
+                              String(registeredChannelDef.fixedPercent)
+                            );
+                          }
+                        }
                       }}
                     />
                     إضافة خصم رئيسي حسب قناة القبول
                   </label>
                 </div>
-              )}
 
               {primaryCountsInCalc && (
                 <div className="space-y-3 rounded-md border border-slate-100 bg-slate-50/60 p-3">
                   <p className="text-xs font-semibold text-slate-700">الخصم الرئيسي</p>
 
-                  {!hasRegisteredChannel && (
-                    <div>
+                  <div>
                       <label className="block text-sm text-gray-700 mb-1">
                         قناة التخفيض الرئيسية
                       </label>
                       <select
                         value={selectedChannel}
-                        disabled={yearLocked}
                         onChange={(e) => {
                           const key = e.target.value as AdmissionChannelKey | '';
                           setSelectedChannel(key);
@@ -1073,7 +1089,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                             setDeanValueMode('percent');
                           }
                         }}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800"
                       >
                         <option value="">اختر قناة التخفيض</option>
                         {ADMISSION_CHANNEL_DEFS.filter((c) => c.key !== 'general').map(
@@ -1090,7 +1106,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                         )}
                       </select>
                     </div>
-                  )}
 
                   <div>
                     <p className="text-sm text-gray-700 mb-1.5">
@@ -1105,7 +1120,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                           <input
                             type="checkbox"
                             checked={discountFeeYears.includes(year)}
-                            disabled={yearLocked}
                             onChange={(e) => {
                               setDiscountFeeYears((prev) => {
                                 if (e.target.checked) {
@@ -1130,7 +1144,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                             type="radio"
                             name="deanMode"
                             checked={deanValueMode === 'percent'}
-                            disabled={yearLocked}
                             onChange={() => {
                               setDeanValueMode('percent');
                               setDiscountValue('');
@@ -1143,7 +1156,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                             type="radio"
                             name="deanMode"
                             checked={deanValueMode === 'amount'}
-                            disabled={yearLocked}
                             onChange={() => {
                               setDeanValueMode('amount');
                               setDiscountValue('');
@@ -1158,7 +1170,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                         max={deanValueMode === 'percent' ? 100 : baseTotal || undefined}
                         step={deanValueMode === 'percent' ? '0.1' : '1000'}
                         value={discountValue}
-                        disabled={yearLocked}
                         onChange={(e) => setDiscountValue(e.target.value)}
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
                         dir="ltr"
@@ -1184,7 +1195,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                           max={100}
                           step="0.1"
                           value={discountValue}
-                          disabled={yearLocked}
                           onChange={(e) => setDiscountValue(e.target.value)}
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
                           dir="ltr"
@@ -1207,11 +1217,10 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                   <input
                     type="checkbox"
                     checked={extraDiscountEnabled}
-                    disabled={yearLocked}
                     onChange={(e) => {
                       const on = e.target.checked;
                       setExtraDiscountEnabled(on);
-                      if (on && !yearLocked) {
+                      if (on) {
                         setExtraDiscountFeeYears([1]);
                         setExtraChannel('');
                         setExtraDiscountValue('');
@@ -1234,7 +1243,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                       </label>
                       <select
                         value={extraChannel}
-                        disabled={yearLocked}
                         onChange={(e) => {
                           const key = e.target.value as AdmissionChannelKey | '';
                           setExtraChannel(key);
@@ -1282,7 +1290,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                             <input
                               type="checkbox"
                               checked={extraDiscountFeeYears.includes(year)}
-                              disabled={yearLocked}
                               onChange={(e) => {
                                 setExtraDiscountFeeYears((prev) => {
                                   if (e.target.checked) {
@@ -1307,7 +1314,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                               type="radio"
                               name="extraDeanMode"
                               checked={extraDeanValueMode === 'percent'}
-                              disabled={yearLocked}
                               onChange={() => {
                                 setExtraDeanValueMode('percent');
                                 setExtraDiscountValue('');
@@ -1320,7 +1326,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                               type="radio"
                               name="extraDeanMode"
                               checked={extraDeanValueMode === 'amount'}
-                              disabled={yearLocked}
                               onChange={() => {
                                 setExtraDeanValueMode('amount');
                                 setExtraDiscountValue('');
@@ -1339,7 +1344,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                           }
                           step={extraDeanValueMode === 'percent' ? '0.1' : '1000'}
                           value={extraDiscountValue}
-                          disabled={yearLocked}
                           onChange={(e) => setExtraDiscountValue(e.target.value)}
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
                           dir="ltr"
@@ -1365,7 +1369,6 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                             max={100}
                             step="0.1"
                             value={extraDiscountValue}
-                            disabled={yearLocked}
                             onChange={(e) => setExtraDiscountValue(e.target.value)}
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50"
                             dir="ltr"

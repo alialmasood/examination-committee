@@ -40,21 +40,51 @@ export function sumSettlementDiscountsByYear(
 
   let total = 0;
   for (const [, list] of byYear) {
-    const first = [...list].sort((a, b) => {
+    const sorted = [...list].sort((a, b) => {
       const ta = Date.parse(String(a.created_at || a.settlement_date || '')) || 0;
       const tb = Date.parse(String(b.created_at || b.settlement_date || '')) || 0;
       return ta - tb;
-    })[0];
-    if (!first) continue;
-    const mode = String(first.discount_mode || 'none');
-    const amount = Math.max(0, Number(first.discount_amount || 0));
+    });
+    const latest = sorted[sorted.length - 1];
+    if (!latest) continue;
+    const mode = String(latest.discount_mode || 'none');
+    const amount = Math.max(0, Number(latest.discount_amount || 0));
     if (mode !== 'none' && amount > 0) total += amount;
   }
   return total;
 }
 
 /**
- * تخفيض لسنة واحدة (للعرض السنوي في تفصيل المرحلة): أول سنة فيها خصم على الوصل.
+ * تخفيض لسنة قسط محددة من آخر وصل لتلك السنة (مصدر الخصم = المودال فقط).
+ */
+export function settlementDiscountForFeeYear(
+  receipts: Array<{
+    fee_year?: number | string | null;
+    discount_mode?: string | null;
+    discount_amount?: number | string | null;
+    created_at?: string | null;
+    settlement_date?: string | null;
+  }>,
+  feeYear: number
+): number {
+  const year = Math.max(1, Math.min(4, feeYear || 1));
+  const yearRows = receipts
+    .filter((r) => Math.max(1, Math.min(4, Number(r.fee_year) || 1)) === year)
+    .sort((a, b) => {
+      const ta = Date.parse(String(a.created_at || a.settlement_date || '')) || 0;
+      const tb = Date.parse(String(b.created_at || b.settlement_date || '')) || 0;
+      return ta - tb;
+    });
+  const latest = yearRows[yearRows.length - 1];
+  if (!latest) return 0;
+  const mode = String(latest.discount_mode || 'none');
+  const amount = Math.max(0, Number(latest.discount_amount || 0));
+  if (mode !== 'none' && amount > 0) return amount;
+  return 0;
+}
+
+/**
+ * تخفيض لسنة واحدة (للعرض السنوي في تفصيل المرحلة): آخر خصم محفوظ على وصل لتلك السنة.
  */
 export function primaryYearSettlementDiscount(
   receipts: Array<{
@@ -66,18 +96,8 @@ export function primaryYearSettlementDiscount(
   }>
 ): number {
   for (const year of [1, 2, 3, 4]) {
-    const yearRows = receipts
-      .filter((r) => Math.max(1, Math.min(4, Number(r.fee_year) || 1)) === year)
-      .sort((a, b) => {
-        const ta = Date.parse(String(a.created_at || a.settlement_date || '')) || 0;
-        const tb = Date.parse(String(b.created_at || b.settlement_date || '')) || 0;
-        return ta - tb;
-      });
-    const first = yearRows[0];
-    if (!first) continue;
-    const mode = String(first.discount_mode || 'none');
-    const amount = Math.max(0, Number(first.discount_amount || 0));
-    if (mode !== 'none' && amount > 0) return amount;
+    const amount = settlementDiscountForFeeYear(receipts, year);
+    if (amount > 0) return amount;
   }
   return 0;
 }

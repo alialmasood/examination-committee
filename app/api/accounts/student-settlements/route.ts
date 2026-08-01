@@ -6,6 +6,7 @@ import {
 } from '@/src/lib/accounts/auth';
 import {
   getOpenYearState,
+  perPeriodFromRemaining,
   recalculateRemainingByReceipt,
   type SettlementHistoryRow,
 } from '@/app/accounts/students/lib/settlementYearLedger';
@@ -292,6 +293,8 @@ export async function POST(request: NextRequest) {
          discount_mode,
          discount_input,
          discount_amount,
+         discount_channel,
+         discount_fee_years,
          periods,
          settlement_date,
          created_at
@@ -354,60 +357,39 @@ export async function POST(request: NextRequest) {
     const fourYearsTotal = toMoney(body?.four_years_total) || annualFee * 4;
     const assignAdmissionChannel = Boolean(body?.assign_admission_channel);
 
-    // إذا كانت السنة قد بدأت: ثبّت المستحق من أول وصل
-    let discountBase = annualFee;
+    // الخصم يُحتسب دائماً من طلب المودال الحالي (لا يُثبَّت من أول وصل)
+    const discountBase = toMoney(body?.discount_base) || annualFee;
     let discountInput = toMoney(body?.discount_input);
-    let discountAmount = toMoney(body?.discount_amount);
-    let afterDiscount = openState.yearTarget;
+    let discountAmount = 0;
+    let afterDiscount = annualFee;
 
-    if (openState.receiptsCount > 0 && openState.firstReceipt) {
-      const first = openState.firstReceipt;
-      const mode = String(first.discount_mode || 'none');
-      discountMode =
-        mode === 'amount' || mode === 'percent' || mode === 'none'
-          ? mode
-          : 'none';
-      discountInput = toMoney(first.discount_input);
-      discountAmount = toMoney(first.discount_amount);
-      afterDiscount = openState.yearTarget;
-      discountBase = annualFee;
+    const yearInDiscountPlan =
+      discountFeeYearsUnique.length === 0 ||
+      discountFeeYearsUnique.includes(feeYear);
+
+    if (discountMode === 'percent' && yearInDiscountPlan) {
+      const pct = Math.max(0, Math.min(discountInput, 100));
+      discountInput = pct;
+      discountAmount = Math.round(((discountBase * pct) / 100) * 100) / 100;
+    } else if (discountMode === 'amount' && yearInDiscountPlan) {
+      discountAmount = Math.max(
+        0,
+        Math.min(toMoney(body?.discount_amount) || discountInput, discountBase)
+      );
+      discountInput = discountAmount;
     } else {
-      // سنة جديدة: خصم مبلغ/نسبة من قسط هذه السنة فقط إن كانت ضمن السنوات المحددة
-      discountBase = toMoney(body?.discount_base) || annualFee;
-      discountInput = toMoney(body?.discount_input);
-
-      const yearInDiscountPlan =
-        discountFeeYearsUnique.length === 0 ||
-        discountFeeYearsUnique.includes(feeYear);
-
-      // إعادة احتساب مبلغ الخصم من النسبة أو المبلغ (يشمل خصم السيد العميد)
-      if (discountMode === 'percent' && yearInDiscountPlan) {
-        const pct = Math.max(0, Math.min(discountInput, 100));
-        discountInput = pct;
-        discountAmount = Math.round(((discountBase * pct) / 100) * 100) / 100;
-      } else if (discountMode === 'amount' && yearInDiscountPlan) {
-        discountAmount = Math.max(
-          0,
-          Math.min(toMoney(body?.discount_amount) || discountInput, discountBase)
-        );
-        discountInput = discountAmount;
-      } else {
-        discountMode = 'none';
-        discountAmount = 0;
-        discountInput = 0;
-      }
-
-      afterDiscount = Math.max(0, discountBase - discountAmount);
-      if (annualFee > 0) {
-        afterDiscount = Math.min(afterDiscount, annualFee);
-      }
+      discountMode = 'none';
+      discountAmount = 0;
+      discountInput = 0;
     }
 
-    // المتبقي الفعلي لهذه السنة (بعد الخصم عند أول وصل)
-    const outstandingBefore =
-      openState.receiptsCount > 0
-        ? openState.outstandingBefore
-        : Math.max(0, afterDiscount - yearPaidBefore);
+    afterDiscount = Math.max(0, discountBase - discountAmount);
+    if (annualFee > 0) {
+      afterDiscount = Math.min(afterDiscount, annualFee);
+    }
+
+    // المتبقي = مستحق السنة حسب خصم المودال الحالي − المدفوع سابقاً لهذه السنة
+    const outstandingBefore = Math.max(0, afterDiscount - yearPaidBefore);
 
     if (outstandingBefore <= 0.01) {
       return NextResponse.json(
@@ -427,8 +409,7 @@ export async function POST(request: NextRequest) {
     }
 
     const remainingAmount = Math.max(0, outstandingBefore - payAmount);
-    const perPeriodAmount =
-      periods > 0 ? outstandingBefore / periods : outstandingBefore;
+    const perPeriodAmount = perPeriodFromRemaining(outstandingBefore, periods);
 
     const receiptNumber = await nextReceiptNumber(settlementDate);
 
@@ -550,7 +531,9 @@ export async function POST(request: NextRequest) {
 
     // إصلاح متبقيات الوصولات السابقة لنفس الطالب بعد الحفظ
     const allRes = await query(
-      `SELECT id, fee_year, pay_amount, after_discount, remaining_amount, annual_fee, settlement_date, created_at
+      `SELECT id, fee_year, pay_amount, after_discount, remaining_amount, annual_fee,
+              discount_mode, discount_input, discount_amount,
+              settlement_date, created_at
        FROM accounts.student_settlement_receipts
        WHERE student_id = $1`,
       [studentId]

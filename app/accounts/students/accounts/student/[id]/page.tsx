@@ -12,6 +12,7 @@ import {
 import {
   buildYearLedger,
   feeYearLabel,
+  perPeriodFromRemaining,
   type FeeYear,
 } from '../../../lib/settlementYearLedger';
 import { getAnnualTuitionFee, type TuitionFeeLookupMap } from '../../../lib/tuitionFees';
@@ -164,16 +165,28 @@ function MoneyCard({
 
 function OfficialReceiptCard({
   receipt,
+  yearTarget,
+  paidBefore,
   deleting,
   onRequestDelete,
 }: {
   receipt: SettlementReceipt;
+  /** مستحق السنة (بعد خصم الوصل المعتمد) */
+  yearTarget: number;
+  /** مجموع المدفوع لهذه السنة قبل هذا الوصل */
+  paidBefore: number;
   deleting: boolean;
   onRequestDelete: (receipt: SettlementReceipt) => void;
 }) {
-  const periods = toNumber(receipt.periods, 1);
+  const periods = Math.max(1, Math.min(10, toNumber(receipt.periods, 1)));
   const discountYears = toNumber(receipt.discount_years, 1);
   const hasDiscount = receipt.discount_mode !== 'none' && toNumber(receipt.discount_amount) > 0;
+  const outstandingBefore = Math.max(0, yearTarget - paidBefore);
+  const perPeriod = perPeriodFromRemaining(outstandingBefore, periods);
+  const printReceipt = {
+    ...receipt,
+    per_period_amount: perPeriod,
+  };
 
   return (
     <article className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
@@ -194,11 +207,19 @@ function OfficialReceiptCard({
           </div>
           <button
             type="button"
-            onClick={() => printSettlementReceipt(receipt, 'A5')}
+            onClick={() => printSettlementReceipt(printReceipt, 'A5')}
             disabled={deleting}
             className="rounded-md bg-white text-red-950 hover:bg-red-50 px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
           >
             طباعة A5
+          </button>
+          <button
+            type="button"
+            onClick={() => printSettlementReceipt(printReceipt, 'A4')}
+            disabled={deleting}
+            className="rounded-md border border-white/40 text-white hover:bg-white/10 px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+          >
+            طباعة A4
           </button>
           <button
             type="button"
@@ -264,7 +285,10 @@ function OfficialReceiptCard({
               {periods === 1 ? 'فترة واحدة' : `${periods} فترات`}
             </p>
             <p className="text-[11px] text-gray-500 mt-1" dir="ltr">
-              {money(toNumber(receipt.per_period_amount))} / فترة
+              {money(perPeriod)} / فترة
+            </p>
+            <p className="text-[10px] text-gray-400 mt-0.5">
+              من المتبقي {money(outstandingBefore)} ÷ {periods}
             </p>
           </div>
         </div>
@@ -380,45 +404,75 @@ export default function StudentAccountsStudentPage() {
   const view = useMemo(() => {
     const department = student?.department?.trim() || 'غير محدد';
     const studyType = student?.study_type || null;
-    const annual = getAnnualTuitionFee(department, studyType, feeMap);
-    const totalInstallment = toNumber(student?.final_fee, annual > 0 ? annual : 0);
+    // القسط الأصلي من أقساط الأقسام فقط — لا final_fee (قد يكون مخفّضاً مسبقاً فيضاعف الخصم)
+    const catalogAnnual = getAnnualTuitionFee(department, studyType, feeMap);
     const settlementsPaid = receipts.reduce(
       (sum, r) => sum + toNumber(r.pay_amount),
       0
     );
     const paidAmount =
       settlementsPaid > 0 ? settlementsPaid : toNumber(student?.payment_amount, 0);
-    const ledger = buildYearLedger(receipts, totalInstallment);
+    const ledger = buildYearLedger(receipts, catalogAnnual);
     const current = ledger.years.find((y) => y.year === ledger.currentYear);
     const remaining = current
       ? current.remaining
       : ledger.allYearsCompleted
         ? 0
-        : Math.max(0, totalInstallment - paidAmount);
+        : Math.max(0, catalogAnnual - paidAmount);
     const paidInstallmentsCount = receipts.length;
 
+    // نوع التخفيض للعرض: من آخر وصل يحمل خصماً، ثم ملف الطالب كمرجع فقط
+    const receiptWithDiscount = [...receipts]
+      .sort((a, b) => {
+        const ta = Date.parse(String(a.created_at || a.settlement_date || '')) || 0;
+        const tb = Date.parse(String(b.created_at || b.settlement_date || '')) || 0;
+        return tb - ta;
+      })
+      .find((r) => {
+        const mode = String(r.discount_mode || 'none');
+        return mode !== 'none' && toNumber(r.discount_amount, 0) > 0.5;
+      });
+    const channelFromReceipt = String(
+      receiptWithDiscount?.discount_channel || ''
+    ).trim();
     const channelFromStudent = String(student?.admission_channel || '').trim();
-    const channelFromReceipt =
-      receipts
-        .map((r) => String(r.discount_channel || '').trim())
-        .find((ch) => Boolean(ch)) || '';
-    const discountChannelKey = channelFromStudent || channelFromReceipt;
+    const discountChannelKey = channelFromReceipt || channelFromStudent;
     const discountChannelDef = getAdmissionChannelDef(discountChannelKey);
     const hasDiscountType = Boolean(
-      discountChannelDef && discountChannelDef.key !== 'general'
+      (receiptWithDiscount &&
+        String(receiptWithDiscount.discount_mode || 'none') !== 'none') ||
+        (discountChannelDef && discountChannelDef.key !== 'general')
     );
 
     let discountTypeLabel = '';
-    if (hasDiscountType && discountChannelDef) {
-      discountTypeLabel = formatAdmissionChannelLabel(discountChannelDef.key);
-      const pct = toNumber(student?.discount_percentage, 0);
-      const amt = toNumber(student?.discount_amount, 0);
-      if (pct > 0) {
-        discountTypeLabel += ` (${pct}%)`;
-      } else if (amt > 0) {
-        discountTypeLabel += ` (${money(amt)} IQD)`;
-      } else if (discountChannelDef.fixedPercent != null && discountChannelDef.fixedPercent > 0) {
-        discountTypeLabel += ` (${discountChannelDef.fixedPercent}%)`;
+    if (hasDiscountType) {
+      if (discountChannelDef && discountChannelDef.key !== 'general') {
+        discountTypeLabel = formatAdmissionChannelLabel(discountChannelDef.key);
+      } else {
+        discountTypeLabel = 'خصم عند التسديد';
+      }
+      if (receiptWithDiscount) {
+        const mode = String(receiptWithDiscount.discount_mode || 'none');
+        const input = toNumber(receiptWithDiscount.discount_input, 0);
+        const amt = toNumber(receiptWithDiscount.discount_amount, 0);
+        if (mode === 'percent' && input > 0) {
+          discountTypeLabel += ` (${input}%)`;
+        } else if (amt > 0) {
+          discountTypeLabel += ` (${money(amt)} IQD)`;
+        }
+      } else if (discountChannelDef) {
+        const pct = toNumber(student?.discount_percentage, 0);
+        const amt = toNumber(student?.discount_amount, 0);
+        if (pct > 0) {
+          discountTypeLabel += ` (${pct}%)`;
+        } else if (amt > 0) {
+          discountTypeLabel += ` (${money(amt)} IQD)`;
+        } else if (
+          discountChannelDef.fixedPercent != null &&
+          discountChannelDef.fixedPercent > 0
+        ) {
+          discountTypeLabel += ` (${discountChannelDef.fixedPercent}%)`;
+        }
       }
     }
 
@@ -431,7 +485,8 @@ export default function StudentAccountsStudentPage() {
       stage: formatStage(student?.admission_type),
       currentStage: formatStage(student?.admission_type),
       academicYear: student?.academic_year?.trim() || '—',
-      totalInstallment,
+      catalogAnnual,
+      totalInstallment: catalogAnnual,
       paidAmount,
       remaining,
       paidInstallmentsCount,
@@ -445,20 +500,22 @@ export default function StudentAccountsStudentPage() {
   const receiptsByYear = useMemo(() => {
     return ([1, 2, 3, 4] as FeeYear[]).map((year) => {
       const ledgerYear = view.ledger.years.find((entry) => entry.year === year);
+      const target = ledgerYear?.target ?? view.catalogAnnual;
+      const paid = ledgerYear?.paid ?? 0;
       return {
         year,
         label: feeYearLabel(year),
         status: ledgerYear?.status || ('pending' as const),
-        target: ledgerYear?.target || view.totalInstallment,
-        paid: ledgerYear?.paid || 0,
-        remaining: ledgerYear?.remaining || view.totalInstallment,
+        target,
+        paid,
+        remaining: ledgerYear?.remaining ?? Math.max(0, target - paid),
         items: receipts.filter(
           (receipt) =>
             Math.max(1, Math.min(4, toNumber(receipt.fee_year, 1))) === year
         ),
       };
     });
-  }, [receipts, view.ledger.years, view.totalInstallment]);
+  }, [receipts, view.ledger.years, view.catalogAnnual]);
 
   function handlePrintFinancialReport() {
     if (!student) return;
@@ -575,8 +632,8 @@ export default function StudentAccountsStudentPage() {
             <h2 className="text-sm font-semibold text-gray-900 mb-3">الملخص المالي</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <MoneyCard
-                label="القسط السنوي"
-                value={money(view.totalInstallment)}
+                label="القسط السنوي الأصلي"
+                value={money(view.catalogAnnual)}
                 tone="neutral"
               />
               <MoneyCard
@@ -679,7 +736,7 @@ export default function StudentAccountsStudentPage() {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-px border-b border-gray-200 bg-gray-200 text-xs">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-px border-b border-gray-200 bg-gray-200 text-xs">
                       <div className="bg-white px-3 py-2">
                         <p className="text-gray-500">مستحق السنة</p>
                         <p className="mt-1 font-bold text-gray-900" dir="ltr">
@@ -698,21 +755,72 @@ export default function StudentAccountsStudentPage() {
                           {money(group.remaining)} IQD
                         </p>
                       </div>
+                      <div className="bg-white px-3 py-2">
+                        <p className="text-gray-500">تجزئة المتبقي</p>
+                        {(() => {
+                          const latest = [...group.items].sort((a, b) => {
+                            const ta =
+                              Date.parse(
+                                String(a.created_at || a.settlement_date || '')
+                              ) || 0;
+                            const tb =
+                              Date.parse(
+                                String(b.created_at || b.settlement_date || '')
+                              ) || 0;
+                            return tb - ta;
+                          })[0];
+                          const p = Math.max(
+                            1,
+                            Math.min(10, toNumber(latest?.periods, 1))
+                          );
+                          const per = perPeriodFromRemaining(group.remaining, p);
+                          return (
+                            <>
+                              <p className="mt-1 font-bold text-gray-900">
+                                {p === 1 ? 'فترة واحدة' : `${p} فترات`}
+                              </p>
+                              <p className="text-[11px] text-gray-500 mt-0.5" dir="ltr">
+                                {money(per)} / فترة
+                              </p>
+                            </>
+                          );
+                        })()}
+                      </div>
                     </div>
 
                     <div className="space-y-4 p-4">
                       {group.items.length > 0 ? (
-                        group.items.map((receipt) => (
-                          <OfficialReceiptCard
-                            key={receipt.id}
-                            receipt={receipt}
-                            deleting={deletingReceiptId === receipt.id}
-                            onRequestDelete={(r) => {
-                              setDeleteError('');
-                              setReceiptPendingDeletion(r);
-                            }}
-                          />
-                        ))
+                        (() => {
+                          const sorted = [...group.items].sort((a, b) => {
+                            const ta =
+                              Date.parse(
+                                String(a.created_at || a.settlement_date || '')
+                              ) || 0;
+                            const tb =
+                              Date.parse(
+                                String(b.created_at || b.settlement_date || '')
+                              ) || 0;
+                            return ta - tb;
+                          });
+                          let paidBefore = 0;
+                          return sorted.map((receipt) => {
+                            const card = (
+                              <OfficialReceiptCard
+                                key={receipt.id}
+                                receipt={receipt}
+                                yearTarget={group.target}
+                                paidBefore={paidBefore}
+                                deleting={deletingReceiptId === receipt.id}
+                                onRequestDelete={(r) => {
+                                  setDeleteError('');
+                                  setReceiptPendingDeletion(r);
+                                }}
+                              />
+                            );
+                            paidBefore += toNumber(receipt.pay_amount, 0);
+                            return card;
+                          });
+                        })()
                       ) : (
                         <div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-sm text-gray-500">
                           لا توجد وصولات ضمن {group.label}.

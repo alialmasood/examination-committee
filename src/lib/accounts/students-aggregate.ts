@@ -5,7 +5,6 @@
 import { query } from '@/src/lib/db';
 import {
   STUDENT_DEPARTMENTS,
-  expectedAnnualFee,
   getAnnualTuitionFee,
   normalizeDeptKey,
 } from '@/app/accounts/students/lib/tuitionFees';
@@ -15,11 +14,7 @@ import {
   type FeeYear,
   type SettlementHistoryRow,
 } from '@/app/accounts/students/lib/settlementYearLedger';
-import {
-  computeDebtFromBase,
-  primaryYearSettlementDiscount,
-  resolveStudentFeeDiscount,
-} from '@/app/accounts/students/lib/studentFeeDiscount';
+import { sumSettlementDiscountsByYear } from '@/app/accounts/students/lib/studentFeeDiscount';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 
 type StudentRow = {
@@ -269,6 +264,8 @@ export async function buildStudentsAggregateData(): Promise<StudentsAggregateDat
            student_id::text AS student_id,
            COALESCE(fee_year, 1)::int AS fee_year,
            discount_mode,
+           discount_channel,
+           discount_input,
            COALESCE(discount_amount, 0)::float8 AS discount_amount,
            COALESCE(after_discount, 0)::float8 AS after_discount,
            COALESCE(pay_amount, 0)::float8 AS pay_amount,
@@ -337,17 +334,6 @@ export async function buildStudentsAggregateData(): Promise<StudentsAggregateDat
 
     const major = row.major || '';
     const annualBase = getAnnualTuitionFee(major, studyKey, feeMap);
-    const expected = expectedAnnualFee(
-      {
-        major,
-        study_type: studyKey,
-        admission_channel: row.admission_channel,
-        discount_percentage: row.discount_percentage,
-        discount_amount: row.discount_amount,
-        final_fee_after_discount: row.final_fee_after_discount,
-      },
-      feeMap
-    );
 
     const receipts = receiptsByStudent.get(row.id) || [];
     const paid = receipts.reduce(
@@ -358,31 +344,19 @@ export async function buildStudentsAggregateData(): Promise<StudentsAggregateDat
       (r) => Math.max(0, Number(r.pay_amount || 0)) > 0
     ).length;
 
-    const profileDiscount = Math.max(0, Number(row.discount_amount || 0));
-    const settlementFromReceipt = primaryYearSettlementDiscount(receipts);
-    const resolved = resolveStudentFeeDiscount({
-      annualBase,
-      profileDiscountAmount: profileDiscount,
-      expectedNet: expected,
-      finalFeeAfterDiscount: row.final_fee_after_discount,
-      settlementDiscountAmount: settlementFromReceipt,
-      discountPercentage: row.discount_percentage,
-      admissionChannel: row.admission_channel,
-    });
-    const channelDiscount = resolved.channelDiscount;
-    const settlementDiscount = resolved.settlementDiscount;
-    const studentDiscount = resolved.totalDiscount;
-    const netDue = resolved.netDue;
-    const debt = computeDebtFromBase(annualBase, paid, studentDiscount);
-
-    const annualForLedger = annualBase > 0 ? annualBase : netDue;
-    const ledger = buildYearLedger(receipts, annualForLedger);
+    // الخصم والدين من وصولات المودال فقط
+    const ledger = buildYearLedger(receipts, annualBase);
+    const settlementDiscount = sumSettlementDiscountsByYear(receipts);
+    const studentDiscount = settlementDiscount;
+    const debt = ledger.years.reduce((sum, e) => sum + Math.max(0, e.remaining), 0);
+    const currentEntry = ledger.currentYear
+      ? ledger.years.find((y) => y.year === ledger.currentYear)
+      : null;
+    const netDue = currentEntry?.target ?? (ledger.allYearsCompleted ? 0 : annualBase);
 
     annualBaseTotal += annualBase;
     expectedAnnualTotal += netDue;
     debtAmount += debt;
-    channelDiscountTotal += channelDiscount;
-    settlementDiscountTotal += settlementDiscount;
 
     if (paid <= 0.01 && debt > 0.01) unpaid += 1;
     else if (paid > 0.01 && debt > 0.01) partialPaid += 1;
@@ -402,40 +376,49 @@ export async function buildStudentsAggregateData(): Promise<StudentsAggregateDat
       }
     }
 
-    // أنواع التخفيض
-    if (channelDiscount > 0.5) {
-      const channelKey = String(row.admission_channel || 'general').trim() || 'general';
-      const key = `channel:${channelKey}`;
-      let bucket = discountTypes.get(key);
-      if (!bucket) {
-        bucket = {
-          key,
-          label: formatAdmissionChannelLabel(channelKey),
-          kind: 'channel',
-          students_count: 0,
-          amount: 0,
-        };
-        discountTypes.set(key, bucket);
-      }
-      bucket.students_count += 1;
-      bucket.amount += channelDiscount;
-    }
+    // أنواع التخفيض — من الوصولات فقط
+    let attributedChannel = 0;
+    let attributedSettlement = 0;
     if (settlementDiscount > 0.5) {
-      const key = 'settlement:extra';
-      let bucket = discountTypes.get(key);
-      if (!bucket) {
-        bucket = {
-          key,
-          label: 'خصم إضافي عند التسديد',
-          kind: 'settlement',
-          students_count: 0,
-          amount: 0,
-        };
-        discountTypes.set(key, bucket);
+      const channelFromReceipt = receipts
+        .map((r) => String((r as { discount_channel?: string }).discount_channel || '').trim())
+        .find((ch) => ch && ch !== 'general');
+      if (channelFromReceipt) {
+        attributedChannel = settlementDiscount;
+        const key = `channel:${channelFromReceipt}`;
+        let bucket = discountTypes.get(key);
+        if (!bucket) {
+          bucket = {
+            key,
+            label: formatAdmissionChannelLabel(channelFromReceipt),
+            kind: 'channel',
+            students_count: 0,
+            amount: 0,
+          };
+          discountTypes.set(key, bucket);
+        }
+        bucket.students_count += 1;
+        bucket.amount += settlementDiscount;
+      } else {
+        attributedSettlement = settlementDiscount;
+        const key = 'settlement:modal';
+        let bucket = discountTypes.get(key);
+        if (!bucket) {
+          bucket = {
+            key,
+            label: 'خصم عند التسديد',
+            kind: 'settlement',
+            students_count: 0,
+            amount: 0,
+          };
+          discountTypes.set(key, bucket);
+        }
+        bucket.students_count += 1;
+        bucket.amount += settlementDiscount;
       }
-      bucket.students_count += 1;
-      bucket.amount += settlementDiscount;
     }
+    channelDiscountTotal += attributedChannel;
+    settlementDiscountTotal += attributedSettlement;
 
     // قسم
     const deptKey = normalizeDeptKey(major);
