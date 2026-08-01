@@ -96,6 +96,21 @@ export type StudentsFinanceSummary = {
 
 const STAGE_ORDER = ['first', 'second', 'third', 'fourth', 'unknown'] as const;
 
+/** سنة القسط المرتبطة بالمرحلة الأكاديمية الحالية (= العام الدراسي الجاري للطالب) */
+function stageToFeeYear(stage: string): 1 | 2 | 3 | 4 {
+  switch (stage) {
+    case 'second':
+      return 2;
+    case 'third':
+      return 3;
+    case 'fourth':
+      return 4;
+    case 'first':
+    default:
+      return 1;
+  }
+}
+
 const STAGE_LABELS: Record<string, string> = {
   first: 'المرحلة الأولى',
   second: 'المرحلة الثانية',
@@ -266,34 +281,35 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
       0
     );
 
-    // دفتر السنوات — الخصم من وصولات المودال فقط
+    // سنة القسط = العام الدراسي الجاري حسب مرحلة الطالب (وليس اكتمال 4 سنوات)
+    const stageKey = normalizeStage(row.admission_type);
+    const academicFeeYear = stageToFeeYear(stageKey);
     const ledger = buildYearLedger(receipts, annualBase);
     const yearVisual = getYearVisualEntries(ledger);
-    const category = paymentCategoryFromYearStatus({
-      current_year: ledger.currentYear,
-      all_completed: ledger.allYearsCompleted,
-      years: yearVisual,
-    });
+    const category = paymentCategoryFromYearStatus(
+      {
+        current_year: ledger.currentYear,
+        all_completed: ledger.allYearsCompleted,
+        years: yearVisual,
+      },
+      academicFeeYear
+    );
 
-    const currentEntry = ledger.currentYear
-      ? ledger.years.find((y) => y.year === ledger.currentYear)
-      : null;
-    // الدين = متبقي السنة الجارية فقط (كما في تلميح البطاقة)
-    const debt = currentEntry ? Math.max(0, currentEntry.remaining) : 0;
-    const netDue = currentEntry
-      ? Math.max(0, currentEntry.target)
-      : ledger.allYearsCompleted
-        ? 0
-        : annualBase;
+    const yearEntry =
+      ledger.years.find((y) => y.year === academicFeeYear) || null;
+    // الدين / المستحق = سنة المرحلة الجارية فقط
+    const debt = yearEntry ? Math.max(0, yearEntry.remaining) : annualBase;
+    const netDue = yearEntry ? Math.max(0, yearEntry.target) : annualBase;
     const expectedFourYears = ledger.years.reduce(
       (sum, entry) => sum + Math.max(0, entry.target),
       0
     );
 
     const settlementDiscount = sumSettlementDiscountsByYear(receipts);
-    const currentYearDiscount = ledger.currentYear
-      ? settlementDiscountForFeeYear(receipts, ledger.currentYear)
-      : 0;
+    const currentYearDiscount = settlementDiscountForFeeYear(
+      receipts,
+      academicFeeYear
+    );
     const channelFromReceipt = receipts
       .map((r) =>
         String((r as { discount_channel?: string }).discount_channel || '').trim()
@@ -311,6 +327,7 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
     channelDiscountTotal += attributedChannel;
     settlementDiscountTotal += attributedSettlement;
 
+    // مكتملو الدفع = سدّدوا سنة المرحلة الجارية بالكامل (حتى لو بقيت سنوات لاحقة)
     if (category === 'settled') fullyPaidCount += 1;
     else if (category === 'partial') partialPaidCount += 1;
     else unpaidCount += 1;
@@ -338,7 +355,6 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
     dept.total_discount_amount += settlementDiscount;
     if (hasDiscount) dept.discounts_count += 1;
 
-    const stageKey = normalizeStage(row.admission_type);
     const stage = byStage.get(stageKey) || byStage.get('unknown')!;
     stage.students += 1;
     stage.collected_amount += paid;

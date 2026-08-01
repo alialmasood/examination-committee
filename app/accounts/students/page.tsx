@@ -354,7 +354,7 @@ export default function AccountsStudentsPage() {
               <StatCard
                 label="نسبة التحصيل"
                 value={percent(data.collection_rate_percent)}
-                hint="المدفوع ÷ مستحق السنة الجارية بعد خصم الوصولات"
+                hint="المدفوع ÷ مستحق العام الدراسي الجاري (حسب المرحلة)"
                 tone={
                   data.collection_rate_percent >= 70
                     ? 'success'
@@ -366,19 +366,19 @@ export default function AccountsStudentsPage() {
               <StatCard
                 label="طلبة مكتملو الدفع"
                 value={count(data.fully_paid_count)}
-                hint="اكتملت السنة الجارية أو السنوات الأربع حسب دفتر التسديد"
+                hint="سدّدوا قسط مرحلتهم/عامهم الدراسي الجاري بالكامل"
                 tone="success"
               />
               <StatCard
                 label="دفع جزئي"
                 value={count(data.partial_paid_count)}
-                hint="دفعوا جزءاً من مستحق السنة الجارية"
+                hint="دفعوا جزءاً من قسط العام الدراسي الجاري"
                 tone="warning"
               />
               <StatCard
                 label="بدون دفع"
                 value={count(data.unpaid_count)}
-                hint="لا مدفوعات على السنة الجارية بعد"
+                hint="لم يُدفع شيء من قسط العام الدراسي الجاري"
                 tone="danger"
               />
             </div>
