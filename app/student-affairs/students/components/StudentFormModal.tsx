@@ -107,13 +107,13 @@ const initialFormData: StudentFormData = {
     branch: ''
   },
   universityAdmission: {
-    admissionType: '',
+    admissionType: 'first',
     admissionChannel: '',
     department: '',
     studyType: '',
-    level: '',
+    level: 'bachelor',
     semester: '',
-    academicYear: '',
+    academicYear: '2026-2027',
     specialRequirements: '',
     scholarship: false,
     scholarshipType: '',
@@ -1196,81 +1196,105 @@ export default function StudentFormModal({
 
   if (!isOpen) return null;
 
+  const stepLabels = [
+    { id: 1, title: 'البيانات الشخصية' },
+    { id: 2, title: 'الدراسة الإعدادية' },
+    { id: 3, title: 'القبول الجامعي' },
+    { id: 4, title: 'المستمسكات' },
+  ] as const;
+
   return (
     <>
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-lg font-bold text-white">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/45 p-3 sm:p-4 backdrop-blur-[1px]">
+          <div
+            className="flex w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-xl"
+            style={{ height: 'min(620px, 86vh)' }}
+          >
+            {/* Header — طابع رسمي ثابت */}
+            <div className="shrink-0 border-b border-slate-300 bg-slate-50">
+              <div className="flex items-center justify-between gap-3 px-5 py-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-medium tracking-wide text-slate-500">
+                    شؤون الطلبة · تسجيل أكاديمي
+                  </p>
+                  <h2 className="truncate text-base font-semibold text-slate-900">
                     {editingStudentId ? 'تعديل بيانات الطالب' : 'إضافة طالب جديد'}
                   </h2>
-                  <span className="text-xs text-blue-100">
-                    {currentStep === 1 && 'البيانات الشخصية'}
-                    {currentStep === 2 && 'الدراسة الإعدادية'}
-                    {currentStep === 3 && 'القبول الجامعي'}
-                    {currentStep === 4 && 'المستمسكات والوثائق'}
-                  </span>
                 </div>
                 <button
+                  type="button"
                   onClick={closeModal}
-                  className="text-white hover:text-blue-200 transition-colors duration-200"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                  aria-label="إغلاق"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               </div>
-              
-              {/* Progress Steps */}
-              <div className="flex items-center justify-center mt-2 space-x-3 space-x-reverse">
-                {[1, 2, 3, 4].map((step) => (
-                  <div key={step} className="flex items-center">
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
-                      currentStep >= step 
-                        ? 'bg-white text-blue-600' 
-                        : 'bg-blue-400 text-white'
-                    }`}>
-                      {step}
+
+              {/* شريط المراحل — عرض ثابت لا يغيّر ارتفاع المودال */}
+              <div className="grid grid-cols-4 border-t border-slate-200 bg-white">
+                {stepLabels.map((step) => {
+                  const active = currentStep === step.id;
+                  const done = currentStep > step.id;
+                  return (
+                    <div
+                      key={step.id}
+                      className={`flex items-center justify-center gap-2 border-l border-slate-200 px-2 py-2.5 first:border-l-0 ${
+                        active
+                          ? 'bg-slate-800 text-white'
+                          : done
+                            ? 'bg-slate-100 text-slate-700'
+                            : 'bg-white text-slate-400'
+                      }`}
+                    >
+                      <span
+                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-[11px] font-bold ${
+                          active
+                            ? 'bg-white text-slate-800'
+                            : done
+                              ? 'bg-slate-700 text-white'
+                              : 'border border-slate-300 text-slate-400'
+                        }`}
+                      >
+                        {step.id}
+                      </span>
+                      <span className="hidden truncate text-xs font-medium sm:inline">
+                        {step.title}
+                      </span>
                     </div>
-                    {step < 4 && (
-                      <div className={`w-6 h-0.5 mx-1.5 ${
-                        currentStep > step ? 'bg-white' : 'bg-blue-400'
-                      }`}></div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
-              
-              {/* رسالة التحديث السريع */}
+
               {editingStudentId && (
-                <div className="mt-1.5 text-center">
-                  <p className="text-blue-100 text-xs">
-                    💡 يمكنك تحديث البيانات في أي خطوة باستخدام زر &quot;تحديث&quot;
-                  </p>
+                <div className="border-t border-slate-200 bg-amber-50 px-5 py-1.5 text-center text-[11px] text-amber-900">
+                  يمكن تحديث البيانات من أي مرحلة عبر زر «تحديث»
                 </div>
               )}
             </div>
 
-            {/* Content */}
-            <div className="p-6 max-h-[60vh] overflow-y-auto">
+            {/* Content — مساحة ثابتة لكل المراحل */}
+            <div className="min-h-0 flex-1 overflow-y-auto bg-white px-5 py-4">
               {currentStep === 1 && (
-                <div className="space-y-6">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-4">البيانات الشخصية</h3>
+                <div className="space-y-3">
+                  <div className="border-b border-slate-200 pb-2 mb-1">
+                    <h3 className="text-sm font-semibold text-slate-800">البيانات الشخصية</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">المعلومات الأساسية للطالب وجهة الاتصال</p>
+                  </div>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-2.5 md:grid-cols-3">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         الاسم الرباعي *
                       </label>
                       <input
                         type="text"
                         value={formData.personalData.fullName}
                         onChange={(e) => handleInputChange('personalData', 'fullName', e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                          validationErrors['personalData.fullName'] ? 'border-red-500' : 'border-gray-300'
+                        className={`h-9 w-full rounded-md border bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 ${
+                          validationErrors['personalData.fullName'] ? 'border-red-500' : 'border-slate-300'
                         }`}
                         placeholder="مثال: أحمد محمد عبدالله السعد"
                         required
@@ -1281,15 +1305,15 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         اللقب
                       </label>
                       <input
                         type="text"
                         value={formData.personalData.nickname}
                         onChange={(e) => handleInputChange('personalData', 'nickname', e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                          validationErrors['personalData.nickname'] ? 'border-red-500' : 'border-gray-300'
+                        className={`h-9 w-full rounded-md border bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 ${
+                          validationErrors['personalData.nickname'] ? 'border-red-500' : 'border-slate-300'
                         }`}
                         placeholder="مثال: أبو محمد"
                       />
@@ -1299,15 +1323,15 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         اسم الأم الثلاثي *
                       </label>
                       <input
                         type="text"
                         value={formData.personalData.motherName}
                         onChange={(e) => handleInputChange('personalData', 'motherName', e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                          validationErrors['personalData.motherName'] ? 'border-red-500' : 'border-gray-300'
+                        className={`h-9 w-full rounded-md border bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 ${
+                          validationErrors['personalData.motherName'] ? 'border-red-500' : 'border-slate-300'
                         }`}
                         placeholder="مثال: فاطمة أحمد محمد"
                         required
@@ -1318,7 +1342,7 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         رقم الهوية الوطنية *
                       </label>
                       <input
@@ -1326,8 +1350,8 @@ export default function StudentFormModal({
                         inputMode="numeric"
                         value={formData.personalData.nationalId}
                         onChange={(e) => handleInputChange('personalData', 'nationalId', e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                          validationErrors['personalData.nationalId'] ? 'border-red-500' : 'border-gray-300'
+                        className={`h-9 w-full rounded-md border bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 ${
+                          validationErrors['personalData.nationalId'] ? 'border-red-500' : 'border-slate-300'
                         }`}
                         placeholder="أدخل رقم الهوية (أرقام فقط)"
                         required
@@ -1338,266 +1362,232 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         تاريخ الميلاد *
                       </label>
                       <input
                         type="date"
                         value={formData.personalData.birthDate}
                         onChange={(e) => handleInputChange('personalData', 'birthDate', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        onKeyDown={(e) => e.preventDefault()}
+                        onPaste={(e) => e.preventDefault()}
+                        onDrop={(e) => e.preventDefault()}
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          المحافظة *
-                        </label>
-                        <select
-                          value={formData.personalData.birthPlace}
-                          onChange={(e) => handleSelectChange('personalData', 'birthPlace', e.target.value)}
-                          onBlur={(e) => handleSelectBlur('personalData', 'birthPlace', e)}
-                          onKeyDown={(e) => handleSelectKeyDown('personalData', 'birthPlace', e)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10 text-sm"
-                          required
-                        >
-                          <option value="">اختر المحافظة</option>
-                          <option value="بغداد">بغداد</option>
-                          <option value="البصرة">البصرة</option>
-                          <option value="الموصل">الموصل</option>
-                          <option value="أربيل">أربيل</option>
-                          <option value="السليمانية">السليمانية</option>
-                          <option value="دهوك">دهوك</option>
-                          <option value="كركوك">كركوك</option>
-                          <option value="الأنبار">الأنبار</option>
-                          <option value="النجف">النجف</option>
-                          <option value="كربلاء">كربلاء</option>
-                          <option value="بابل">بابل</option>
-                          <option value="واسط">واسط</option>
-                          <option value="ديالى">ديالى</option>
-                          <option value="صلاح الدين">صلاح الدين</option>
-                          <option value="الديوانية">الديوانية</option>
-                          <option value="ميسان">ميسان</option>
-                          <option value="ذي قار">ذي قار</option>
-                          <option value="المثنى">المثنى</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          المنطقة
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.personalData.area}
-                          onChange={(e) => handleInputChange('personalData', 'area', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10"
-                          placeholder="أدخل المنطقة"
-                        />
-                      </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        المحافظة *
+                      </label>
+                      <select
+                        value={formData.personalData.birthPlace}
+                        onChange={(e) => handleSelectChange('personalData', 'birthPlace', e.target.value)}
+                        onBlur={(e) => handleSelectBlur('personalData', 'birthPlace', e)}
+                        onKeyDown={(e) => handleSelectKeyDown('personalData', 'birthPlace', e)}
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                        required
+                      >
+                        <option value="">اختر المحافظة</option>
+                        <option value="بغداد">بغداد</option>
+                        <option value="البصرة">البصرة</option>
+                        <option value="الموصل">الموصل</option>
+                        <option value="أربيل">أربيل</option>
+                        <option value="السليمانية">السليمانية</option>
+                        <option value="دهوك">دهوك</option>
+                        <option value="كركوك">كركوك</option>
+                        <option value="الأنبار">الأنبار</option>
+                        <option value="النجف">النجف</option>
+                        <option value="كربلاء">كربلاء</option>
+                        <option value="بابل">بابل</option>
+                        <option value="واسط">واسط</option>
+                        <option value="ديالى">ديالى</option>
+                        <option value="صلاح الدين">صلاح الدين</option>
+                        <option value="الديوانية">الديوانية</option>
+                        <option value="ميسان">ميسان</option>
+                        <option value="ذي قار">ذي قار</option>
+                        <option value="المثنى">المثنى</option>
+                      </select>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          الجنس *
-                        </label>
-                        <select
-                          value={formData.personalData.gender}
-                          onChange={(e) => handleSelectChange('personalData', 'gender', e.target.value)}
-                          onBlur={(e) => handleSelectBlur('personalData', 'gender', e)}
-                          onKeyDown={(e) => handleSelectKeyDown('personalData', 'gender', e)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10 text-sm"
-                          required
-                        >
-                          <option value="male">ذكر</option>
-                          <option value="female">أنثى</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          الديانة
-                        </label>
-                        <select
-                          value={formData.personalData.religion}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            handleSelectChange('personalData', 'religion', value);
-                          }}
-                          onInput={(e) => handleSelectInput('personalData', 'religion', e)}
-                          onBlur={(e) => handleSelectBlur('personalData', 'religion', e)}
-                          onKeyDown={(e) => handleSelectKeyDown('personalData', 'religion', e)}
-                          onKeyUp={(e) => {
-                            // تحديث إضافي عند رفع المفتاح
-                            const value = (e.target as HTMLSelectElement).value;
-                            if (value !== formData.personalData.religion) {
-                              handleSelectValueChange('personalData', 'religion', value);
-                            }
-                          }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10 text-sm"
-                        >
-                          <option value="">اختر الديانة</option>
-                          <option value="مسلم">مسلم</option>
-                          <option value="مسيحي">مسيحي</option>
-                          <option value="الصابئة">الصابئة</option>
-                          <option value="اليزيدية">اليزيدية</option>
-                          <option value="غير ذلك">غير ذلك</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          الحالة الاجتماعية
-                        </label>
-                        <select
-                          value={formData.personalData.maritalStatus}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            handleSelectChange('personalData', 'maritalStatus', value);
-                          }}
-                          onInput={(e) => handleSelectInput('personalData', 'maritalStatus', e)}
-                          onBlur={(e) => handleSelectBlur('personalData', 'maritalStatus', e)}
-                          onKeyDown={(e) => handleSelectKeyDown('personalData', 'maritalStatus', e)}
-                          onKeyUp={(e) => {
-                            // تحديث إضافي عند رفع المفتاح
-                            const value = (e.target as HTMLSelectElement).value;
-                            if (value !== formData.personalData.maritalStatus) {
-                              handleSelectValueChange('personalData', 'maritalStatus', value);
-                            }
-                          }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-10 text-sm"
-                        >
-                          <option value="single">أعزب</option>
-                          <option value="married">متزوج</option>
-                          <option value="divorced">مطلق</option>
-                          <option value="widowed">أرمل</option>
-                        </select>
-                      </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        المنطقة
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.personalData.area}
+                        onChange={(e) => handleInputChange('personalData', 'area', e.target.value)}
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                        placeholder="أدخل المنطقة"
+                      />
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          رقم الهاتف العراقي *
-                        </label>
-                        <div className="relative">
-                          <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                            <span className="text-gray-500 text-sm font-medium">+964</span>
-                          </div>
-                          <input
-                            type="tel"
-                            inputMode="numeric"
-                            maxLength={10}
-                            value={formData.personalData.phone}
-                            onChange={(e) => handleInputChange('personalData', 'phone', e.target.value)}
-                            className={`w-full px-3 py-2 pr-16 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200 ${
-                              validationErrors['personalData.phone'] ? 'border-red-500' : 'border-gray-300'
-                            }`}
-                            placeholder="7XX XXX XXXX"
-                            required
-                          />
-                        </div>
-                        {validationErrors['personalData.phone'] ? (
-                          <p className="text-xs text-red-600 mt-1.5">{validationErrors['personalData.phone']}</p>
-                        ) : (
-                          <p className="text-xs text-gray-500 mt-1.5">
-                            أدخل رقم الهاتف بدون رمز البلد (10 أرقام بالضبط)
-                          </p>
-                        )}
-                      </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        الجنس *
+                      </label>
+                      <select
+                        value={formData.personalData.gender}
+                        onChange={(e) => handleSelectChange('personalData', 'gender', e.target.value)}
+                        onBlur={(e) => handleSelectBlur('personalData', 'gender', e)}
+                        onKeyDown={(e) => handleSelectKeyDown('personalData', 'gender', e)}
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                        required
+                      >
+                        <option value="male">ذكر</option>
+                        <option value="female">أنثى</option>
+                      </select>
+                    </div>
 
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          البريد الإلكتروني
-                        </label>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        الديانة
+                      </label>
+                      <select
+                        value={formData.personalData.religion}
+                        onChange={(e) => handleSelectChange('personalData', 'religion', e.target.value)}
+                        onInput={(e) => handleSelectInput('personalData', 'religion', e)}
+                        onBlur={(e) => handleSelectBlur('personalData', 'religion', e)}
+                        onKeyDown={(e) => handleSelectKeyDown('personalData', 'religion', e)}
+                        onKeyUp={(e) => {
+                          const value = (e.target as HTMLSelectElement).value;
+                          if (value !== formData.personalData.religion) {
+                            handleSelectValueChange('personalData', 'religion', value);
+                          }
+                        }}
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                      >
+                        <option value="">اختر الديانة</option>
+                        <option value="مسلم">مسلم</option>
+                        <option value="مسيحي">مسيحي</option>
+                        <option value="الصابئة">الصابئة</option>
+                        <option value="اليزيدية">اليزيدية</option>
+                        <option value="غير ذلك">غير ذلك</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        الحالة الاجتماعية
+                      </label>
+                      <select
+                        value={formData.personalData.maritalStatus}
+                        onChange={(e) => handleSelectChange('personalData', 'maritalStatus', e.target.value)}
+                        onInput={(e) => handleSelectInput('personalData', 'maritalStatus', e)}
+                        onBlur={(e) => handleSelectBlur('personalData', 'maritalStatus', e)}
+                        onKeyDown={(e) => handleSelectKeyDown('personalData', 'maritalStatus', e)}
+                        onKeyUp={(e) => {
+                          const value = (e.target as HTMLSelectElement).value;
+                          if (value !== formData.personalData.maritalStatus) {
+                            handleSelectValueChange('personalData', 'maritalStatus', value);
+                          }
+                        }}
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                      >
+                        <option value="single">أعزب</option>
+                        <option value="married">متزوج</option>
+                        <option value="divorced">مطلق</option>
+                        <option value="widowed">أرمل</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        رقم الهاتف العراقي *
+                      </label>
+                      <div
+                        className={`flex h-9 overflow-hidden rounded-md border bg-white focus-within:border-slate-500 focus-within:ring-1 focus-within:ring-slate-500 ${
+                          validationErrors['personalData.phone'] ? 'border-red-500' : 'border-slate-300'
+                        }`}
+                      >
+                        <span className="flex shrink-0 items-center border-l border-slate-300 bg-slate-50 px-2.5 text-xs font-medium text-slate-600">
+                          +964
+                        </span>
                         <input
-                          type="email"
-                          value={formData.personalData.email}
-                          onChange={(e) => handleInputChange('personalData', 'email', e.target.value)}
-                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200 ${
-                            validationErrors['personalData.email'] ? 'border-red-500' : 'border-gray-300'
-                          }`}
-                          placeholder="example@email.com"
+                          type="tel"
+                          inputMode="numeric"
+                          maxLength={10}
+                          value={formData.personalData.phone}
+                          onChange={(e) => handleInputChange('personalData', 'phone', e.target.value)}
+                          className="h-full min-w-0 flex-1 border-0 bg-transparent px-2.5 text-sm text-slate-800 focus:outline-none focus:ring-0"
+                          placeholder="7XXXXXXXXX"
+                          required
                         />
-                        {validationErrors['personalData.email'] ? (
-                          <p className="text-xs text-red-600 mt-1.5">{validationErrors['personalData.email']}</p>
-                        ) : (
-                          <p className="text-xs text-gray-500 mt-1.5">
-                            البريد الإلكتروني اختياري
-                          </p>
-                        )}
                       </div>
+                      {validationErrors['personalData.phone'] && (
+                        <p className="mt-1 text-xs text-red-600">{validationErrors['personalData.phone']}</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        البريد الإلكتروني
+                      </label>
+                      <input
+                        type="email"
+                        value={formData.personalData.email}
+                        onChange={(e) => handleInputChange('personalData', 'email', e.target.value)}
+                        className={`h-9 w-full rounded-md border bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 ${
+                          validationErrors['personalData.email'] ? 'border-red-500' : 'border-slate-300'
+                        }`}
+                        placeholder="example@email.com"
+                      />
+                      {validationErrors['personalData.email'] && (
+                        <p className="mt-1 text-xs text-red-600">{validationErrors['personalData.email']}</p>
+                      )}
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      العنوان *
-                    </label>
-                    <textarea
-                      value={formData.personalData.address}
-                      onChange={(e) => handleInputChange('personalData', 'address', e.target.value)}
-                      rows={3}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      required
-                    />
-                  </div>
-
-
-                  <div className="border-t pt-6">
-                    <h4 className="text-md font-semibold text-gray-800 mb-4">جهة الاتصال في حالات الطوارئ</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="rounded-md border border-slate-200 bg-slate-50/70 p-3">
+                    <h4 className="mb-2 text-xs font-semibold text-slate-800">جهة الاتصال في حالات الطوارئ</h4>
+                    <div className="grid grid-cols-1 gap-x-3 gap-y-2.5 md:grid-cols-3">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="mb-1 block text-xs font-semibold text-slate-600">
                           الاسم *
                         </label>
                         <input
                           type="text"
                           value={formData.personalData.emergencyContact.name}
                           onChange={(e) => handleEmergencyContactChange('name', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                           required
                         />
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="mb-1 block text-xs font-semibold text-slate-600">
                           صلة القرابة *
                         </label>
                         <input
                           type="text"
                           value={formData.personalData.emergencyContact.relationship}
                           onChange={(e) => handleEmergencyContactChange('relationship', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                           required
                         />
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="mb-1 block text-xs font-semibold text-slate-600">
                           رقم الهاتف العراقي *
                         </label>
-                        <div className="relative">
-                          <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                            <span className="text-gray-500 text-sm font-medium">+964</span>
-                          </div>
+                        <div className="flex h-9 overflow-hidden rounded-md border border-slate-300 bg-white focus-within:border-slate-500 focus-within:ring-1 focus-within:ring-slate-500">
+                          <span className="flex shrink-0 items-center border-l border-slate-300 bg-slate-50 px-2.5 text-xs font-medium text-slate-600">
+                            +964
+                          </span>
                           <input
                             type="tel"
                             value={formData.personalData.emergencyContact.phone}
                             onChange={(e) => handleEmergencyContactChange('phone', e.target.value)}
-                            className="w-full px-3 py-2 pr-16 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            placeholder="7XX XXX XXXX"
+                            className="h-full min-w-0 flex-1 border-0 bg-transparent px-2.5 text-sm text-slate-800 focus:outline-none focus:ring-0"
+                            placeholder="7XXXXXXXXX"
                             pattern="[0-9]{10}"
                             maxLength={10}
                             required
                           />
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                          أدخل رقم الهاتف بدون رمز البلد (10 أرقام)
-                        </p>
                       </div>
                     </div>
                   </div>
@@ -1605,45 +1595,43 @@ export default function StudentFormModal({
               )}
 
               {currentStep === 2 && (
-                <div className="space-y-6">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-4">الدراسة الإعدادية</h3>
-                  
-                  {/* السطر الأول: اسم المدرسة، نوع المدرسة، سنة التخرج */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="space-y-3">
+                  <div className="border-b border-slate-200 pb-2 mb-1">
+                    <h3 className="text-sm font-semibold text-slate-800">الدراسة الإعدادية</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">بيانات الشهادة الإعدادية والامتحان</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-2.5 md:grid-cols-3">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         اسم المدرسة *
                       </label>
                       <input
                         type="text"
                         value={formData.secondaryEducation.schoolName}
                         onChange={(e) => handleInputChange('secondaryEducation', 'schoolName', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         نوع المدرسة *
                       </label>
                       <select
                         value={formData.secondaryEducation.schoolType}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          handleSelectChange('secondaryEducation', 'schoolType', value);
-                        }}
+                        onChange={(e) => handleSelectChange('secondaryEducation', 'schoolType', e.target.value)}
                         onInput={(e) => handleSelectInput('secondaryEducation', 'schoolType', e)}
                         onBlur={(e) => handleSelectBlur('secondaryEducation', 'schoolType', e)}
                         onKeyDown={(e) => handleSelectKeyDown('secondaryEducation', 'schoolType', e)}
                         onKeyUp={(e) => {
-                          // تحديث إضافي عند رفع المفتاح
                           const value = (e.target as HTMLSelectElement).value;
                           if (value !== formData.secondaryEducation.schoolType) {
                             handleSelectValueChange('secondaryEducation', 'schoolType', value);
                           }
                         }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر نوع المدرسة</option>
@@ -1654,15 +1642,12 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         سنة التخرج *
                       </label>
                       <select
                         value={formData.secondaryEducation.graduationYear}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          handleSelectChange('secondaryEducation', 'graduationYear', value);
-                        }}
+                        onChange={(e) => handleSelectChange('secondaryEducation', 'graduationYear', e.target.value)}
                         onInput={(e) => handleSelectInput('secondaryEducation', 'graduationYear', e)}
                         onBlur={(e) => handleSelectBlur('secondaryEducation', 'graduationYear', e)}
                         onKeyDown={(e) => handleSelectKeyDown('secondaryEducation', 'graduationYear', e)}
@@ -1672,11 +1657,11 @@ export default function StudentFormModal({
                             handleSelectValueChange('secondaryEducation', 'graduationYear', value);
                           }
                         }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر سنة التخرج</option>
-                        {Array.from({ length: 26 }, (_, i) => {
+                        {Array.from({ length: 28 }, (_, i) => {
                           const startYear = 2000 + i;
                           const endYear = startYear + 1;
                           const yearValue = `${startYear}-${endYear}`;
@@ -1688,12 +1673,9 @@ export default function StudentFormModal({
                         })}
                       </select>
                     </div>
-                  </div>
 
-                  {/* السطر الثاني: المعدل التراكمي، إجمالي الدرجات، الدور */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         المعدل التراكمي *
                       </label>
                       <input
@@ -1704,13 +1686,11 @@ export default function StudentFormModal({
                         value={formData.secondaryEducation.gpa}
                         onChange={(e) => {
                           const value = e.target.value;
-                          // السماح بالأرقام والكسور العشرية
                           if (value === '' || /^\d*\.?\d*$/.test(value)) {
                             handleInputChange('secondaryEducation', 'gpa', value);
                           }
                         }}
                         onBlur={(e) => {
-                          // تحويل القيمة إلى رقم عشري عند فقدان التركيز
                           const value = e.target.value;
                           if (value && !isNaN(parseFloat(value))) {
                             const numValue = parseFloat(value);
@@ -1719,32 +1699,31 @@ export default function StudentFormModal({
                             } else if (numValue < 0) {
                               handleInputChange('secondaryEducation', 'gpa', '0');
                             } else {
-                              // الحفاظ على الكسور العشرية
                               handleInputChange('secondaryEducation', 'gpa', numValue.toString());
                             }
                           }
                         }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         placeholder="مثال: 85.5"
                         required
                       />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         إجمالي الدرجات *
                       </label>
                       <input
                         type="text"
                         value={formData.secondaryEducation.totalScore}
                         onChange={(e) => handleInputChange('secondaryEducation', 'totalScore', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         الدور *
                       </label>
                       <select
@@ -1752,7 +1731,7 @@ export default function StudentFormModal({
                         onChange={(e) => handleSelectChange('secondaryEducation', 'examAttempt', e.target.value)}
                         onBlur={(e) => handleSelectBlur('secondaryEducation', 'examAttempt', e)}
                         onKeyDown={(e) => handleSelectKeyDown('secondaryEducation', 'examAttempt', e)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر الدور</option>
@@ -1761,41 +1740,37 @@ export default function StudentFormModal({
                         <option value="third">الثالث</option>
                       </select>
                     </div>
-                  </div>
-
-                  {/* باقي الحقول */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         الرقم الامتحاني *
                       </label>
                       <input
                         type="text"
                         value={formData.secondaryEducation.examNumber}
                         onChange={(e) => handleInputChange('secondaryEducation', 'examNumber', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         placeholder="مثال: 123456789"
                         required
                       />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         الرقم السري *
                       </label>
                       <input
                         type="text"
                         value={formData.secondaryEducation.examPassword}
                         onChange={(e) => handleInputChange('secondaryEducation', 'examPassword', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         placeholder="أدخل الرقم السري"
                         required
                       />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         الفرع *
                       </label>
                       <select
@@ -1803,7 +1778,7 @@ export default function StudentFormModal({
                         onChange={(e) => handleSelectChange('secondaryEducation', 'branch', e.target.value)}
                         onBlur={(e) => handleSelectBlur('secondaryEducation', 'branch', e)}
                         onKeyDown={(e) => handleSelectKeyDown('secondaryEducation', 'branch', e)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر فرع الاعدادية</option>
@@ -1830,38 +1805,34 @@ export default function StudentFormModal({
                       </select>
                     </div>
                   </div>
-
-
                 </div>
               )}
 
               {currentStep === 3 && (
-                <div className="space-y-6">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-4">القبول الجامعي</h3>
-                  
-                  {/* السطر الأول: المرحلة، قناة القبول، الفصل الدراسي */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="space-y-3">
+                  <div className="border-b border-slate-200 pb-2 mb-1">
+                    <h3 className="text-sm font-semibold text-slate-800">القبول الجامعي</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">القسم والمرحلة ونوع الدراسة</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-2.5 md:grid-cols-3">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         المرحلة *
                       </label>
                       <select
                         value={formData.universityAdmission.admissionType}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          handleSelectChange('universityAdmission', 'admissionType', value);
-                        }}
+                        onChange={(e) => handleSelectChange('universityAdmission', 'admissionType', e.target.value)}
                         onInput={(e) => handleSelectInput('universityAdmission', 'admissionType', e)}
                         onBlur={(e) => handleSelectBlur('universityAdmission', 'admissionType', e)}
                         onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'admissionType', e)}
                         onKeyUp={(e) => {
-                          // تحديث إضافي عند رفع المفتاح
                           const value = (e.target as HTMLSelectElement).value;
                           if (value !== formData.universityAdmission.admissionType) {
                             handleSelectValueChange('universityAdmission', 'admissionType', value);
                           }
                         }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر المرحلة</option>
@@ -1873,7 +1844,7 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         قناة القبول *
                       </label>
                       <select
@@ -1881,7 +1852,7 @@ export default function StudentFormModal({
                         onChange={(e) => handleSelectChange('universityAdmission', 'admissionChannel', e.target.value)}
                         onBlur={(e) => handleSelectBlur('universityAdmission', 'admissionChannel', e)}
                         onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'admissionChannel', e)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر قناة القبول</option>
@@ -1900,7 +1871,7 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         الفصل الدراسي *
                       </label>
                       <select
@@ -1908,7 +1879,7 @@ export default function StudentFormModal({
                         onChange={(e) => handleSelectChange('universityAdmission', 'semester', e.target.value)}
                         onBlur={(e) => handleSelectBlur('universityAdmission', 'semester', e)}
                         onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'semester', e)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر الفصل الدراسي</option>
@@ -1916,13 +1887,9 @@ export default function StudentFormModal({
                         <option value="second">الثاني</option>
                       </select>
                     </div>
-                  </div>
-
-                  {/* باقي الحقول */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         القسم *
                       </label>
                       <select
@@ -1930,7 +1897,7 @@ export default function StudentFormModal({
                         onChange={(e) => handleSelectChange('universityAdmission', 'department', e.target.value)}
                         onBlur={(e) => handleSelectBlur('universityAdmission', 'department', e)}
                         onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'department', e)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر القسم</option>
@@ -1943,7 +1910,7 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         نوع الدراسة *
                       </label>
                       <select
@@ -1951,7 +1918,7 @@ export default function StudentFormModal({
                         onChange={(e) => handleSelectChange('universityAdmission', 'studyType', e.target.value)}
                         onBlur={(e) => handleSelectBlur('universityAdmission', 'studyType', e)}
                         onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'studyType', e)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر نوع الدراسة</option>
@@ -1961,7 +1928,7 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         المرحلة الدراسية *
                       </label>
                       <select
@@ -1969,7 +1936,7 @@ export default function StudentFormModal({
                         onChange={(e) => handleSelectChange('universityAdmission', 'level', e.target.value)}
                         onBlur={(e) => handleSelectBlur('universityAdmission', 'level', e)}
                         onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'level', e)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر المرحلة الدراسية</option>
@@ -1981,7 +1948,7 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         السنة الأكاديمية *
                       </label>
                       <select
@@ -1989,7 +1956,7 @@ export default function StudentFormModal({
                         onChange={(e) => handleSelectChange('universityAdmission', 'academicYear', e.target.value)}
                         onBlur={(e) => handleSelectBlur('universityAdmission', 'academicYear', e)}
                         onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'academicYear', e)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       >
                         <option value="">اختر السنة الأكاديمية</option>
@@ -2002,291 +1969,228 @@ export default function StudentFormModal({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         الاسم المستخدم
                       </label>
                       <input
                         type="text"
                         value={formData.universityAdmission.username || ''}
                         onChange={(e) => handleInputChange('universityAdmission', 'username', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         placeholder="أدخل الاسم المستخدم"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         كلمة المرور
                       </label>
                       <input
                         type="text"
                         value={formData.universityAdmission.password || ''}
                         onChange={(e) => handleInputChange('universityAdmission', 'password', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         placeholder="أدخل كلمة المرور"
                       />
                     </div>
 
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      متطلبات خاصة
-                    </label>
-                    <textarea
-                      value={formData.universityAdmission.specialRequirements}
-                      onChange={(e) => handleInputChange('universityAdmission', 'specialRequirements', e.target.value)}
-                      rows={3}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={formData.universityAdmission.scholarship}
-                      onChange={(e) => handleInputChange('universityAdmission', 'scholarship', e.target.checked)}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                    />
-                    <label className="mr-2 block text-sm text-gray-700">
-                      حاصل على منحة دراسية
-                    </label>
-                  </div>
-
-                  {formData.universityAdmission.scholarship && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        نوع المنحة
+                    <div className="md:col-span-3">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        متطلبات خاصة
                       </label>
-                      <input
-                        type="text"
-                        value={formData.universityAdmission.scholarshipType || ''}
-                        onChange={(e) => handleInputChange('universityAdmission', 'scholarshipType', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      <textarea
+                        value={formData.universityAdmission.specialRequirements}
+                        onChange={(e) => handleInputChange('universityAdmission', 'specialRequirements', e.target.value)}
+                        rows={2}
+                        className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                       />
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
 
               {currentStep === 4 && (
-                <div className="space-y-6">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-4">المستمسكات والوثائق</h3>
-                  
-                  {/* ملاحظة مهمة عن الملفات */}
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                    <div className="flex items-start">
-                      <div className="flex-shrink-0">
-                        <svg className="w-5 h-5 text-blue-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      </div>
-                      <div className="mr-3">
-                        <h4 className="text-sm font-medium text-blue-800 mb-2">ملاحظات مهمة حول الملفات:</h4>
-                        <ul className="text-sm text-blue-700 space-y-1">
-                          <li>• يجب أن تكون جميع الملفات بصيغة الصور (JPG, PNG, GIF, WEBP) أو PDF</li>
-                          <li>• الحد الأقصى لحجم الملف: 5 ميجابايت</li>
-                          <li>• يجب أن تكون الصور واضحة ومقروءة</li>
-                          <li>• الصورة الشخصية يجب أن تكون حديثة وبخلفية بيضاء</li>
-                          <li>• جميع الملفات مطلوبة لإكمال التسجيل</li>
-                        </ul>
-                      </div>
-                    </div>
+                <div className="space-y-3">
+                  <div className="border-b border-slate-200 pb-2 mb-1">
+                    <h3 className="text-sm font-semibold text-slate-800">المستمسكات والوثائق</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">رفع المستمسكات المطلوبة بصيغة صورة أو PDF</p>
                   </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        صورة البطاقة الوطنية أو الجنسية (الوجه الأول) *
-                        </label>
-                          <input
-                        type="file"
-                        accept="image/*,application/pdf"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] || null;
-                          handleFileChange('nationalIdFront', file);
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        required
-                      />
-                      {formData.documents.nationalIdFront && (
-                        <p className="text-sm text-green-600 mt-1">
-                          تم اختيار الملف: {formData.documents.nationalIdFront.name}
-                        </p>
-                      )}
-                    </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        صورة البطاقة الوطنية أو الجنسية (الوجه الثاني) *
-                        </label>
-                          <input
-                        type="file"
-                        accept="image/*,application/pdf"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] || null;
-                          handleFileChange('nationalIdBack', file);
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        required
-                      />
-                      {formData.documents.nationalIdBack && (
-                        <p className="text-sm text-green-600 mt-1">
-                          تم اختيار الملف: {formData.documents.nationalIdBack.name}
-                        </p>
-                      )}
-                    </div>
+                  <div className="rounded-md border border-slate-300 bg-slate-50 px-3 py-2">
+                    <p className="text-xs font-semibold text-slate-800">ضوابط رفع الملفات</p>
+                    <ul className="mt-1 grid grid-cols-1 gap-0.5 text-[11px] leading-relaxed text-slate-600 sm:grid-cols-2">
+                      <li>• الصيغ المقبولة: JPG, PNG, GIF, WEBP, PDF</li>
+                      <li>• الحد الأقصى لحجم الملف: 5 ميجابايت</li>
+                      <li>• يجب أن تكون الصور واضحة ومقروءة</li>
+                      <li>• الصورة الشخصية حديثة وبخلفية بيضاء</li>
+                    </ul>
+                  </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        صورة بطاقة السكن (الوجه الأول) *
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-2.5 md:grid-cols-2">
+                    <div className="rounded-md border border-slate-200 bg-white p-2.5">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        البطاقة الوطنية / الجنسية — الوجه الأول *
                       </label>
-                          <input
-                        type="file"
-                        accept="image/*,application/pdf"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] || null;
-                          handleFileChange('residenceCardFront', file);
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        required
-                      />
-                      {formData.documents.residenceCardFront && (
-                        <p className="text-sm text-green-600 mt-1">
-                          تم اختيار الملف: {formData.documents.residenceCardFront.name}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        صورة بطاقة السكن (الوجه الثاني) *
-                      </label>
-                          <input
-                        type="file"
-                        accept="image/*,application/pdf"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] || null;
-                          handleFileChange('residenceCardBack', file);
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        required
-                      />
-                      {formData.documents.residenceCardBack && (
-                        <p className="text-sm text-green-600 mt-1">
-                          تم اختيار الملف: {formData.documents.residenceCardBack.name}
-                        </p>
-                      )}
-                    </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                        صورة وثيقة الإعدادية *
-                        </label>
                       <input
                         type="file"
                         accept="image/*,application/pdf"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] || null;
-                          handleFileChange('secondaryCertificate', file);
-                        }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        onChange={(e) => handleFileChange('nationalIdFront', e.target.files?.[0] || null)}
+                        className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
-                        />
-                      {formData.documents.secondaryCertificate && (
-                        <p className="text-sm text-green-600 mt-1">
-                          تم اختيار الملف: {formData.documents.secondaryCertificate.name}
-                        </p>
-                      )}
-                      </div>
+                      />
+                      <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
+                        {formData.documents.nationalIdFront ? `ملف: ${formData.documents.nationalIdFront.name}` : ''}
+                      </p>
+                    </div>
 
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                        صورة شخصية حديثة بخلفية بيضاء *
-                        </label>
+                    <div className="rounded-md border border-slate-200 bg-white p-2.5">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        البطاقة الوطنية / الجنسية — الوجه الثاني *
+                      </label>
                       <input
                         type="file"
                         accept="image/*,application/pdf"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] || null;
-                          handleFileChange('personalPhoto', file);
-                        }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        onChange={(e) => handleFileChange('nationalIdBack', e.target.files?.[0] || null)}
+                        className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
-                      {formData.documents.personalPhoto && (
-                        <p className="text-sm text-green-600 mt-1">
-                          تم اختيار الملف: {formData.documents.personalPhoto.name}
-                        </p>
-                      )}
+                      <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
+                        {formData.documents.nationalIdBack ? `ملف: ${formData.documents.nationalIdBack.name}` : ''}
+                      </p>
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <div className="rounded-md border border-slate-200 bg-white p-2.5">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        بطاقة السكن — الوجه الأول *
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        onChange={(e) => handleFileChange('residenceCardFront', e.target.files?.[0] || null)}
+                        className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                        required
+                      />
+                      <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
+                        {formData.documents.residenceCardFront ? `ملف: ${formData.documents.residenceCardFront.name}` : ''}
+                      </p>
+                    </div>
+
+                    <div className="rounded-md border border-slate-200 bg-white p-2.5">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        بطاقة السكن — الوجه الثاني *
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        onChange={(e) => handleFileChange('residenceCardBack', e.target.files?.[0] || null)}
+                        className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                        required
+                      />
+                      <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
+                        {formData.documents.residenceCardBack ? `ملف: ${formData.documents.residenceCardBack.name}` : ''}
+                      </p>
+                    </div>
+
+                    <div className="rounded-md border border-slate-200 bg-white p-2.5">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        وثيقة الإعدادية *
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        onChange={(e) => handleFileChange('secondaryCertificate', e.target.files?.[0] || null)}
+                        className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                        required
+                      />
+                      <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
+                        {formData.documents.secondaryCertificate ? `ملف: ${formData.documents.secondaryCertificate.name}` : ''}
+                      </p>
+                    </div>
+
+                    <div className="rounded-md border border-slate-200 bg-white p-2.5">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        صورة شخصية (خلفية بيضاء) *
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        onChange={(e) => handleFileChange('personalPhoto', e.target.files?.[0] || null)}
+                        className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                        required
+                      />
+                      <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
+                        {formData.documents.personalPhoto ? `ملف: ${formData.documents.personalPhoto.name}` : ''}
+                      </p>
+                    </div>
+
+                    <div className="rounded-md border border-slate-200 bg-white p-2.5 md:col-span-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
                         الفحص الطبي *
                       </label>
                       <input
                         type="file"
                         accept="image/*,application/pdf"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] || null;
-                          handleFileChange('medicalExamination', file);
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        onChange={(e) => handleFileChange('medicalExamination', e.target.files?.[0] || null)}
+                        className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
-                      {formData.documents.medicalExamination && (
-                        <p className="text-sm text-green-600 mt-1">
-                          تم اختيار الملف: {formData.documents.medicalExamination.name}
-                        </p>
-                      )}
+                      <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
+                        {formData.documents.medicalExamination ? `ملف: ${formData.documents.medicalExamination.name}` : ''}
+                      </p>
                     </div>
                   </div>
-              </div>
+                </div>
               )}
               </div>
 
             {/* Footer */}
-            <div className="bg-gray-50 px-6 py-2 flex justify-between items-center">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-300 bg-slate-50 px-5 py-3">
               <button
+                type="button"
                 onClick={prevStep}
                 disabled={currentStep === 1}
-                className={`px-3 py-1.5 text-sm rounded-lg transition-colors duration-200 ${
+                className={`inline-flex min-w-[88px] items-center justify-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
                   currentStep === 1
-                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    : 'bg-gray-600 hover:bg-gray-700 text-white'
+                    ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
                 }`}
               >
                 السابق
               </button>
 
-              <div className="flex space-x-2 space-x-reverse">
-                {/* زر التحديث في كل خطوة */}
+              <p className="hidden text-xs text-slate-500 sm:block">
+                المرحلة {currentStep} من 4
+              </p>
+
+              <div className="flex items-center gap-2">
                 {editingStudentId && (
                   <button
+                    type="button"
                     onClick={handleQuickUpdate}
                     disabled={isSaving}
-                    className="px-4 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
                     {isSaving ? 'جاري التحديث...' : 'تحديث'}
                   </button>
                 )}
-                
+
                 {currentStep < 4 ? (
                   <button
+                    type="button"
                     onClick={nextStep}
-                    className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors duration-200"
+                    className="inline-flex min-w-[88px] items-center justify-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-900"
                   >
                     التالي
                   </button>
                 ) : (
                   !editingStudentId && (
                     <button
+                      type="button"
                       onClick={handleSave}
-                      className="px-4 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors duration-200"
+                      className="inline-flex min-w-[88px] items-center justify-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-900"
                     >
                       حفظ
                     </button>
@@ -2299,29 +2203,33 @@ export default function StudentFormModal({
 
       {/* Review Modal */}
       {showReviewModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[70] p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-orange-600 to-orange-500 px-6 py-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-white">مراجعة البيانات قبل الحفظ</h2>
-                <button
-                  onClick={() => setShowReviewModal(false)}
-                  className="text-white hover:text-orange-200 transition-colors duration-200"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/45 p-3 sm:p-4 backdrop-blur-[1px]">
+          <div
+            className="flex w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-xl"
+            style={{ height: 'min(580px, 84vh)' }}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-300 bg-slate-50 px-5 py-3">
+              <div>
+                <p className="text-[11px] font-medium tracking-wide text-slate-500">مراجعة قبل الاعتماد</p>
+                <h2 className="text-base font-semibold text-slate-900">مراجعة البيانات قبل الحفظ</h2>
               </div>
+              <button
+                type="button"
+                onClick={() => setShowReviewModal(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
+                aria-label="إغلاق"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
 
-            {/* Content */}
-            <div className="p-6 max-h-[60vh] overflow-y-auto">
-              <div className="space-y-6">
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold text-blue-800 mb-2">البيانات الشخصية</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div className="min-h-0 flex-1 overflow-y-auto bg-white px-5 py-4">
+              <div className="space-y-3">
+                <div className="rounded-md border border-slate-200 p-3">
+                  <h3 className="mb-2 border-b border-slate-100 pb-1.5 text-sm font-semibold text-slate-800">البيانات الشخصية</h3>
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-1.5 text-xs text-slate-700 md:grid-cols-3">
                     <div><strong>الاسم الرباعي:</strong> {formData.personalData.fullName}</div>
                     <div><strong>اللقب:</strong> {formData.personalData.nickname}</div>
                     <div><strong>اسم الأم الثلاثي:</strong> {formData.personalData.motherName}</div>
@@ -2334,13 +2242,12 @@ export default function StudentFormModal({
                     <div><strong>الحالة الاجتماعية:</strong> {formData.personalData.maritalStatus === 'single' ? 'أعزب' : formData.personalData.maritalStatus === 'married' ? 'متزوج' : formData.personalData.maritalStatus === 'divorced' ? 'مطلق' : 'أرمل'}</div>
                     <div><strong>الهاتف:</strong> {formData.personalData.phone}</div>
                     <div><strong>البريد الإلكتروني:</strong> {formData.personalData.email}</div>
-                    <div><strong>العنوان:</strong> {formData.personalData.address}</div>
                   </div>
                 </div>
 
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold text-green-800 mb-2">الدراسة الإعدادية</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div className="rounded-md border border-slate-200 p-3">
+                  <h3 className="mb-2 border-b border-slate-100 pb-1.5 text-sm font-semibold text-slate-800">الدراسة الإعدادية</h3>
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-1.5 text-xs text-slate-700 md:grid-cols-3">
                     <div><strong>اسم المدرسة:</strong> {formData.secondaryEducation.schoolName}</div>
                     <div><strong>نوع المدرسة:</strong> {formData.secondaryEducation.schoolType === 'public' ? 'حكومية' : formData.secondaryEducation.schoolType === 'private' ? 'أهلية' : 'دولية'}</div>
                     <div><strong>سنة التخرج:</strong> {formData.secondaryEducation.graduationYear}</div>
@@ -2353,9 +2260,9 @@ export default function StudentFormModal({
                   </div>
                 </div>
 
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold text-purple-800 mb-2">القبول الجامعي</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div className="rounded-md border border-slate-200 p-3">
+                  <h3 className="mb-2 border-b border-slate-100 pb-1.5 text-sm font-semibold text-slate-800">القبول الجامعي</h3>
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-1.5 text-xs text-slate-700 md:grid-cols-3">
                     <div><strong>المرحلة:</strong> {formData.universityAdmission.admissionType === 'first' ? 'الأولى' : formData.universityAdmission.admissionType === 'second' ? 'الثانية' : formData.universityAdmission.admissionType === 'third' ? 'الثالثة' : 'الرابعة'}</div>
                     <div><strong>قناة القبول:</strong> {
                       formData.universityAdmission.admissionChannel === 'general' ? 'القناة العامة' :
@@ -2379,41 +2286,43 @@ export default function StudentFormModal({
                   </div>
                 </div>
 
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold text-yellow-800 mb-2">المستمسكات والوثائق</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                    <div><strong>صورة البطاقة الوطنية (الوجه الأول):</strong> {formData.documents.nationalIdFront ? 'تم رفع الملف' : 'لم يتم رفع الملف'}</div>
-                    <div><strong>صورة البطاقة الوطنية (الوجه الثاني):</strong> {formData.documents.nationalIdBack ? 'تم رفع الملف' : 'لم يتم رفع الملف'}</div>
-                    <div><strong>صورة بطاقة السكن (الوجه الأول):</strong> {formData.documents.residenceCardFront ? 'تم رفع الملف' : 'لم يتم رفع الملف'}</div>
-                    <div><strong>صورة بطاقة السكن (الوجه الثاني):</strong> {formData.documents.residenceCardBack ? 'تم رفع الملف' : 'لم يتم رفع الملف'}</div>
-                    <div><strong>صورة وثيقة الإعدادية:</strong> {formData.documents.secondaryCertificate ? 'تم رفع الملف' : 'لم يتم رفع الملف'}</div>
-                    <div><strong>الصورة الشخصية:</strong> {formData.documents.personalPhoto ? 'تم رفع الملف' : 'لم يتم رفع الملف'}</div>
-                    <div><strong>الفحص الطبي:</strong> {formData.documents.medicalExamination ? 'تم رفع الملف' : 'لم يتم رفع الملف'}</div>
+                <div className="rounded-md border border-slate-200 p-3">
+                  <h3 className="mb-2 border-b border-slate-100 pb-1.5 text-sm font-semibold text-slate-800">المستمسكات والوثائق</h3>
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-1.5 text-xs text-slate-700 md:grid-cols-2">
+                    <div><strong>البطاقة الوطنية (وجه 1):</strong> {formData.documents.nationalIdFront ? 'مرفق' : 'غير مرفق'}</div>
+                    <div><strong>البطاقة الوطنية (وجه 2):</strong> {formData.documents.nationalIdBack ? 'مرفق' : 'غير مرفق'}</div>
+                    <div><strong>بطاقة السكن (وجه 1):</strong> {formData.documents.residenceCardFront ? 'مرفق' : 'غير مرفق'}</div>
+                    <div><strong>بطاقة السكن (وجه 2):</strong> {formData.documents.residenceCardBack ? 'مرفق' : 'غير مرفق'}</div>
+                    <div><strong>وثيقة الإعدادية:</strong> {formData.documents.secondaryCertificate ? 'مرفق' : 'غير مرفق'}</div>
+                    <div><strong>الصورة الشخصية:</strong> {formData.documents.personalPhoto ? 'مرفق' : 'غير مرفق'}</div>
+                    <div><strong>الفحص الطبي:</strong> {formData.documents.medicalExamination ? 'مرفق' : 'غير مرفق'}</div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Footer */}
-            <div className="bg-gray-50 px-6 py-4 flex justify-between items-center">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-300 bg-slate-50 px-5 py-3">
               <button
+                type="button"
                 onClick={() => setShowReviewModal(false)}
-                className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors duration-200"
+                className="inline-flex min-w-[88px] items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
               >
                 إلغاء
               </button>
-              <div className="flex gap-3">
+              <div className="flex items-center gap-2">
                 {!editingStudentId && (
                   <button
+                    type="button"
                     onClick={saveAsPendingRegistration}
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors duration-200"
+                    className="inline-flex items-center justify-center rounded-md border border-slate-700 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-100"
                   >
                     قيد التسجيل
                   </button>
                 )}
                 <button
+                  type="button"
                   onClick={confirmSave}
-                  className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors duration-200"
+                  className="inline-flex items-center justify-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-900"
                 >
                   {editingStudentId ? 'تأكيد التحديث' : 'تأكيد الحفظ'}
                 </button>
