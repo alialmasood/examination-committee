@@ -151,6 +151,15 @@ export default function StudentAffairsLayout({
       ),
     },
     {
+      name: 'تعديل الطلبة',
+      href: '/student-affairs/students/edit',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </svg>
+      ),
+    },
+    {
       name: 'ترحيل الطلبة',
       href: '/student-affairs/promotions',
       icon: (
@@ -264,9 +273,9 @@ export default function StudentAffairsLayout({
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex">
+    <div className="flex min-h-screen overflow-x-hidden bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
       {/* Sidebar */}
-      <aside className={`bg-gradient-to-b from-gray-900 via-black to-gray-800 backdrop-blur-xl shadow-2xl border-l border-gray-700/50 transition-all duration-300 fixed top-0 right-0 z-40 flex flex-col ${
+      <aside className={`bg-gradient-to-b from-gray-900 via-black to-gray-800 backdrop-blur-xl shadow-2xl border-l border-gray-700/50 transition-all duration-300 fixed top-0 right-0 z-[60] flex flex-col ${
         sidebarOpen ? 'w-64' : 'w-0'
       } overflow-hidden overflow-x-hidden h-screen`}>
           {/* Header Section in Sidebar */}
@@ -303,7 +312,13 @@ export default function StudentAffairsLayout({
                 const isActive =
                   item.href === '/student-affairs'
                     ? pathname === item.href
-                    : pathname === item.href || Boolean(pathname?.startsWith(`${item.href}/`));
+                    : item.href === '/student-affairs/students'
+                      ? pathname === item.href ||
+                        Boolean(
+                          pathname?.startsWith('/student-affairs/students/') &&
+                            !pathname.startsWith('/student-affairs/students/edit')
+                        )
+                      : pathname === item.href || Boolean(pathname?.startsWith(`${item.href}/`));
                 return (
                 <li key={item.name} className="w-full overflow-hidden">
                   <Link
@@ -347,7 +362,7 @@ export default function StudentAffairsLayout({
         </aside>
 
         {/* Main Content Area */}
-        <div className={`flex-1 flex flex-col transition-all duration-300 ${sidebarOpen ? 'mr-64' : 'mr-0'}`}>
+        <div className={`flex min-w-0 flex-1 flex-col overflow-x-hidden transition-all duration-300 ${sidebarOpen ? 'mr-64' : 'mr-0'}`}>
           {/* Header */}
           <header className="bg-gradient-to-r from-blue-600 via-blue-500 to-blue-400 backdrop-blur-xl shadow-2xl border-b border-blue-400/30 sticky top-0 z-50">
             <div className="flex items-center justify-between px-6 py-5">
@@ -432,8 +447,8 @@ export default function StudentAffairsLayout({
           </header>
 
           {/* Main Content */}
-          <main className={`flex-1 ${pathname === '/student-affairs/students/list' ? 'p-3 lg:p-4' : 'p-8'}`}>
-            <div className={pathname === '/student-affairs/students/list' ? 'w-full max-w-none' : 'max-w-7xl mx-auto'}>
+          <main className={`min-w-0 flex-1 overflow-x-hidden ${pathname === '/student-affairs/students/list' || pathname === '/student-affairs/students/edit' ? 'p-3 lg:p-4' : 'p-8'}`}>
+            <div className={pathname === '/student-affairs/students/list' || pathname === '/student-affairs/students/edit' ? 'w-full min-w-0 max-w-full' : 'max-w-7xl mx-auto'}>
               {children}
             </div>
           </main>

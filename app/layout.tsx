@@ -56,7 +56,7 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl">
       <body
-        className={`${cairo.variable} font-sans antialiased`}
+        className={`${cairo.variable} font-sans antialiased overflow-x-hidden`}
       >
         {children}
         <RegisterSW />

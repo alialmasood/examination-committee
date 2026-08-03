@@ -289,6 +289,7 @@ export async function GET(request: NextRequest) {
         secondary_achievements: row.secondary_achievements,
         secondary_activities: row.secondary_activities,
         admission_type: row.admission_type,
+        admission_channel: row.admission_channel || '',
         department: row.major, // استخدام major كـ department
         major: row.major,
         study_type: row.study_type || 'morning',
