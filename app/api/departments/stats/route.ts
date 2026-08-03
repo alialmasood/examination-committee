@@ -17,6 +17,22 @@ const DEPARTMENTS = [
   { id: 'law', name: 'القانون', arabicName: 'القانون' }
 ];
 
+type YearKey = 'first' | 'second' | 'third' | 'fourth';
+type StudyTypeKey = 'morning' | 'evening';
+
+const emptyYears = () => ({ first: 0, second: 0, third: 0, fourth: 0 });
+
+const normalizeYear = (value: string | null): YearKey | null => {
+  if (value === 'first' || value === 'second' || value === 'third' || value === 'fourth') {
+    return value;
+  }
+  return null;
+};
+
+const normalizeStudyType = (value: string | null): StudyTypeKey => {
+  return value === 'evening' ? 'evening' : 'morning';
+};
+
 // GET /api/departments/stats - جلب إحصائيات الأقسام الأكاديمية
 export async function GET(request: NextRequest) {
   try {
@@ -29,137 +45,117 @@ export async function GET(request: NextRequest) {
         ? ''
         : academicYearRaw || '2025-2026';
 
-    const statsPromises = DEPARTMENTS.map(async (dept) => {
-      // جلب إجمالي عدد الطلاب في القسم - استخدام دالة تطبيع النص العربي
-      const totalQuery = academicYear
-        ? `SELECT COUNT(*) as total FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1) AND academic_year = $2`
-        : `SELECT COUNT(*) as total FROM student_affairs.students WHERE normalize_arabic(major) = normalize_arabic($1)`;
-      const totalParams = academicYear ? [dept.arabicName, academicYear] : [dept.arabicName];
-      const totalResult = await query(totalQuery, totalParams);
-      const total = parseInt(totalResult.rows[0].total);
+    const yearFilter = academicYear ? 'AND academic_year = $1' : '';
+    const yearParams = academicYear ? [academicYear] : [];
+    const deptNames = DEPARTMENTS.map((d) => d.arabicName);
 
-      // دالة مساعدة لجلب إحصائيات حسب نوع الدراسة والمرحلة
-      const getStatsByStudyType = async (studyType: string) => {
-        const firstYearQuery = academicYear
-          ? `SELECT COUNT(*) as count FROM student_affairs.students 
-             WHERE normalize_arabic(major) = normalize_arabic($1) 
-             AND admission_type = $2 
-             AND COALESCE(study_type, 'morning') = $3
-             AND academic_year = $4`
-          : `SELECT COUNT(*) as count FROM student_affairs.students 
-             WHERE normalize_arabic(major) = normalize_arabic($1) 
-             AND admission_type = $2 
-             AND COALESCE(study_type, 'morning') = $3`;
-        const firstYearParams = academicYear 
-          ? [dept.arabicName, 'first', studyType, academicYear]
-          : [dept.arabicName, 'first', studyType];
-        const firstYear = await query(firstYearQuery, firstYearParams);
-        
-        const secondYearQuery = academicYear
-          ? `SELECT COUNT(*) as count FROM student_affairs.students 
-             WHERE normalize_arabic(major) = normalize_arabic($1) 
-             AND admission_type = $2 
-             AND COALESCE(study_type, 'morning') = $3
-             AND academic_year = $4`
-          : `SELECT COUNT(*) as count FROM student_affairs.students 
-             WHERE normalize_arabic(major) = normalize_arabic($1) 
-             AND admission_type = $2 
-             AND COALESCE(study_type, 'morning') = $3`;
-        const secondYearParams = academicYear 
-          ? [dept.arabicName, 'second', studyType, academicYear]
-          : [dept.arabicName, 'second', studyType];
-        const secondYear = await query(secondYearQuery, secondYearParams);
-        
-        const thirdYearQuery = academicYear
-          ? `SELECT COUNT(*) as count FROM student_affairs.students 
-             WHERE normalize_arabic(major) = normalize_arabic($1) 
-             AND admission_type = $2 
-             AND COALESCE(study_type, 'morning') = $3
-             AND academic_year = $4`
-          : `SELECT COUNT(*) as count FROM student_affairs.students 
-             WHERE normalize_arabic(major) = normalize_arabic($1) 
-             AND admission_type = $2 
-             AND COALESCE(study_type, 'morning') = $3`;
-        const thirdYearParams = academicYear 
-          ? [dept.arabicName, 'third', studyType, academicYear]
-          : [dept.arabicName, 'third', studyType];
-        const thirdYear = await query(thirdYearQuery, thirdYearParams);
-        
-        const fourthYearQuery = academicYear
-          ? `SELECT COUNT(*) as count FROM student_affairs.students 
-             WHERE normalize_arabic(major) = normalize_arabic($1) 
-             AND admission_type = $2 
-             AND COALESCE(study_type, 'morning') = $3
-             AND academic_year = $4`
-          : `SELECT COUNT(*) as count FROM student_affairs.students 
-             WHERE normalize_arabic(major) = normalize_arabic($1) 
-             AND admission_type = $2 
-             AND COALESCE(study_type, 'morning') = $3`;
-        const fourthYearParams = academicYear 
-          ? [dept.arabicName, 'fourth', studyType, academicYear]
-          : [dept.arabicName, 'fourth', studyType];
-        const fourthYear = await query(fourthYearQuery, fourthYearParams);
+    // مفاتيح تطبيع أسماء الأقسام المعروفة + أعداد الطلاب مجمّعة في استعلامين فقط
+    const [keyMapResult, countsResult] = await Promise.all([
+      query(
+        `SELECT name, normalize_arabic(name) AS major_key
+         FROM unnest($1::text[]) AS name`,
+        [deptNames]
+      ),
+      query(
+        `SELECT
+           normalize_arabic(major) AS major_key,
+           admission_type,
+           COALESCE(study_type, 'morning') AS study_type,
+           COUNT(*)::int AS count
+         FROM student_affairs.students
+         WHERE major IS NOT NULL
+           ${yearFilter}
+         GROUP BY normalize_arabic(major), admission_type, COALESCE(study_type, 'morning')`,
+        yearParams
+      ),
+    ]);
 
-        return {
-          first: parseInt(firstYear.rows[0].count),
-          second: parseInt(secondYear.rows[0].count),
-          third: parseInt(thirdYear.rows[0].count),
-          fourth: parseInt(fourthYear.rows[0].count)
-        };
-      };
+    const nameToKey = new Map<string, string>();
+    for (const row of keyMapResult.rows) {
+      nameToKey.set(row.name, row.major_key);
+    }
 
-      // جلب إحصائيات الصباحي والمسائي
-      const [morningStats, eveningStats] = await Promise.all([
-        getStatsByStudyType('morning'),
-        getStatsByStudyType('evening')
-      ]);
-
-      // إجمالي المبالغ = مجموع pay_amount من وصولات التسديد الفعلية فقط
-      // (وليس payment_amount بعد «تأكيد الدفع» الذي يخزّن قسط السنة المتوقع)
-      let totalAmount = 0;
-      try {
-        const totalAmountQuery = academicYear
-          ? `SELECT COALESCE(SUM(r.pay_amount), 0) AS total_amount
-             FROM accounts.student_settlement_receipts r
-             INNER JOIN student_affairs.students s ON s.id = r.student_id
-             WHERE normalize_arabic(s.major) = normalize_arabic($1)
-               AND s.academic_year = $2`
-          : `SELECT COALESCE(SUM(r.pay_amount), 0) AS total_amount
-             FROM accounts.student_settlement_receipts r
-             INNER JOIN student_affairs.students s ON s.id = r.student_id
-             WHERE normalize_arabic(s.major) = normalize_arabic($1)`;
-        const totalAmountParams = academicYear
-          ? [dept.arabicName, academicYear]
-          : [dept.arabicName];
-        const totalAmountResult = await query(totalAmountQuery, totalAmountParams);
-        totalAmount = parseFloat(totalAmountResult.rows[0].total_amount);
-      } catch {
-        totalAmount = 0;
+    const statsByMajor = new Map<
+      string,
+      {
+        total: number;
+        morning: ReturnType<typeof emptyYears>;
+        evening: ReturnType<typeof emptyYears>;
       }
+    >();
+
+    for (const row of countsResult.rows) {
+      const majorKey = row.major_key as string;
+      if (!statsByMajor.has(majorKey)) {
+        statsByMajor.set(majorKey, {
+          total: 0,
+          morning: emptyYears(),
+          evening: emptyYears(),
+        });
+      }
+      const bucket = statsByMajor.get(majorKey)!;
+      const count = parseInt(row.count, 10) || 0;
+      bucket.total += count;
+
+      const year = normalizeYear(row.admission_type);
+      const studyType = normalizeStudyType(row.study_type);
+      if (year) {
+        bucket[studyType][year] += count;
+      }
+    }
+
+    // مجموع المبالغ من الوصولات الفعلية — استعلام واحد مجمّع حسب القسم
+    const amountsByMajor = new Map<string, number>();
+    try {
+      const amountYearFilter = academicYear ? 'AND s.academic_year = $1' : '';
+      const amountsResult = await query(
+        `SELECT
+           normalize_arabic(s.major) AS major_key,
+           COALESCE(SUM(r.pay_amount), 0)::float AS total_amount
+         FROM accounts.student_settlement_receipts r
+         INNER JOIN student_affairs.students s ON s.id = r.student_id
+         WHERE s.major IS NOT NULL
+           ${amountYearFilter}
+         GROUP BY normalize_arabic(s.major)`,
+        yearParams
+      );
+      for (const row of amountsResult.rows) {
+        amountsByMajor.set(row.major_key, parseFloat(row.total_amount) || 0);
+      }
+    } catch {
+      // جدول الوصولات قد لا يكون متاحاً — نترك المبالغ صفراً
+    }
+
+    const stats = DEPARTMENTS.map((dept) => {
+      const majorKey = nameToKey.get(dept.arabicName) || dept.arabicName;
+      const bucket = statsByMajor.get(majorKey) || {
+        total: 0,
+        morning: emptyYears(),
+        evening: emptyYears(),
+      };
+      const totalAmount = amountsByMajor.get(majorKey) || 0;
 
       return {
         id: dept.id,
         name: dept.arabicName,
-        total: total,
-        totalAmount: totalAmount,
+        total: bucket.total,
+        totalAmount,
         years: {
-          first: morningStats.first + eveningStats.first,
-          second: morningStats.second + eveningStats.second,
-          third: morningStats.third + eveningStats.third,
-          fourth: morningStats.fourth + eveningStats.fourth
+          first: bucket.morning.first + bucket.evening.first,
+          second: bucket.morning.second + bucket.evening.second,
+          third: bucket.morning.third + bucket.evening.third,
+          fourth: bucket.morning.fourth + bucket.evening.fourth,
         },
         studyTypes: {
-          morning: morningStats,
-          evening: eveningStats
-        }
+          morning: { ...bucket.morning },
+          evening: { ...bucket.evening },
+        },
       };
     });
 
-    const stats = await Promise.all(statsPromises);
-
     return NextResponse.json({
       success: true,
-      data: stats
+      data: stats,
     });
   } catch (error) {
     console.error('خطأ في جلب إحصائيات الأقسام:', error);

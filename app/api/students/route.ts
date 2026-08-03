@@ -217,28 +217,6 @@ export async function GET(request: NextRequest) {
     queryParams.push(limit, offset);
     const studentsResult = await query(studentsQuery, queryParams);
     
-    // التحقق من القيم المسترجعة
-    console.log('🔍 عينة من بيانات الطلاب من قاعدة البيانات:', studentsResult.rows.slice(0, 2).map((row: any) => ({
-      name: row.full_name,
-      province: row.province,
-      province_type: typeof row.province,
-      admission_type: row.admission_type,
-      study_type: row.study_type,
-      level: row.level,
-      academic_year: row.academic_year,
-      semester: row.semester
-    })));
-    
-    // التحقق من أن province موجود في النتيجة
-    if (studentsResult.rows.length > 0) {
-      console.log('🔍 التحقق من province في أول طالب:', {
-        has_province: 'province' in studentsResult.rows[0],
-        province_value: studentsResult.rows[0].province,
-        province_type: typeof studentsResult.rows[0].province,
-        all_keys: Object.keys(studentsResult.rows[0])
-      });
-    }
-    
     // جلب academic_status لكل طالب بشكل منفصل (إذا كان العمود موجوداً)
     const academicStatusMap: Record<string, string> = {};
     try {
@@ -273,32 +251,6 @@ export async function GET(request: NextRequest) {
     }
     
     const students: (Student & { academic_status?: string })[] = studentsResult.rows.map(row => {
-      console.log('بيانات الطالب من قاعدة البيانات:', {
-        id: row.id,
-        full_name: row.full_name,
-        phone: row.phone,
-        secondary_gpa: row.secondary_gpa,
-        study_type: row.study_type,
-        semester: row.semester,
-        province: row.province,
-        province_type: typeof row.province,
-        province_is_null: row.province === null,
-        province_is_undefined: row.province === undefined,
-        mother_name: row.mother_name,
-        area: row.area,
-        exam_attempt: row.exam_attempt,
-        exam_number: row.exam_number,
-        exam_password: row.exam_password,
-        branch: row.branch,
-        has_province: 'province' in row,
-        has_mother_name: 'mother_name' in row,
-        has_area: 'area' in row,
-        has_exam_attempt: 'exam_attempt' in row,
-        has_exam_number: 'exam_number' in row,
-        has_exam_password: 'exam_password' in row,
-        has_branch: 'branch' in row
-      });
-      
       return {
         id: row.id,
         university_id: row.university_id,
@@ -393,67 +345,8 @@ export async function GET(request: NextRequest) {
 // POST /api/students - إضافة طالب جديد
 export async function POST(request: NextRequest) {
   try {
-    // التحقق من وجود عمود admission_channel وإنشاؤه إذا لم يكن موجوداً
-    try {
-      await query(`
-        ALTER TABLE student_affairs.students
-        ADD COLUMN IF NOT EXISTS admission_channel VARCHAR(50)
-      `);
-    } catch (error) {
-      // تجاهل الخطأ إذا كان العمود موجوداً بالفعل
-      console.log('عمود admission_channel موجود بالفعل أو حدث خطأ في التحقق:', error);
-    }
-    
-    // التحقق من وجود عمود username وإنشاؤه إذا لم يكن موجوداً
-    try {
-      await query(`
-        ALTER TABLE student_affairs.students
-        ADD COLUMN IF NOT EXISTS username VARCHAR(100)
-      `);
-    } catch (error) {
-      console.log('عمود username موجود بالفعل أو حدث خطأ في التحقق:', error);
-    }
-    
-    // التحقق من وجود عمود password وإنشاؤه إذا لم يكن موجوداً
-    try {
-      await query(`
-        ALTER TABLE student_affairs.students
-        ADD COLUMN IF NOT EXISTS password VARCHAR(255)
-      `);
-    } catch (error) {
-      console.log('عمود password موجود بالفعل أو حدث خطأ في التحقق:', error);
-    }
-    
-    // التحقق من طول عمود secondary_graduation_year وتعديله إذا لزم الأمر
-    try {
-      const columnInfo = await query(`
-        SELECT character_maximum_length 
-        FROM information_schema.columns 
-        WHERE table_schema = 'student_affairs' 
-          AND table_name = 'students' 
-          AND column_name = 'secondary_graduation_year'
-      `);
-      
-      if (columnInfo.rows.length > 0) {
-        const currentLength = columnInfo.rows[0].character_maximum_length;
-        if (currentLength && parseInt(currentLength) < 10) {
-          console.log('🔧 تعديل طول عمود secondary_graduation_year من', currentLength, 'إلى 10');
-          await query(`
-            ALTER TABLE student_affairs.students 
-            ALTER COLUMN secondary_graduation_year TYPE VARCHAR(10)
-          `);
-          console.log('✅ تم تعديل طول العمود بنجاح');
-        }
-      }
-    } catch (error) {
-      console.log('⚠️ خطأ في التحقق من طول عمود secondary_graduation_year:', error);
-      // لا نوقف العملية إذا فشل التحقق
-    }
-    
-    console.log('🚀 === بدء API حفظ الطالب ===');
     const body = await request.json() as Record<string, unknown>;
-    console.log('📥 البيانات المستلمة من الفورم:', body);
-    
+
     // التحقق من البيانات المطلوبة
     if (!body.full_name || !body.birth_date || !body.gender) {
       return NextResponse.json(
@@ -516,30 +409,6 @@ export async function POST(request: NextRequest) {
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49
       ) RETURNING id, university_id, created_at
     `;
-    
-    console.log('=== بدء API حفظ الطالب ===');
-    console.log('بيانات الطالب المرسلة:', {
-      full_name: body.full_name,
-      department: body.department,
-      major: body.major,
-      academic_year: body.academic_year,
-      secondary_gpa: body.secondary_gpa,
-      study_type: body.study_type,
-      semester: body.semester,
-      mother_name: body.mother_name,
-      area: body.area
-    });
-    
-    console.log('🔍 تفاصيل البيانات المرسلة:', {
-      mother_name: body.mother_name,
-      area: body.area,
-      mother_name_type: typeof body.mother_name,
-      area_type: typeof body.area
-    });
-    
-    console.log('🔍 جميع البيانات المرسلة:', JSON.stringify(body, null, 2));
-    
-    console.log('بدء حفظ الطالب في قاعدة البيانات...');
 
     const nationalId =
       typeof body.national_id === 'string' && body.national_id.trim() !== ''
@@ -550,23 +419,6 @@ export async function POST(request: NextRequest) {
     const nameParts = fullName.split(' ');
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ') || '';
-    
-    console.log('تقسيم الاسم:', {
-      fullName,
-      firstName,
-      lastName,
-      nameParts,
-      nickname: body.nickname
-    });
-    
-    console.log('📁 بيانات الملفات المرسلة:', {
-      national_id_copy: body.national_id_copy,
-      birth_certificate: body.birth_certificate,
-      secondary_certificate: body.secondary_certificate,
-      photo: body.photo,
-      medical_certificate: body.medical_certificate,
-      other_documents: body.other_documents
-    });
     
     const result = await query(insertQuery, [
       university_id,
@@ -605,11 +457,7 @@ export async function POST(request: NextRequest) {
         if (body.secondary_gpa !== undefined && body.secondary_gpa !== null && body.secondary_gpa !== '' && String(body.secondary_gpa).trim() !== '') {
           const gpaValue = parseFloat(String(body.secondary_gpa));
           const finalValue = isNaN(gpaValue) ? 0 : Math.min(gpaValue, 100);
-          console.log('📊 API - المعدل التراكمي المستلم:', body.secondary_gpa, 'نوع:', typeof body.secondary_gpa);
-          console.log('📊 API - بعد التحويل:', finalValue, 'نوع:', typeof finalValue, 'كسور عشرية:', finalValue % 1 !== 0);
-          console.log('📊 API - القيمة النهائية المرسلة لقاعدة البيانات:', finalValue);
-          // التأكد من أن القيمة decimal وليست integer
-          return finalValue; // الحفاظ على الكسور العشرية
+          return finalValue;
         }
         return 0;
       })(), // المعدل التراكمي - $32
@@ -633,16 +481,6 @@ export async function POST(request: NextRequest) {
     ]);
     
     const newStudent = result.rows[0];
-    console.log('✅ تم حفظ الطالب بنجاح مع جميع الحقول!');
-    
-    // التحقق من القيمة المحفوظة
-    const verifyGpa = await query(
-      'SELECT secondary_gpa FROM student_affairs.students WHERE id = $1',
-      [newStudent.id]
-    );
-    if (verifyGpa.rows.length > 0) {
-      console.log('📊 المعدل التراكمي المحفوظ في قاعدة البيانات:', verifyGpa.rows[0].secondary_gpa, 'نوع:', typeof verifyGpa.rows[0].secondary_gpa);
-    }
     
     // تسجيل العملية في سجل العمليات
     try {
