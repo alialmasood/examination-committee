@@ -8,6 +8,7 @@ import {
   type ApplicationSnapshot,
   type PrintMode,
 } from '@/src/lib/student-application-print';
+import { buildBrowserPublicApplicationUrl } from '@/src/lib/site-url';
 
 const DEPARTMENTS = [
   'تقنيات التخدير',
@@ -241,7 +242,7 @@ export default function NewRegistrationsPage() {
         alert('لا توجد بيانات استمارة لهذا الطلب');
         return;
       }
-      const publicUrl = `${window.location.origin}/public/application/${row.code}`;
+      const publicUrl = buildBrowserPublicApplicationUrl(row.code);
       const html = buildApplicationPrintHtml({
         snapshot,
         code: row.code,

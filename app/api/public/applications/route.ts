@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createPublicApplication } from '@/src/lib/public-applications';
 import type { ApplicationSnapshot } from '@/src/lib/student-application-print';
+import { buildPublicApplicationUrl, getRequestSiteOrigin } from '@/src/lib/site-url';
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,8 +15,8 @@ export async function POST(request: NextRequest) {
     }
 
     const code = await createPublicApplication(payload);
-    const origin = request.nextUrl.origin;
-    const url = `${origin}/public/application/${code}`;
+    const origin = getRequestSiteOrigin(request);
+    const url = buildPublicApplicationUrl(origin, code);
 
     return NextResponse.json({ success: true, code, url });
   } catch (error) {

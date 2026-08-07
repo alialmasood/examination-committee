@@ -16,6 +16,7 @@ import {
   labelStudyType,
   type PrintMode,
 } from '@/src/lib/student-application-print';
+import { buildBrowserPublicApplicationUrl } from '@/src/lib/site-url';
 
 const DOC_LABELS: Record<string, string> = {
   nationalIdFront: 'البطاقة الوطنية (وجه 1)',
@@ -35,8 +36,8 @@ export default function PublicApplicationPage() {
   const [snapshot, setSnapshot] = useState<ApplicationSnapshot | null>(null);
 
   const publicUrl = useMemo(() => {
-    if (typeof window === 'undefined') return '';
-    return `${window.location.origin}/public/application/${code}`;
+    if (!code) return '';
+    return buildBrowserPublicApplicationUrl(code);
   }, [code]);
 
   useEffect(() => {
@@ -124,8 +125,8 @@ export default function PublicApplicationPage() {
   const p = snapshot.personalData;
   const se = snapshot.secondaryEducation;
   const u = snapshot.universityAdmission;
-  const barcodeImg = `https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(code)}&code=Code128&dpi=120&dataseparator=`;
-  const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(publicUrl)}`;
+  const barcodeImg = `https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(code)}&code=Code128&dpi=120&translate-esc=off`;
+  const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&ecc=M&data=${encodeURIComponent(publicUrl)}`;
 
   return (
     <div className="min-h-screen bg-slate-100" dir="rtl">

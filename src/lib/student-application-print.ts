@@ -149,13 +149,28 @@ export function buildApplicationPrintHtml(opts: {
   autoPrint?: boolean;
   logoUrl?: string;
 }): string {
-  const { snapshot: s, code, publicUrl, mode, autoPrint = true } = opts;
+  const { snapshot: s, code, publicUrl: publicUrlRaw, mode, autoPrint = true } = opts;
   const p = s.personalData;
   const se = s.secondaryEducation;
   const u = s.universityAdmission;
 
-  const barcodeImg = `https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(code)}&code=Code128&dpi=150&dataseparator=`;
-  const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(publicUrl)}`;
+  const normalizedCode = String(code || '').trim().toUpperCase();
+  let publicUrl = String(publicUrlRaw || '').trim();
+  if (typeof window !== 'undefined') {
+    const browserOrigin = window.location.origin;
+    const preferred = `${browserOrigin}/public/application/${normalizedCode}`;
+    if (
+      !publicUrl ||
+      publicUrl.startsWith('/') ||
+      /localhost|127\.0\.0\.1/i.test(publicUrl) ||
+      !/^https?:\/\//i.test(publicUrl)
+    ) {
+      publicUrl = preferred;
+    }
+  }
+
+  const barcodeImg = `https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(normalizedCode)}&code=Code128&dpi=150&translate-esc=off`;
+  const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&ecc=M&data=${encodeURIComponent(publicUrl)}`;
   const logoUrl =
     opts.logoUrl ||
     (typeof window !== 'undefined'
@@ -173,7 +188,7 @@ export function buildApplicationPrintHtml(opts: {
             <img src="${logoUrl}" alt="شعار الكلية" />
           </div>
           <div class="hdr-side hdr-left">
-            <div class="meta-line">رمز الاستمارة: <strong dir="ltr">${code}</strong></div>
+            <div class="meta-line">رمز الاستمارة: <strong dir="ltr">${normalizedCode}</strong></div>
             <div class="meta-line">السنة: <strong>${u.academicYear || '—'}</strong></div>
           </div>
         </div>
@@ -192,7 +207,7 @@ export function buildApplicationPrintHtml(opts: {
             <img src="${logoUrl}" alt="شعار الكلية" />
           </div>
           <div class="hdr-side hdr-left">
-            <div class="meta-line">رمز الاستمارة: <strong dir="ltr">${code}</strong></div>
+            <div class="meta-line">رمز الاستمارة: <strong dir="ltr">${normalizedCode}</strong></div>
             <div class="meta-line">السنة: <strong>${u.academicYear || '—'}</strong></div>
           </div>
         </div>
@@ -301,7 +316,7 @@ export function buildApplicationPrintHtml(opts: {
         <div class="codes-row">
           <div class="code-block codes-right">
             <h2>رمز الاستمارة</h2>
-            <div class="code-id" dir="ltr">${code}</div>
+            <div class="code-id" dir="ltr">${normalizedCode}</div>
             <h2 class="mt">الباركود</h2>
             <img class="barcode" src="${barcodeImg}" alt="باركود الاستمارة" />
           </div>
@@ -323,7 +338,7 @@ export function buildApplicationPrintHtml(opts: {
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <title>استمارة تسجيل · ${code}</title>
+  <title>استمارة تسجيل · ${normalizedCode}</title>
   <style>
     @page { size: A4; margin: 12mm; }
     * { box-sizing: border-box; }

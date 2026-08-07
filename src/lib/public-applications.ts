@@ -1,5 +1,6 @@
 import { query } from '@/src/lib/db';
 import type { ApplicationSnapshot } from '@/src/lib/student-application-print';
+import { normalizeApplicationCode } from '@/src/lib/site-url';
 
 let ensured = false;
 
@@ -29,8 +30,25 @@ function randomCode(): string {
   return `SH${y}${m}${day}${rand}`;
 }
 
-export async function createPublicApplication(payload: ApplicationSnapshot): Promise<string> {
+export async function createPublicApplication(
+  payload: ApplicationSnapshot,
+  preferredCode?: string
+): Promise<string> {
   await ensurePublicApplicationsTable();
+  const forced = preferredCode ? normalizeApplicationCode(preferredCode) : '';
+
+  if (forced) {
+    await query(
+      `INSERT INTO student_affairs.public_applications (code, payload, expires_at)
+       VALUES ($1, $2::jsonb, NOW() + INTERVAL '365 days')
+       ON CONFLICT (code) DO UPDATE SET
+         payload = EXCLUDED.payload,
+         expires_at = EXCLUDED.expires_at`,
+      [forced, JSON.stringify(payload)]
+    );
+    return forced;
+  }
+
   for (let i = 0; i < 5; i++) {
     const code = randomCode();
     try {
@@ -61,7 +79,7 @@ export async function getPublicApplication(code: string): Promise<{
      WHERE code = $1
        AND (expires_at IS NULL OR expires_at > NOW())
      LIMIT 1`,
-    [code.trim().toUpperCase()]
+    [normalizeApplicationCode(code)]
   );
   if (!result.rows[0]) return null;
   const row = result.rows[0];

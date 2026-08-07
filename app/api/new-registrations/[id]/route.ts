@@ -5,6 +5,7 @@ import {
   updateNewRegistration,
 } from '@/src/lib/new-registrations';
 import type { ApplicationSnapshot } from '@/src/lib/student-application-print';
+import { createPublicApplication } from '@/src/lib/public-applications';
 
 export async function GET(
   _request: NextRequest,
@@ -66,6 +67,16 @@ export async function PUT(
     if (!row) {
       return NextResponse.json({ success: false, error: 'الطلب غير موجود' }, { status: 404 });
     }
+
+    try {
+      await createPublicApplication(
+        { ...payload, departmentPreferences: prefs } as ApplicationSnapshot,
+        row.code
+      );
+    } catch (e) {
+      console.warn('تعذر مزامنة النسخة العامة بعد التحديث:', e);
+    }
+
     return NextResponse.json({ success: true, data: row, message: 'تم تحديث الطلب بنجاح' });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'تعذر تحديث الطلب';

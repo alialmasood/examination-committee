@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createNewRegistration, listNewRegistrations } from '@/src/lib/new-registrations';
 import type { ApplicationSnapshot } from '@/src/lib/student-application-print';
 import { createPublicApplication } from '@/src/lib/public-applications';
+import { buildPublicApplicationUrl, getRequestSiteOrigin } from '@/src/lib/site-url';
 
 export async function GET(request: NextRequest) {
   try {
@@ -61,14 +62,17 @@ export async function POST(request: NextRequest) {
       preferences: prefs,
     });
 
-    // حفظ نسخة للعرض العام/الطباعة بنفس رمز الطلب إن أمكن عبر public applications
+    // حفظ نسخة للعرض العام/الطباعة بنفس رمز الطلب
     let publicUrl = '';
     try {
-      const publicCode = await createPublicApplication({
-        ...payload,
-        departmentPreferences: prefs,
-      } as ApplicationSnapshot);
-      publicUrl = `${request.nextUrl.origin}/public/application/${publicCode}`;
+      const publicCode = await createPublicApplication(
+        {
+          ...payload,
+          departmentPreferences: prefs,
+        } as ApplicationSnapshot,
+        row.code
+      );
+      publicUrl = buildPublicApplicationUrl(getRequestSiteOrigin(request), publicCode);
     } catch (e) {
       console.warn('تعذر إنشاء رابط عام للطلب:', e);
     }

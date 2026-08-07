@@ -6,6 +6,10 @@ import {
   buildSnapshotFromFormData,
   type PrintMode,
 } from '@/src/lib/student-application-print';
+import {
+  buildBrowserPublicApplicationUrl,
+  resolvePublicApplicationUrl,
+} from '@/src/lib/site-url';
 
 interface PersonalData {
   fullName: string; // الاسم الرباعي
@@ -442,7 +446,7 @@ export default function StudentFormModal({
       setEditingStudentId(null);
       setGeneratedStudentId(row.code || '');
       setPublicApplicationCode(row.code || '');
-      setPublicApplicationUrl(row.code ? `/public/application/${row.code}` : '');
+      setPublicApplicationUrl(row.code ? buildBrowserPublicApplicationUrl(row.code) : '');
       setCurrentStep(1);
       setShowConfirmation(false);
       setShowReviewModal(false);
@@ -793,8 +797,13 @@ export default function StudentFormModal({
   });
 
   const ensurePublicApplication = async (): Promise<{ code: string; url: string } | null> => {
-    if (publicApplicationCode && publicApplicationUrl) {
-      return { code: publicApplicationCode, url: publicApplicationUrl };
+    if (publicApplicationCode) {
+      const url = resolvePublicApplicationUrl(
+        publicApplicationUrl || buildBrowserPublicApplicationUrl(publicApplicationCode),
+        publicApplicationCode
+      );
+      if (url !== publicApplicationUrl) setPublicApplicationUrl(url);
+      return { code: publicApplicationCode, url };
     }
     try {
       setIsPreparingPrint(true);
@@ -808,13 +817,16 @@ export default function StudentFormModal({
         body: JSON.stringify({ payload }),
       });
       const data = await res.json();
-      if (!data.success || !data.code || !data.url) {
+      if (!data.success || !data.code) {
         alert(data.error || 'تعذر تجهيز رابط الاستمارة للطباعة');
         return null;
       }
-      setPublicApplicationCode(data.code);
-      setPublicApplicationUrl(data.url);
-      return { code: data.code as string, url: data.url as string };
+      const code = String(data.code);
+      // دائماً من أصل المتصفح حتى لا يُخزَّن localhost من السيرفر خلف البروكسي
+      const url = buildBrowserPublicApplicationUrl(code);
+      setPublicApplicationCode(code);
+      setPublicApplicationUrl(url);
+      return { code, url };
     } catch (err) {
       console.error(err);
       alert('تعذر الاتصال بالخادم لتجهيز الطباعة');
