@@ -26,8 +26,27 @@ export default function StudentAffairsLayout({
   const [currentDateTime, setCurrentDateTime] = useState('');
   const [currentSemester, setCurrentSemester] = useState('');
   const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [fabMenuOpen, setFabMenuOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
+
+  const openStudentForm = (mode: 'official' | 'new_application') => {
+    setFabMenuOpen(false);
+    const event = new CustomEvent('openAddStudentModal', { detail: { mode } });
+    if (mode === 'new_application') {
+      if (pathname === '/student-affairs/new-registrations') {
+        window.dispatchEvent(event);
+      } else {
+        router.push('/student-affairs/new-registrations?openForm=new');
+      }
+      return;
+    }
+    if (pathname === '/student-affairs/students') {
+      window.dispatchEvent(event);
+    } else {
+      router.push('/student-affairs/students?openForm=official');
+    }
+  };
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -156,6 +175,15 @@ export default function StudentAffairsLayout({
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </svg>
+      ),
+    },
+    {
+      name: 'التسجيل الجديد',
+      href: '/student-affairs/new-registrations',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
         </svg>
       ),
     },
@@ -447,29 +475,45 @@ export default function StudentAffairsLayout({
           </header>
 
           {/* Main Content */}
-          <main className={`min-w-0 flex-1 overflow-x-hidden ${pathname === '/student-affairs/students/list' || pathname === '/student-affairs/students/edit' ? 'p-3 lg:p-4' : 'p-8'}`}>
-            <div className={pathname === '/student-affairs/students/list' || pathname === '/student-affairs/students/edit' ? 'w-full min-w-0 max-w-full' : 'max-w-7xl mx-auto'}>
+          <main className={`min-w-0 flex-1 overflow-x-hidden ${pathname === '/student-affairs/students/list' || pathname === '/student-affairs/students/edit' || pathname === '/student-affairs/new-registrations' ? 'p-3 lg:p-4' : 'p-8'}`}>
+            <div className={pathname === '/student-affairs/students/list' || pathname === '/student-affairs/students/edit' || pathname === '/student-affairs/new-registrations' ? 'w-full min-w-0 max-w-full' : 'max-w-7xl mx-auto'}>
               {children}
             </div>
           </main>
 
-          {/* الزر العائم لإضافة طالب جديد */}
+          {/* الزر العائم لإضافة طالب */}
           <div className="fixed bottom-6 left-6 z-50">
+            {fabMenuOpen && (
+              <div className="mb-3 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+                <button
+                  type="button"
+                  onClick={() => openStudentForm('new_application')}
+                  className="flex w-full items-center gap-2 border-b border-slate-100 px-4 py-3 text-right text-sm font-semibold text-slate-800 hover:bg-emerald-50"
+                >
+                  <span className="inline-block h-2 w-2 rounded-full bg-[#E8913A]" />
+                  تسجيل طالب جديد
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openStudentForm('official')}
+                  className="flex w-full items-center gap-2 px-4 py-3 text-right text-sm font-semibold text-slate-800 hover:bg-sky-50"
+                >
+                  <span className="inline-block h-2 w-2 rounded-full bg-[#053E37]" />
+                  تسجيل رسمي
+                </button>
+              </div>
+            )}
             <button
-              onClick={() => {
-                // إذا كنا في صفحة الطلاب، افتح الفورم مباشرة
-                if (pathname === '/student-affairs/students') {
-                  const event = new CustomEvent('openAddStudentModal');
-                  window.dispatchEvent(event);
-                } else {
-                  // إذا كنا في صفحة أخرى، انتقل إلى صفحة الطلاب مع معامل لفتح الفورم
-                  router.push('/student-affairs/students?openForm=true');
-                }
-              }}
-              className="group flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white rounded-full shadow-2xl hover:shadow-3xl transition-all duration-300 transform hover:scale-110"
-              title="إضافة طالب جديد"
+              onClick={() => setFabMenuOpen((v) => !v)}
+              className="group flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-r from-[#053E37] to-[#0a4f44] text-white shadow-2xl transition-all duration-300 hover:scale-110 hover:from-[#032a25] hover:to-[#0a4f44]"
+              title="إضافة / تسجيل"
             >
-              <svg className="w-6 h-6 group-hover:rotate-90 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg
+                className={`h-6 w-6 transition-transform duration-300 ${fabMenuOpen ? 'rotate-45' : 'group-hover:rotate-90'}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
               </svg>
             </button>

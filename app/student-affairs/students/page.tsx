@@ -10,6 +10,7 @@ export default function StudentsPage() {
   const router = useRouter();
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [studentFormMode, setStudentFormMode] = useState<'official' | 'new_application'>('official');
   const [showBulkImportModal, setShowBulkImportModal] = useState(false);
   const [bulkImportMode, setBulkImportMode] = useState<'table' | 'file'>('table');
   const [bulkImportStudents, setBulkImportStudents] = useState<Array<{
@@ -342,8 +343,14 @@ export default function StudentsPage() {
   // فحص معامل URL لفتح الفورم تلقائياً
   useEffect(() => {
     const openForm = searchParams.get('openForm');
-    if (openForm === 'true') {
+    if (openForm === 'true' || openForm === 'official') {
       setEditingStudentId(null);
+      setStudentFormMode('official');
+      setShowAddStudentModal(true);
+      window.history.replaceState({}, '', '/student-affairs/students');
+    } else if (openForm === 'new') {
+      setEditingStudentId(null);
+      setStudentFormMode('new_application');
       setShowAddStudentModal(true);
       window.history.replaceState({}, '', '/student-affairs/students');
     }
@@ -351,8 +358,10 @@ export default function StudentsPage() {
 
   // مستمع للحدث من الزر العائم
   useEffect(() => {
-    const handleOpenAddStudentModal = () => {
+    const handleOpenAddStudentModal = (event: Event) => {
+      const detail = (event as CustomEvent<{ mode?: 'official' | 'new_application' }>).detail;
       setEditingStudentId(null);
+      setStudentFormMode(detail?.mode === 'new_application' ? 'new_application' : 'official');
       setShowAddStudentModal(true);
     };
 
@@ -457,6 +466,7 @@ export default function StudentsPage() {
 
   const handleEditStudent = (studentId: string) => {
     setEditingStudentId(studentId);
+    setStudentFormMode('official');
     setShowAddStudentModal(true);
   };
 
@@ -484,6 +494,7 @@ export default function StudentsPage() {
             <button
               onClick={() => {
                 setEditingStudentId(null);
+                setStudentFormMode('official');
                 setShowAddStudentModal(true);
               }}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-300 text-sm"
@@ -773,6 +784,7 @@ export default function StudentsPage() {
       <StudentFormModal
         isOpen={showAddStudentModal}
         editStudentId={editingStudentId}
+        mode={studentFormMode}
         onClose={closeStudentFormModal}
         onSuccess={handleStudentFormSuccess}
       />

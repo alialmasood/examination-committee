@@ -1,6 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import {
+  buildApplicationPrintHtml,
+  buildSnapshotFromFormData,
+  type PrintMode,
+} from '@/src/lib/student-application-print';
 
 interface PersonalData {
   fullName: string; // الاسم الرباعي
@@ -39,6 +44,9 @@ interface UniversityAdmission {
   admissionType: '' | 'first' | 'second' | 'third' | 'fourth';
   admissionChannel: '' | 'general' | 'martyrs' | 'social_care' | 'special_needs' | 'political_prisoners' | 'siblings_married' | 'minister_directive' | 'dean_approval' | 'faculty_children' | 'top_students' | 'health_ministry';
   department: string;
+  preference1: string;
+  preference2: string;
+  preference3: string;
   studyType: '' | 'morning' | 'evening';
   level: '' | 'bachelor' | 'master' | 'phd' | 'diploma';
   semester: '' | 'first' | 'second';
@@ -67,9 +75,14 @@ interface StudentFormData {
   documents: Documents;
 }
 
+export type StudentFormMode = 'official' | 'new_application';
+
 interface StudentFormModalProps {
   isOpen: boolean;
   editStudentId?: string | null;
+  /** تعديل طلب تسجيل جديد (يشمل المستمسكات) */
+  editRegistrationId?: string | null;
+  mode?: StudentFormMode;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -110,6 +123,9 @@ const initialFormData: StudentFormData = {
     admissionType: 'first',
     admissionChannel: '',
     department: '',
+    preference1: '',
+    preference2: '',
+    preference3: '',
     studyType: '',
     level: 'bachelor',
     semester: '',
@@ -131,12 +147,31 @@ const initialFormData: StudentFormData = {
   }
 };
 
+function snapshotDocToFile(value: unknown): File | null {
+  if (typeof value === 'string' && value.trim()) {
+    return { name: value.trim(), type: 'image/jpeg', size: 0 } as File;
+  }
+  if (value === true) {
+    return { name: 'مرفق', type: 'image/jpeg', size: 0 } as File;
+  }
+  return null;
+}
+
+function asOneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : fallback;
+}
+
 export default function StudentFormModal({
   isOpen,
   editStudentId = null,
+  editRegistrationId = null,
+  mode = 'official',
   onClose,
   onSuccess,
 }: StudentFormModalProps) {
+  const isNewApplication = mode === 'new_application';
   const [currentStep, setCurrentStep] = useState(1);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState<StudentFormData>(initialFormData);
@@ -144,7 +179,12 @@ export default function StudentFormModal({
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [editingRegistrationId, setEditingRegistrationId] = useState<string | null>(null);
+  const [existingDocNames, setExistingDocNames] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [publicApplicationCode, setPublicApplicationCode] = useState('');
+  const [publicApplicationUrl, setPublicApplicationUrl] = useState('');
+  const [isPreparingPrint, setIsPreparingPrint] = useState(false);
 
   const loadStudentForEdit = async (studentId: string) => {
     try {
@@ -192,6 +232,9 @@ export default function StudentFormModal({
             admissionType: student.admission_type || '',
             admissionChannel: student.admission_channel || '',
             department: student.department || student.major || '',
+            preference1: '',
+            preference2: '',
+            preference3: '',
             studyType: student.study_type || '',
             level: (student.level && student.level !== 'null' && student.level !== null) ? student.level : '',
             semester: (student.semester && student.semester !== 'null' && student.semester !== null) ? student.semester : '',
@@ -256,6 +299,159 @@ export default function StudentFormModal({
     }
   };
 
+  const loadRegistrationForEdit = async (registrationId: string) => {
+    try {
+      const response = await fetch(`/api/new-registrations/${registrationId}`);
+      const result = await response.json();
+      if (!result.success || !result.data) {
+        alert(result.error || 'خطأ في جلب طلب التسجيل للتعديل');
+        return;
+      }
+      const row = result.data;
+      if (row.status === 'confirmed') {
+        alert('لا يمكن تعديل طلب مثبت');
+        return;
+      }
+      const payload = row.payload || {};
+      const p = payload.personalData || {};
+      const se = payload.secondaryEducation || {};
+      const u = payload.universityAdmission || {};
+      const docs = payload.documents || {};
+      const prefs = payload.departmentPreferences || {
+        first: row.preference_1 || '',
+        second: row.preference_2 || '',
+        third: row.preference_3 || '',
+      };
+
+      const docNames: Record<string, string> = {};
+      for (const [key, val] of Object.entries(docs)) {
+        if (typeof val === 'string' && val.trim()) docNames[key] = val.trim();
+      }
+
+      const phoneRaw = String(p.phone || row.phone || '');
+      const phoneDigits = phoneRaw.replace(/\D/g, '');
+      const phone10 =
+        phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
+
+      setFormData({
+        personalData: {
+          fullName: String(p.fullName || row.full_name || ''),
+          nickname: String(p.nickname || ''),
+          motherName: String(p.motherName || ''),
+          nationalId: String(p.nationalId || row.national_id || ''),
+          birthDate: String(p.birthDate || ''),
+          birthPlace: String(p.birthPlace || ''),
+          area: String(p.area || ''),
+          gender: asOneOf(p.gender, ['male', 'female'] as const, 'male'),
+          religion: asOneOf(
+            p.religion,
+            ['مسلم', 'مسيحي', 'الصابئة', 'اليزيدية', 'غير ذلك'] as const,
+            'مسلم'
+          ),
+          maritalStatus: asOneOf(
+            p.maritalStatus,
+            ['single', 'married', 'divorced', 'widowed'] as const,
+            'single'
+          ),
+          phone: phone10,
+          email: String(p.email || ''),
+          address: '',
+          emergencyContact: { name: '', relationship: '', phone: '' },
+        },
+        secondaryEducation: {
+          schoolName: String(se.schoolName || ''),
+          schoolType: asOneOf(
+            se.schoolType,
+            ['', 'public', 'private', 'international'] as const,
+            ''
+          ),
+          graduationYear: String(se.graduationYear || ''),
+          gpa: String(se.gpa || ''),
+          totalScore: String(se.totalScore || ''),
+          examAttempt: asOneOf(
+            se.examAttempt,
+            ['', 'first', 'second', 'third'] as const,
+            ''
+          ),
+          examNumber: String(se.examNumber || ''),
+          examPassword: String(se.examPassword || ''),
+          branch: String(se.branch || ''),
+        },
+        universityAdmission: {
+          admissionType: asOneOf(
+            u.admissionType,
+            ['', 'first', 'second', 'third', 'fourth'] as const,
+            'first'
+          ),
+          admissionChannel: asOneOf(
+            u.admissionChannel,
+            [
+              '',
+              'general',
+              'martyrs',
+              'social_care',
+              'special_needs',
+              'political_prisoners',
+              'siblings_married',
+              'minister_directive',
+              'dean_approval',
+              'faculty_children',
+              'top_students',
+              'health_ministry',
+            ] as const,
+            ''
+          ),
+          department: '',
+          preference1: String(prefs.first || ''),
+          preference2: String(prefs.second || ''),
+          preference3: String(prefs.third || ''),
+          studyType: asOneOf(
+            u.studyType || row.study_type,
+            ['', 'morning', 'evening'] as const,
+            ''
+          ),
+          level: asOneOf(
+            u.level,
+            ['', 'bachelor', 'master', 'phd', 'diploma'] as const,
+            'bachelor'
+          ),
+          semester: asOneOf(u.semester, ['', 'first', 'second'] as const, 'first'),
+          academicYear: asOneOf(
+            u.academicYear || row.academic_year,
+            ['', '2024-2025', '2025-2026', '2026-2027', '2027-2028', '2028-2029'] as const,
+            '2026-2027'
+          ),
+          specialRequirements: '',
+          scholarship: false,
+          scholarshipType: '',
+          username: '',
+          password: '',
+        },
+        documents: {
+          nationalIdFront: snapshotDocToFile(docs.nationalIdFront),
+          nationalIdBack: snapshotDocToFile(docs.nationalIdBack),
+          residenceCardFront: snapshotDocToFile(docs.residenceCardFront),
+          residenceCardBack: snapshotDocToFile(docs.residenceCardBack),
+          secondaryCertificate: snapshotDocToFile(docs.secondaryCertificate),
+          personalPhoto: snapshotDocToFile(docs.personalPhoto),
+          medicalExamination: snapshotDocToFile(docs.medicalExamination),
+        },
+      });
+      setExistingDocNames(docNames);
+      setEditingRegistrationId(registrationId);
+      setEditingStudentId(null);
+      setGeneratedStudentId(row.code || '');
+      setPublicApplicationCode(row.code || '');
+      setPublicApplicationUrl(row.code ? `/public/application/${row.code}` : '');
+      setCurrentStep(1);
+      setShowConfirmation(false);
+      setShowReviewModal(false);
+    } catch (error) {
+      console.error('خطأ في تعديل طلب التسجيل:', error);
+      alert('خطأ في جلب طلب التسجيل للتعديل');
+    }
+  };
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -263,16 +459,24 @@ export default function StudentFormModal({
     setShowConfirmation(false);
     setShowReviewModal(false);
     setValidationErrors({});
+    setPublicApplicationCode('');
+    setPublicApplicationUrl('');
 
-    if (editStudentId) {
+    if (editRegistrationId && isNewApplication) {
+      void loadRegistrationForEdit(editRegistrationId);
+    } else if (editStudentId) {
+      setEditingRegistrationId(null);
+      setExistingDocNames({});
       void loadStudentForEdit(editStudentId);
     } else {
       setFormData(initialFormData);
       setGeneratedStudentId('');
       setEditingStudentId(null);
+      setEditingRegistrationId(null);
+      setExistingDocNames({});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, editStudentId]);
+  }, [isOpen, editStudentId, editRegistrationId, mode]);
 
   const validateArabicText = (value: string): boolean => {
     // السماح بالحروف العربية والمسافات فقط (لا أرقام)
@@ -577,7 +781,225 @@ export default function StudentFormModal({
 
   const handleSave = () => {
     // فتح واجهة مراجعة المدخلات
+    setPublicApplicationCode('');
+    setPublicApplicationUrl('');
     setShowReviewModal(true);
+  };
+
+  const getDepartmentPreferences = () => ({
+    first: formData.universityAdmission.preference1,
+    second: formData.universityAdmission.preference2,
+    third: formData.universityAdmission.preference3,
+  });
+
+  const ensurePublicApplication = async (): Promise<{ code: string; url: string } | null> => {
+    if (publicApplicationCode && publicApplicationUrl) {
+      return { code: publicApplicationCode, url: publicApplicationUrl };
+    }
+    try {
+      setIsPreparingPrint(true);
+      const prefs = isNewApplication ? getDepartmentPreferences() : undefined;
+      const payload = buildSnapshotFromFormData(formData, {
+        departmentPreferences: prefs?.first ? prefs : undefined,
+      });
+      const res = await fetch('/api/public/applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload }),
+      });
+      const data = await res.json();
+      if (!data.success || !data.code || !data.url) {
+        alert(data.error || 'تعذر تجهيز رابط الاستمارة للطباعة');
+        return null;
+      }
+      setPublicApplicationCode(data.code);
+      setPublicApplicationUrl(data.url);
+      return { code: data.code as string, url: data.url as string };
+    } catch (err) {
+      console.error(err);
+      alert('تعذر الاتصال بالخادم لتجهيز الطباعة');
+      return null;
+    } finally {
+      setIsPreparingPrint(false);
+    }
+  };
+
+  const printHtmlDocument = (html: string, targetWindow: Window | null) => {
+    // طباعة عبر نافذة مفتوحة مسبقاً (بدون noopener حتى نستطيع الكتابة فيها)
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.document.open();
+      targetWindow.document.write(html);
+      targetWindow.document.close();
+      return;
+    }
+
+    // بديل موثوق بدون نوافذ منبثقة: iframe مخفي
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('title', 'طباعة الاستمارة');
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none;';
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!doc || !iframe.contentWindow) {
+      document.body.removeChild(iframe);
+      alert('تعذر بدء الطباعة');
+      return;
+    }
+    // تعطيل autoPrint داخل HTML لأننا نستدعي print يدوياً بعد التحميل
+    const htmlNoAuto = html.replace(/window\.onload\s*=\s*function\s*\(\)\s*\{[\s\S]*?\};\s*/m, '');
+    doc.open();
+    doc.write(htmlNoAuto);
+    doc.close();
+
+    const triggerPrint = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } finally {
+        setTimeout(() => {
+          if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+        }, 1500);
+      }
+    };
+
+    // انتظار بسيط لتحميل صور الباركود/QR
+    setTimeout(triggerPrint, 700);
+  };
+
+  const openApplicationPrint = async (modePrint: PrintMode) => {
+    // فتح النافذة فوراً ضمن حدث الضغط حتى لا يحظرها المتصفح بعد await
+    const printWindow = window.open('about:blank', '_blank');
+    if (printWindow) {
+      try {
+        printWindow.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>تجهيز الطباعة</title></head><body style="font-family:Tahoma,sans-serif;padding:24px;color:#334155">جاري تجهيز الاستمارة للطباعة...</body></html>`);
+        printWindow.document.close();
+      } catch {
+        // تجاهل
+      }
+    }
+
+    const pub = await ensurePublicApplication();
+    if (!pub) {
+      try {
+        printWindow?.close();
+      } catch {
+        // تجاهل
+      }
+      return;
+    }
+
+    const prefs = isNewApplication ? getDepartmentPreferences() : undefined;
+    const snapshot = buildSnapshotFromFormData(formData, {
+      departmentPreferences: prefs?.first ? prefs : undefined,
+    });
+    const html = buildApplicationPrintHtml({
+      snapshot,
+      code: pub.code,
+      publicUrl: pub.url,
+      mode: modePrint,
+      autoPrint: Boolean(printWindow),
+    });
+
+    printHtmlDocument(html, printWindow);
+    // الإبقاء على فورم المراجعة مفتوحاً عمداً
+  };
+
+  const uploadRegistrationDocuments = async (): Promise<Record<string, string | boolean>> => {
+    const keys = [
+      'nationalIdFront',
+      'nationalIdBack',
+      'residenceCardFront',
+      'residenceCardBack',
+      'secondaryCertificate',
+      'personalPhoto',
+      'medicalExamination',
+    ] as const;
+
+    const result: Record<string, string | boolean> = {};
+
+    for (const key of keys) {
+      const file = formData.documents[key];
+      if (file && file.size > 0) {
+        const uploadFormData = new FormData();
+        uploadFormData.append('file', file);
+        const uploadResponse = await fetch('/api/students/upload', {
+          method: 'POST',
+          body: uploadFormData,
+        });
+        const uploadResult = await uploadResponse.json();
+        if (!uploadResult.success) {
+          throw new Error(uploadResult.error || `فشل رفع المستمسك: ${key}`);
+        }
+        result[key] = uploadResult.filename as string;
+      } else if (existingDocNames[key]) {
+        result[key] = existingDocNames[key];
+      } else if (file && file.name && file.size === 0 && file.name !== 'مرفق') {
+        result[key] = file.name;
+      } else {
+        result[key] = Boolean(file);
+      }
+    }
+
+    return result;
+  };
+
+  const saveNewApplication = async () => {
+    const prefs = getDepartmentPreferences();
+    if (!prefs.first || !prefs.second || !prefs.third) {
+      alert('يجب اختيار ثلاث رغبات أقسام');
+      return false;
+    }
+    if (new Set([prefs.first, prefs.second, prefs.third]).size < 3) {
+      alert('يجب أن تكون الرغبات الثلاث أقساماً مختلفة');
+      return false;
+    }
+    if (!formData.personalData.phone || formData.personalData.phone.length !== 10) {
+      alert('⚠️ رقم الهاتف يجب أن يتكون من 10 أرقام بالضبط');
+      return false;
+    }
+
+    try {
+      setIsSaving(true);
+      const documentNames = await uploadRegistrationDocuments();
+      const payload = buildSnapshotFromFormData(formData, {
+        departmentPreferences: prefs,
+        documentNames,
+      });
+
+      const isEdit = Boolean(editingRegistrationId);
+      const res = await fetch(
+        isEdit ? `/api/new-registrations/${editingRegistrationId}` : '/api/new-registrations',
+        {
+          method: isEdit ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payload, preferences: prefs }),
+        }
+      );
+      const result = await res.json();
+      if (!result.success) {
+        alert(result.error || (isEdit ? 'تعذر تحديث طلب التسجيل' : 'تعذر حفظ طلب التسجيل'));
+        return false;
+      }
+
+      setShowReviewModal(false);
+      onClose();
+      setCurrentStep(1);
+      setFormData(initialFormData);
+      setEditingRegistrationId(null);
+      setExistingDocNames({});
+      onSuccess();
+      alert(
+        isEdit
+          ? 'تم تحديث طلب التسجيل بنجاح (بما يشمل المستمسكات)'
+          : `تم حفظ طلب التسجيل الجديد بنجاح\nرمز الطلب: ${result.data?.code || ''}`
+      );
+      return true;
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'تعذر الاتصال بالخادم');
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleQuickUpdate = async () => {
@@ -599,6 +1021,9 @@ export default function StudentFormModal({
   };
 
   const confirmSave = async () => {
+    if (isNewApplication) {
+      return saveNewApplication();
+    }
     try {
       // التحقق من صحة البيانات قبل الحفظ
       // التحقق من رقم الهاتف (مطلوب ويجب أن يكون 10 أرقام بالضبط)
@@ -1189,6 +1614,8 @@ export default function StudentFormModal({
     setShowReviewModal(false);
     setGeneratedStudentId('');
     setEditingStudentId(null);
+    setEditingRegistrationId(null);
+    setExistingDocNames({});
     setFormData(initialFormData);
     setValidationErrors({});
     onClose();
@@ -1218,7 +1645,13 @@ export default function StudentFormModal({
                     شؤون الطلبة · تسجيل أكاديمي
                   </p>
                   <h2 className="truncate text-base font-semibold text-slate-900">
-                    {editingStudentId ? 'تعديل بيانات الطالب' : 'إضافة طالب جديد'}
+                    {editingStudentId
+                      ? 'تعديل بيانات الطالب'
+                      : editingRegistrationId
+                        ? 'تعديل طلب التسجيل'
+                        : isNewApplication
+                          ? 'تسجيل طالب جديد'
+                          : 'تسجيل رسمي · إضافة طالب'}
                   </h2>
                 </div>
                 <button
@@ -1888,25 +2321,71 @@ export default function StudentFormModal({
                       </select>
                     </div>
 
-                    <div>
-                      <label className="mb-1 block text-xs font-semibold text-slate-600">
-                        القسم *
-                      </label>
-                      <select
-                        value={formData.universityAdmission.department}
-                        onChange={(e) => handleSelectChange('universityAdmission', 'department', e.target.value)}
-                        onBlur={(e) => handleSelectBlur('universityAdmission', 'department', e)}
-                        onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'department', e)}
-                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-                        required
-                      >
-                        <option value="">اختر القسم</option>
-                        {getAvailableDepartments(formData.secondaryEducation.branch).map((dept) => (
-                          <option key={dept.value} value={dept.value}>
-                            {dept.label}
-                          </option>
-                        ))}
-                      </select>
+                    <div className={isNewApplication ? 'md:col-span-3' : ''}>
+                      {isNewApplication ? (
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                          {(
+                            [
+                              { key: 'preference1', label: 'الرغبة الأولى (القسم) *' },
+                              { key: 'preference2', label: 'الرغبة الثانية (القسم) *' },
+                              { key: 'preference3', label: 'الرغبة الثالثة (القسم) *' },
+                            ] as const
+                          ).map((item) => (
+                            <div key={item.key}>
+                              <label className="mb-1 block text-xs font-semibold text-slate-600">
+                                {item.label}
+                              </label>
+                              <select
+                                value={formData.universityAdmission[item.key]}
+                                onChange={(e) =>
+                                  handleSelectChange('universityAdmission', item.key, e.target.value)
+                                }
+                                className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                                required
+                              >
+                                <option value="">اختر القسم</option>
+                                {getAvailableDepartments(formData.secondaryEducation.branch).map((dept) => (
+                                  <option
+                                    key={`${item.key}-${dept.value}`}
+                                    value={dept.value}
+                                    disabled={
+                                      [
+                                        formData.universityAdmission.preference1,
+                                        formData.universityAdmission.preference2,
+                                        formData.universityAdmission.preference3,
+                                      ].includes(dept.value) &&
+                                      formData.universityAdmission[item.key] !== dept.value
+                                    }
+                                  >
+                                    {dept.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <>
+                          <label className="mb-1 block text-xs font-semibold text-slate-600">
+                            القسم *
+                          </label>
+                          <select
+                            value={formData.universityAdmission.department}
+                            onChange={(e) => handleSelectChange('universityAdmission', 'department', e.target.value)}
+                            onBlur={(e) => handleSelectBlur('universityAdmission', 'department', e)}
+                            onKeyDown={(e) => handleSelectKeyDown('universityAdmission', 'department', e)}
+                            className="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                            required
+                          >
+                            <option value="">اختر القسم</option>
+                            {getAvailableDepartments(formData.secondaryEducation.branch).map((dept) => (
+                              <option key={dept.value} value={dept.value}>
+                                {dept.label}
+                              </option>
+                            ))}
+                          </select>
+                        </>
+                      )}
                     </div>
 
                     <div>
@@ -2278,7 +2757,15 @@ export default function StudentFormModal({
                       formData.universityAdmission.admissionChannel === 'health_ministry' ? 'تخفيض موظفي وزارة الصحة' :
                       'غير محدد'
                     }</div>
-                    <div><strong>القسم:</strong> {formData.universityAdmission.department}</div>
+                    {isNewApplication ? (
+                      <>
+                        <div><strong>الرغبة الأولى:</strong> {formData.universityAdmission.preference1 || '—'}</div>
+                        <div><strong>الرغبة الثانية:</strong> {formData.universityAdmission.preference2 || '—'}</div>
+                        <div><strong>الرغبة الثالثة:</strong> {formData.universityAdmission.preference3 || '—'}</div>
+                      </>
+                    ) : (
+                      <div><strong>القسم:</strong> {formData.universityAdmission.department}</div>
+                    )}
                     <div><strong>نوع الدراسة:</strong> {formData.universityAdmission.studyType === 'morning' ? 'صباحي' : 'مسائي'}</div>
                     <div><strong>المرحلة الدراسية:</strong> {formData.universityAdmission.level === 'bachelor' ? 'بكالوريوس' : formData.universityAdmission.level === 'master' ? 'ماجستير' : formData.universityAdmission.level === 'phd' ? 'دكتوراه' : 'دبلوم'}</div>
                     <div><strong>الفصل الدراسي:</strong> {formData.universityAdmission.semester === 'first' ? 'الأول' : 'الثاني'}</div>
@@ -2301,7 +2788,7 @@ export default function StudentFormModal({
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-300 bg-slate-50 px-5 py-3">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-300 bg-slate-50 px-5 py-3">
               <button
                 type="button"
                 onClick={() => setShowReviewModal(false)}
@@ -2309,8 +2796,28 @@ export default function StudentFormModal({
               >
                 إلغاء
               </button>
-              <div className="flex items-center gap-2">
-                {!editingStudentId && (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {isNewApplication && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isPreparingPrint}
+                      onClick={() => void openApplicationPrint('full')}
+                      className="inline-flex items-center justify-center rounded-md border border-[#053E37] bg-white px-3 py-1.5 text-sm font-medium text-[#053E37] hover:bg-slate-100 disabled:opacity-60"
+                    >
+                      {isPreparingPrint ? 'جاري التجهيز...' : 'طباعة استمارة الطالب'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isPreparingPrint}
+                      onClick={() => void openApplicationPrint('codes')}
+                      className="inline-flex items-center justify-center rounded-md border border-[#E8913A] bg-white px-3 py-1.5 text-sm font-medium text-[#E8913A] hover:bg-orange-50 disabled:opacity-60"
+                    >
+                      طباعة باركود
+                    </button>
+                  </>
+                )}
+                {!editingStudentId && !isNewApplication && (
                   <button
                     type="button"
                     onClick={saveAsPendingRegistration}
@@ -2322,9 +2829,18 @@ export default function StudentFormModal({
                 <button
                   type="button"
                   onClick={confirmSave}
-                  className="inline-flex items-center justify-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-900"
+                  disabled={isSaving}
+                  className="inline-flex items-center justify-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-60"
                 >
-                  {editingStudentId ? 'تأكيد التحديث' : 'تأكيد الحفظ'}
+                  {isSaving
+                    ? 'جاري الحفظ...'
+                    : isNewApplication
+                      ? editingRegistrationId
+                        ? 'تحديث الاستمارة'
+                        : 'حفظ الاستمارة'
+                      : editingStudentId
+                        ? 'تأكيد التحديث'
+                        : 'تأكيد الحفظ'}
                 </button>
               </div>
             </div>
