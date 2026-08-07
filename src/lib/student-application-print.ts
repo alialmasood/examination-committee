@@ -155,18 +155,17 @@ export function buildApplicationPrintHtml(opts: {
   const u = s.universityAdmission;
 
   const normalizedCode = String(code || '').trim().toUpperCase();
+  // عند الطباعة من المتصفح استخدم نطاق الصفحة الحالية دائماً (يتجنب أخطاء SITE_URL)
   let publicUrl = String(publicUrlRaw || '').trim();
   if (typeof window !== 'undefined') {
-    const browserOrigin = window.location.origin;
-    const preferred = `${browserOrigin}/public/application/${normalizedCode}`;
-    if (
-      !publicUrl ||
-      publicUrl.startsWith('/') ||
-      /localhost|127\.0\.0\.1/i.test(publicUrl) ||
-      !/^https?:\/\//i.test(publicUrl)
-    ) {
-      publicUrl = preferred;
-    }
+    publicUrl = `${window.location.origin}/public/application/${normalizedCode}`;
+  } else if (
+    !publicUrl ||
+    publicUrl.startsWith('/') ||
+    /localhost|127\.0\.0\.1/i.test(publicUrl) ||
+    !/^https?:\/\//i.test(publicUrl)
+  ) {
+    publicUrl = `/public/application/${normalizedCode}`;
   }
 
   const barcodeImg = `https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(normalizedCode)}&code=Code128&dpi=150&translate-esc=off`;
