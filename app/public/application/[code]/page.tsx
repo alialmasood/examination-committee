@@ -133,7 +133,7 @@ export default function PublicApplicationPage() {
       <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-2 px-4 py-3">
           <div>
-            <p className="text-xs font-medium text-[#053E37]">كلية الشرق · عرض عام للاستمارة</p>
+            <p className="text-xs font-medium text-[#072147]">كلية الشرق · عرض عام للاستمارة</p>
             <h1 className="text-base font-bold text-slate-900">استمارة تسجيل طالب</h1>
             <p className="font-mono text-xs text-slate-500" dir="ltr">
               {code}
@@ -143,14 +143,14 @@ export default function PublicApplicationPage() {
             <button
               type="button"
               onClick={() => openPrint('full')}
-              className="rounded-md bg-[#053E37] px-3 py-2 text-sm font-semibold text-white hover:bg-[#032a25]"
+              className="rounded-md bg-[#072147] px-3 py-2 text-sm font-semibold text-white hover:bg-[#04152E]"
             >
               طباعة الاستمارة / PDF
             </button>
             <button
               type="button"
               onClick={() => openPrint('codes')}
-              className="rounded-md border border-[#E8913A] bg-white px-3 py-2 text-sm font-semibold text-[#E8913A] hover:bg-orange-50"
+              className="rounded-md border border-[#1F4A7A] bg-white px-3 py-2 text-sm font-semibold text-[#1F4A7A] hover:bg-slate-50"
             >
               طباعة باركود
             </button>
@@ -160,7 +160,7 @@ export default function PublicApplicationPage() {
 
       <div className="mx-auto max-w-4xl space-y-4 px-4 py-5">
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 border-b border-slate-100 pb-2 text-sm font-bold text-[#053E37]">البيانات الشخصية</h2>
+          <h2 className="mb-3 border-b border-slate-100 pb-2 text-sm font-bold text-[#072147]">البيانات الشخصية</h2>
           <div className="grid gap-2 text-sm text-slate-700 sm:grid-cols-2 md:grid-cols-3">
             <div><strong>الاسم:</strong> {p.fullName || '—'}</div>
             <div><strong>اللقب:</strong> {p.nickname || '—'}</div>
@@ -178,7 +178,7 @@ export default function PublicApplicationPage() {
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 border-b border-slate-100 pb-2 text-sm font-bold text-[#053E37]">الدراسة الإعدادية</h2>
+          <h2 className="mb-3 border-b border-slate-100 pb-2 text-sm font-bold text-[#072147]">الدراسة الإعدادية</h2>
           <div className="grid gap-2 text-sm text-slate-700 sm:grid-cols-2 md:grid-cols-3">
             <div><strong>المدرسة:</strong> {se.schoolName || '—'}</div>
             <div><strong>النوع:</strong> {labelSchoolType(se.schoolType)}</div>
@@ -193,7 +193,7 @@ export default function PublicApplicationPage() {
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 border-b border-slate-100 pb-2 text-sm font-bold text-[#053E37]">القبول الجامعي</h2>
+          <h2 className="mb-3 border-b border-slate-100 pb-2 text-sm font-bold text-[#072147]">القبول الجامعي</h2>
           <div className="grid gap-2 text-sm text-slate-700 sm:grid-cols-2 md:grid-cols-3">
             <div><strong>المرحلة:</strong> {labelAdmissionType(u.admissionType)}</div>
             <div><strong>قناة القبول:</strong> {labelAdmissionChannel(u.admissionChannel)}</div>
@@ -206,7 +206,7 @@ export default function PublicApplicationPage() {
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 border-b border-slate-100 pb-2 text-sm font-bold text-[#053E37]">المستمسكات</h2>
+          <h2 className="mb-3 border-b border-slate-100 pb-2 text-sm font-bold text-[#072147]">المستمسكات</h2>
           <div className="grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
             {Object.entries(snapshot.documents || {}).map(([k, ok]) => (
               <div key={k}>
@@ -217,7 +217,7 @@ export default function PublicApplicationPage() {
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm text-center">
-          <h2 className="mb-4 text-sm font-bold text-[#053E37]">باركود و QR للاستمارة</h2>
+          <h2 className="mb-4 text-sm font-bold text-[#072147]">باركود و QR للاستمارة</h2>
           <div className="flex flex-col items-center gap-6 sm:flex-row sm:justify-center">
             <div>
               <p className="mb-2 text-xs font-semibold text-slate-600">الباركود</p>

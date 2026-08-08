@@ -10,6 +10,12 @@ import {
   buildBrowserPublicApplicationUrl,
   resolvePublicApplicationUrl,
 } from '@/src/lib/site-url';
+import {
+  compressDocumentFile,
+  compressPersonalPhoto,
+  formatFileSize,
+  isImageFile,
+} from '@/src/lib/compress-document-file';
 
 interface PersonalData {
   fullName: string; // الاسم الرباعي
@@ -189,6 +195,7 @@ export default function StudentFormModal({
   const [publicApplicationCode, setPublicApplicationCode] = useState('');
   const [publicApplicationUrl, setPublicApplicationUrl] = useState('');
   const [isPreparingPrint, setIsPreparingPrint] = useState(false);
+  const [compressingField, setCompressingField] = useState<string | null>(null);
 
   const loadStudentForEdit = async (studentId: string) => {
     try {
@@ -644,14 +651,65 @@ export default function StudentFormModal({
     }));
   };
 
-  const handleFileChange = (field: string, file: File | null) => {
-    setFormData(prev => ({
-      ...prev,
-      documents: {
-        ...prev.documents,
-        [field]: file
-      }
-    }));
+  const handleFileChange = async (field: string, file: File | null) => {
+    if (!file) {
+      setFormData((prev) => ({
+        ...prev,
+        documents: {
+          ...prev.documents,
+          [field]: null,
+        },
+      }));
+      return;
+    }
+
+    // ملفات وهمية عند التعديل (اسم فقط بدون محتوى) تُترك كما هي
+    if (file.size <= 0) {
+      setFormData((prev) => ({
+        ...prev,
+        documents: {
+          ...prev.documents,
+          [field]: file,
+        },
+      }));
+      return;
+    }
+
+    try {
+      setCompressingField(field);
+      const compressed =
+        field === 'personalPhoto' && isImageFile(file)
+          ? await compressPersonalPhoto(file)
+          : await compressDocumentFile(file);
+
+      setFormData((prev) => ({
+        ...prev,
+        documents: {
+          ...prev.documents,
+          [field]: compressed,
+        },
+      }));
+    } catch (err) {
+      console.error('فشل ضغط الملف، سيتم استخدام الأصل:', err);
+      setFormData((prev) => ({
+        ...prev,
+        documents: {
+          ...prev.documents,
+          [field]: file,
+        },
+      }));
+    } finally {
+      setCompressingField(null);
+    }
+  };
+
+  const documentFileHint = (file: File | null, field: string) => {
+    if (compressingField === field) return 'جاري ضغط الصورة وتقليل الحجم...';
+    if (!file) return '';
+    if (file.size > 0) {
+      return `ملف: ${file.name} · ${formatFileSize(file.size)}`;
+    }
+    return `ملف: ${file.name}`;
   };
 
   // دالة لتحديد الأقسام المتاحة بناءً على الفرع
@@ -915,6 +973,16 @@ export default function StudentFormModal({
     // الإبقاء على فورم المراجعة مفتوحاً عمداً
   };
 
+  const prepareDocumentForUpload = async (key: string, file: File): Promise<File> => {
+    if (file.size <= 0) return file;
+    try {
+      if (key === 'personalPhoto') return await compressPersonalPhoto(file);
+      return await compressDocumentFile(file);
+    } catch {
+      return file;
+    }
+  };
+
   const uploadRegistrationDocuments = async (): Promise<Record<string, string | boolean>> => {
     const keys = [
       'nationalIdFront',
@@ -931,8 +999,9 @@ export default function StudentFormModal({
     for (const key of keys) {
       const file = formData.documents[key];
       if (file && file.size > 0) {
+        const prepared = await prepareDocumentForUpload(key, file);
         const uploadFormData = new FormData();
-        uploadFormData.append('file', file);
+        uploadFormData.append('file', prepared);
         const uploadResponse = await fetch('/api/students/upload', {
           method: 'POST',
           body: uploadFormData,
@@ -2512,6 +2581,8 @@ export default function StudentFormModal({
                     <ul className="mt-1 grid grid-cols-1 gap-0.5 text-[11px] leading-relaxed text-slate-600 sm:grid-cols-2">
                       <li>• الصيغ المقبولة: JPG, PNG, GIF, WEBP, PDF</li>
                       <li>• الحد الأقصى لحجم الملف: 5 ميجابايت</li>
+                      <li>• تُضغط الصور تلقائياً قبل الرفع لتقليل الحجم على السيرفر</li>
+                      <li>• ملفات PDF تُرفع كما هي دون ضغط</li>
                       <li>• يجب أن تكون الصور واضحة ومقروءة</li>
                       <li>• الصورة الشخصية حديثة وبخلفية بيضاء</li>
                     </ul>
@@ -2525,12 +2596,12 @@ export default function StudentFormModal({
                       <input
                         type="file"
                         accept="image/*,application/pdf"
-                        onChange={(e) => handleFileChange('nationalIdFront', e.target.files?.[0] || null)}
+                        onChange={(e) => void handleFileChange('nationalIdFront', e.target.files?.[0] || null)}
                         className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
                       <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
-                        {formData.documents.nationalIdFront ? `ملف: ${formData.documents.nationalIdFront.name}` : ''}
+                        {documentFileHint(formData.documents.nationalIdFront, 'nationalIdFront')}
                       </p>
                     </div>
 
@@ -2541,12 +2612,12 @@ export default function StudentFormModal({
                       <input
                         type="file"
                         accept="image/*,application/pdf"
-                        onChange={(e) => handleFileChange('nationalIdBack', e.target.files?.[0] || null)}
+                        onChange={(e) => void handleFileChange('nationalIdBack', e.target.files?.[0] || null)}
                         className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
                       <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
-                        {formData.documents.nationalIdBack ? `ملف: ${formData.documents.nationalIdBack.name}` : ''}
+                        {documentFileHint(formData.documents.nationalIdBack, 'nationalIdBack')}
                       </p>
                     </div>
 
@@ -2557,12 +2628,12 @@ export default function StudentFormModal({
                       <input
                         type="file"
                         accept="image/*,application/pdf"
-                        onChange={(e) => handleFileChange('residenceCardFront', e.target.files?.[0] || null)}
+                        onChange={(e) => void handleFileChange('residenceCardFront', e.target.files?.[0] || null)}
                         className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
                       <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
-                        {formData.documents.residenceCardFront ? `ملف: ${formData.documents.residenceCardFront.name}` : ''}
+                        {documentFileHint(formData.documents.residenceCardFront, 'residenceCardFront')}
                       </p>
                     </div>
 
@@ -2573,12 +2644,12 @@ export default function StudentFormModal({
                       <input
                         type="file"
                         accept="image/*,application/pdf"
-                        onChange={(e) => handleFileChange('residenceCardBack', e.target.files?.[0] || null)}
+                        onChange={(e) => void handleFileChange('residenceCardBack', e.target.files?.[0] || null)}
                         className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
                       <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
-                        {formData.documents.residenceCardBack ? `ملف: ${formData.documents.residenceCardBack.name}` : ''}
+                        {documentFileHint(formData.documents.residenceCardBack, 'residenceCardBack')}
                       </p>
                     </div>
 
@@ -2589,12 +2660,12 @@ export default function StudentFormModal({
                       <input
                         type="file"
                         accept="image/*,application/pdf"
-                        onChange={(e) => handleFileChange('secondaryCertificate', e.target.files?.[0] || null)}
+                        onChange={(e) => void handleFileChange('secondaryCertificate', e.target.files?.[0] || null)}
                         className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
                       <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
-                        {formData.documents.secondaryCertificate ? `ملف: ${formData.documents.secondaryCertificate.name}` : ''}
+                        {documentFileHint(formData.documents.secondaryCertificate, 'secondaryCertificate')}
                       </p>
                     </div>
 
@@ -2605,12 +2676,12 @@ export default function StudentFormModal({
                       <input
                         type="file"
                         accept="image/*,application/pdf"
-                        onChange={(e) => handleFileChange('personalPhoto', e.target.files?.[0] || null)}
+                        onChange={(e) => void handleFileChange('personalPhoto', e.target.files?.[0] || null)}
                         className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
                       <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
-                        {formData.documents.personalPhoto ? `ملف: ${formData.documents.personalPhoto.name}` : ''}
+                        {documentFileHint(formData.documents.personalPhoto, 'personalPhoto')}
                       </p>
                     </div>
 
@@ -2621,12 +2692,12 @@ export default function StudentFormModal({
                       <input
                         type="file"
                         accept="image/*,application/pdf"
-                        onChange={(e) => handleFileChange('medicalExamination', e.target.files?.[0] || null)}
+                        onChange={(e) => void handleFileChange('medicalExamination', e.target.files?.[0] || null)}
                         className="block h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800 file:ml-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                         required
                       />
                       <p className="mt-1 min-h-[16px] truncate text-[11px] text-emerald-700">
-                        {formData.documents.medicalExamination ? `ملف: ${formData.documents.medicalExamination.name}` : ''}
+                        {documentFileHint(formData.documents.medicalExamination, 'medicalExamination')}
                       </p>
                     </div>
                   </div>
@@ -2658,7 +2729,7 @@ export default function StudentFormModal({
                   <button
                     type="button"
                     onClick={handleQuickUpdate}
-                    disabled={isSaving}
+                    disabled={isSaving || Boolean(compressingField)}
                     className="inline-flex items-center gap-1.5 rounded-md border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2815,7 +2886,7 @@ export default function StudentFormModal({
                       type="button"
                       disabled={isPreparingPrint}
                       onClick={() => void openApplicationPrint('full')}
-                      className="inline-flex items-center justify-center rounded-md border border-[#053E37] bg-white px-3 py-1.5 text-sm font-medium text-[#053E37] hover:bg-slate-100 disabled:opacity-60"
+                      className="inline-flex items-center justify-center rounded-md border border-[#072147] bg-white px-3 py-1.5 text-sm font-medium text-[#072147] hover:bg-slate-100 disabled:opacity-60"
                     >
                       {isPreparingPrint ? 'جاري التجهيز...' : 'طباعة استمارة الطالب'}
                     </button>
@@ -2823,7 +2894,7 @@ export default function StudentFormModal({
                       type="button"
                       disabled={isPreparingPrint}
                       onClick={() => void openApplicationPrint('codes')}
-                      className="inline-flex items-center justify-center rounded-md border border-[#E8913A] bg-white px-3 py-1.5 text-sm font-medium text-[#E8913A] hover:bg-orange-50 disabled:opacity-60"
+                      className="inline-flex items-center justify-center rounded-md border border-[#1F4A7A] bg-white px-3 py-1.5 text-sm font-medium text-[#1F4A7A] hover:bg-slate-50 disabled:opacity-60"
                     >
                       طباعة باركود
                     </button>
@@ -2841,7 +2912,7 @@ export default function StudentFormModal({
                 <button
                   type="button"
                   onClick={confirmSave}
-                  disabled={isSaving}
+                  disabled={isSaving || Boolean(compressingField)}
                   className="inline-flex items-center justify-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-60"
                 >
                   {isSaving

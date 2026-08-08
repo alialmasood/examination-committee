@@ -308,10 +308,75 @@ export function buildApplicationPrintHtml(opts: {
     </div>
   `;
 
+  const printDepartments = [
+    'تقنيات التخدير',
+    'تقنيات الاشعة',
+    'تقنيات صناعة الاسنان',
+    'هندسة تقنيات البناء والانشاءات',
+    'تقنيات هندسة النفط والغاز',
+    'تقنيات الفيزياء الصحية',
+    'تقنيات البصريات',
+    'تقنيات طب الطوارئ',
+    'تقنيات العلاج الطبيعي',
+    'هندسة تقنيات الامن السيبراني والحوسبة السحابية',
+  ];
+
+  const preferenceChoices = [
+    {
+      key: 'first',
+      label: 'الرغبة الأولى',
+      value: String(s.departmentPreferences?.first || u.department || '').trim(),
+    },
+    {
+      key: 'second',
+      label: 'الرغبة الثانية',
+      value: String(s.departmentPreferences?.second || '').trim(),
+    },
+    {
+      key: 'third',
+      label: 'الرغبة الثالثة',
+      value: String(s.departmentPreferences?.third || '').trim(),
+    },
+  ];
+
+  const preferencesHtml = `
+    <section class="prefs-panel">
+      <div class="prefs-panel-head">
+        <h2>اختيارات الطالب للأقسام</h2>
+        <p>${p.fullName ? `الطالب: <strong>${p.fullName}</strong>` : 'رغبات القبول حسب ترتيب الأولوية'}</p>
+      </div>
+      <div class="prefs-grid">
+        ${preferenceChoices
+          .map(
+            (choice, idx) => `
+          <div class="pref-card pref-${idx + 1}">
+            <div class="pref-rank" dir="ltr">${idx + 1}</div>
+            <div class="pref-body">
+              <span class="pref-label">${choice.label}</span>
+              <span class="pref-value">${choice.value ? `قسم ${choice.value}` : '—'}</span>
+            </div>
+          </div>`
+          )
+          .join('')}
+      </div>
+    </section>
+  `;
+
+  const departmentsTableRows = printDepartments
+    .map((name, index) => {
+      const num = String(index + 1).padStart(2, '0');
+      return `<tr>
+        <td class="dept-num" dir="ltr">${num}</td>
+        <td class="dept-name">قسم ${name}</td>
+      </tr>`;
+    })
+    .join('');
+
   const codesHtml = `
     <div class="page codes-page">
       <div class="codes-page-body">
         ${codesHeader}
+
         <div class="codes-row">
           <div class="code-block codes-right">
             <h2>رمز الاستمارة</h2>
@@ -325,6 +390,26 @@ export function buildApplicationPrintHtml(opts: {
             <p class="url" dir="ltr">${publicUrl}</p>
           </div>
         </div>
+
+        ${preferencesHtml}
+
+        <section class="depts-panel">
+          <div class="depts-panel-head">
+            <h2>أقسام الكلية التقنية التخصصية</h2>
+            <p>الأقسام المتاحة للتسجيل ضمن استمارة القبول</p>
+          </div>
+          <table class="depts-table" aria-label="أقسام الكلية">
+            <thead>
+              <tr>
+                <th class="dept-num-h">ت</th>
+                <th>اسم القسم</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${departmentsTableRows}
+            </tbody>
+          </table>
+        </section>
       </div>
       ${collegeFooter}
     </div>
@@ -371,15 +456,27 @@ export function buildApplicationPrintHtml(opts: {
       break-before: page;
     }
     .hdr {
-      border-bottom: 3px solid #053E37;
-      padding-bottom: 10px;
-      margin-bottom: 14px;
+      border-bottom: 3px solid #072147;
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+    }
+    .codes-page .hdr {
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+    }
+    .codes-page .hdr-logo img {
+      width: 58px;
+      height: 58px;
+    }
+    .codes-page .form-title {
+      font-size: 16px;
+      margin-top: 4px;
     }
     .hdr::before {
       content: "";
       display: block;
       height: 5px;
-      background: linear-gradient(90deg, #053E37 0%, #E8913A 50%, #053E37 100%);
+      background: linear-gradient(90deg, #072147 0%, #1F4A7A 50%, #072147 100%);
       margin: 0 0 10px;
       border-radius: 2px;
     }
@@ -412,12 +509,12 @@ export function buildApplicationPrintHtml(opts: {
       text-align: left;
     }
     .college-name {
-      color: #053E37;
+      color: #072147;
       font-weight: 800;
       font-size: 13px;
     }
     .college-unit {
-      color: #E8913A;
+      color: #1F4A7A;
       font-weight: 700;
       font-size: 12px;
       margin-top: 2px;
@@ -427,17 +524,17 @@ export function buildApplicationPrintHtml(opts: {
       font-size: 11.5px;
     }
     .meta-line strong {
-      color: #053E37;
+      color: #072147;
     }
     .form-title {
       margin: 8px 0 0;
       text-align: center;
       font-size: 18px;
-      color: #E8913A;
+      color: #1F4A7A;
       font-weight: 800;
     }
     .brand {
-      color: #053E37;
+      color: #072147;
       font-weight: 700;
       font-size: 13px;
       letter-spacing: 0.02em;
@@ -466,10 +563,10 @@ export function buildApplicationPrintHtml(opts: {
     .sec h2 {
       margin: 0;
       padding: 7px 10px;
-      background: #053E37;
+      background: #072147;
       color: #fff;
       font-size: 13px;
-      border-bottom: 3px solid #E8913A;
+      border-bottom: 3px solid #1F4A7A;
     }
     .grid {
       display: grid;
@@ -489,7 +586,7 @@ export function buildApplicationPrintHtml(opts: {
     }
     .field:nth-child(2n) { border-left: none; }
     .lbl {
-      color: #053E37;
+      color: #072147;
       font-weight: 700;
       width: 9.2rem;
       min-width: 9.2rem;
@@ -507,7 +604,7 @@ export function buildApplicationPrintHtml(opts: {
     .ftr {
       margin-top: 14px;
       padding-top: 8px;
-      border-top: 2px solid #053E37;
+      border-top: 2px solid #072147;
       display: flex;
       justify-content: space-between;
       font-size: 11px;
@@ -515,14 +612,14 @@ export function buildApplicationPrintHtml(opts: {
     }
     .college-ftr {
       margin-top: 18px;
-      background: #053E37;
+      background: #072147;
       color: #fff;
       border-radius: 6px;
       overflow: hidden;
     }
     .college-ftr-accent {
       height: 4px;
-      background: #E8913A;
+      background: #1F4A7A;
     }
     .college-ftr-grid {
       display: grid;
@@ -543,7 +640,7 @@ export function buildApplicationPrintHtml(opts: {
       text-align: left;
     }
     .college-ftr-label {
-      color: #E8913A;
+      color: #1F4A7A;
       font-size: 11px;
       font-weight: 800;
       margin-bottom: 4px;
@@ -562,7 +659,7 @@ export function buildApplicationPrintHtml(opts: {
       flex-wrap: wrap;
       padding: 7px 14px;
       background: rgba(0, 0, 0, 0.18);
-      border-top: 1px solid rgba(232, 145, 58, 0.35);
+      border-top: 1px solid rgba(31, 74, 122, 0.45);
       font-size: 10px;
       color: #dbe7e3;
     }
@@ -570,49 +667,204 @@ export function buildApplicationPrintHtml(opts: {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 28px;
-      padding: 24px 0;
+      gap: 16px;
+      padding: 12px 0;
     }
     .codes-row {
-      flex: 1 1 auto;
+      flex: 0 0 auto;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 28px;
+      gap: 14px;
       align-items: center;
       justify-items: center;
-      padding: 36px 8px 20px;
+      padding: 6px 4px 4px;
       min-height: 0;
     }
     .code-block { text-align: center; width: 100%; }
     .codes-right {
-      border-left: 1px solid #d7e0dc;
-      padding-left: 16px;
+      border-left: 1px solid #c9d4e8;
+      padding-left: 14px;
     }
     .codes-left {
-      padding-right: 16px;
+      padding-right: 14px;
     }
     .code-block h2 {
-      margin: 0 0 10px;
-      color: #053E37;
-      font-size: 15px;
+      margin: 0 0 8px;
+      color: #072147;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
     }
     .code-block h2.mt {
-      margin-top: 22px;
+      margin-top: 14px;
     }
     .code-id {
       display: inline-block;
-      padding: 8px 16px;
-      border: 2px solid #E8913A;
+      padding: 6px 14px;
+      border: 2px solid #1F4A7A;
       border-radius: 6px;
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 800;
       letter-spacing: 0.06em;
-      color: #053E37;
-      background: #fff8ef;
+      color: #072147;
+      background: #eef2f9;
     }
-    .barcode { height: 70px; max-width: 95%; }
-    .qr { width: 200px; height: 200px; border: 1px solid #cbd5e1; padding: 8px; background: #fff; }
-    .url { margin: 8px auto 0; font-size: 10px; color: #64748b; word-break: break-all; max-width: 260px; }
+    .barcode { height: 48px; max-width: 95%; }
+    .qr { width: 128px; height: 128px; border: 1px solid #cbd5e1; padding: 5px; background: #fff; }
+    .url { margin: 5px auto 0; font-size: 8.5px; color: #64748b; word-break: break-all; max-width: 220px; }
+
+    .prefs-panel {
+      margin: 6px 0 8px;
+      border: 1px solid #c9d4e8;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+      flex: 0 0 auto;
+    }
+    .prefs-panel-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 7px 12px;
+      background: #eef2f9;
+      border-bottom: 1px solid #c9d4e8;
+    }
+    .prefs-panel-head h2 {
+      margin: 0;
+      font-size: 12.5px;
+      font-weight: 800;
+      color: #072147;
+    }
+    .prefs-panel-head p {
+      margin: 0;
+      font-size: 11px;
+      color: #475569;
+    }
+    .prefs-panel-head strong {
+      color: #072147;
+    }
+    .prefs-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0;
+    }
+    .pref-card {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      min-height: 54px;
+      border-left: 1px solid #d7e0ec;
+      background: #fff;
+    }
+    .pref-card:last-child {
+      border-left: none;
+    }
+    .pref-rank {
+      flex: 0 0 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 800;
+      color: #fff;
+      background: #072147;
+    }
+    .pref-2 .pref-rank { background: #12345F; }
+    .pref-3 .pref-rank { background: #1F4A7A; }
+    .pref-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      padding: 7px 10px;
+      text-align: right;
+    }
+    .pref-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: #1F4A7A;
+      letter-spacing: 0.02em;
+    }
+    .pref-value {
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1.35;
+    }
+
+    .depts-panel {
+      flex: 1 1 auto;
+      margin-top: 0;
+      border: 1px solid #c9d4e8;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .depts-panel-head {
+      background: linear-gradient(90deg, #072147 0%, #1F4A7A 100%);
+      color: #fff;
+      padding: 9px 14px;
+      text-align: center;
+    }
+    .depts-panel-head h2 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+    .depts-panel-head p {
+      margin: 3px 0 0;
+      font-size: 10.5px;
+      opacity: 0.92;
+    }
+    .depts-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .depts-table thead th {
+      background: #e8eef8;
+      color: #072147;
+      font-weight: 800;
+      font-size: 11.5px;
+      padding: 7px 10px;
+      border-bottom: 2px solid #072147;
+      text-align: right;
+    }
+    .depts-table th.dept-num-h,
+    .depts-table td.dept-num {
+      width: 42px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .depts-table tbody td {
+      padding: 5.5px 10px;
+      border-bottom: 1px solid #e2e8f0;
+      color: #1e293b;
+      vertical-align: middle;
+    }
+    .depts-table tbody tr:nth-child(even) {
+      background: #f7f9fc;
+    }
+    .depts-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .depts-table td.dept-num {
+      font-weight: 800;
+      color: #072147;
+      background: #eef2f9;
+      border-left: 1px solid #d7e0ec;
+    }
+    .depts-table td.dept-name {
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
     @media print {
       body { background: #fff; }
       .no-print { display: none !important; }
@@ -622,6 +874,9 @@ export function buildApplicationPrintHtml(opts: {
       }
       .codes-page .college-ftr {
         margin-top: auto;
+      }
+      .depts-panel {
+        break-inside: avoid;
       }
     }
   </style>
