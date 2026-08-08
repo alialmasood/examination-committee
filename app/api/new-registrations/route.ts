@@ -3,6 +3,33 @@ import { createNewRegistration, listNewRegistrations } from '@/src/lib/new-regis
 import type { ApplicationSnapshot } from '@/src/lib/student-application-print';
 import { createPublicApplication } from '@/src/lib/public-applications';
 import { buildPublicApplicationUrl, getRequestSiteOrigin } from '@/src/lib/site-url';
+import { archiveApplicationPackage } from '@/src/lib/application-archive';
+import { query } from '@/src/lib/db';
+
+async function persistArchiveMeta(
+  rowId: string,
+  archive: {
+    folderRelative: string;
+    formRelative: string;
+    attachments: string[];
+  }
+) {
+  await query(
+    `UPDATE student_affairs.new_registrations
+     SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1::uuid`,
+    [
+      rowId,
+      JSON.stringify({
+        archiveFolder: archive.folderRelative,
+        archiveForm: archive.formRelative,
+        archiveAttachments: archive.attachments,
+        archivedAt: new Date().toISOString(),
+      }),
+    ]
+  );
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -57,31 +84,41 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const fullPayload = { ...payload, departmentPreferences: prefs } as ApplicationSnapshot;
     const row = await createNewRegistration({
-      payload: { ...payload, departmentPreferences: prefs },
+      payload: fullPayload,
       preferences: prefs,
     });
 
-    // حفظ نسخة للعرض العام/الطباعة بنفس رمز الطلب
     let publicUrl = '';
     try {
-      const publicCode = await createPublicApplication(
-        {
-          ...payload,
-          departmentPreferences: prefs,
-        } as ApplicationSnapshot,
-        row.code
-      );
+      const publicCode = await createPublicApplication(fullPayload, row.code);
       publicUrl = buildPublicApplicationUrl(getRequestSiteOrigin(request), publicCode);
     } catch (e) {
       console.warn('تعذر إنشاء رابط عام للطلب:', e);
+    }
+
+    let archive: Awaited<ReturnType<typeof archiveApplicationPackage>> | null = null;
+    try {
+      archive = await archiveApplicationPackage({
+        fullName: row.full_name || payload.personalData.fullName,
+        code: row.code,
+        payload: fullPayload,
+        publicUrl: publicUrl || undefined,
+      });
+      await persistArchiveMeta(row.id, archive);
+    } catch (e) {
+      console.warn('تعذر أرشفة الاستمارة والمرفقات:', e);
     }
 
     return NextResponse.json({
       success: true,
       data: row,
       publicUrl,
-      message: 'تم حفظ طلب التسجيل الجديد بنجاح',
+      archive,
+      message: archive
+        ? `تم حفظ طلب التسجيل وأرشفة الاستمارة باسم الطالب في ${archive.folderRelative}`
+        : 'تم حفظ طلب التسجيل الجديد بنجاح',
     });
   } catch (error) {
     console.error('new-registrations POST:', error);

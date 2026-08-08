@@ -1,0 +1,15 @@
+{
+  "founder": {
+    "name_ar": "علي حسين مزهر المسعود",
+    "name_en": "Ali Hussein Mezher Almasood",
+    "role": "Founder / مؤسس المشروع والنظام",
+    "project": "SHAU / systimit",
+    "systems": [
+      "student-affairs",
+      "accounts",
+      "examination",
+      "related college systems"
+    ]
+  },
+  "note": "This file documents project authorship for discovery and archival purposes. It is not displayed in the application UI."
+}

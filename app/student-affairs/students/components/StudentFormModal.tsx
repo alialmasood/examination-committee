@@ -983,6 +983,33 @@ export default function StudentFormModal({
     }
   };
 
+  const uploadNamedDocument = async (
+    file: File,
+    docKey: string,
+    options?: { archiveApplication?: boolean }
+  ): Promise<string> => {
+    const prepared = await prepareDocumentForUpload(docKey, file);
+    const uploadFormData = new FormData();
+    uploadFormData.append('file', prepared);
+    const studentName = formData.personalData.fullName?.trim();
+    if (studentName) {
+      uploadFormData.append('studentFullName', studentName);
+      uploadFormData.append('docKey', docKey);
+      if (options?.archiveApplication || isNewApplication) {
+        uploadFormData.append('archiveMode', 'application');
+      }
+    }
+    const uploadResponse = await fetch('/api/students/upload', {
+      method: 'POST',
+      body: uploadFormData,
+    });
+    const uploadResult = await uploadResponse.json();
+    if (!uploadResult.success) {
+      throw new Error(uploadResult.error || `فشل رفع المستمسك: ${docKey}`);
+    }
+    return String(uploadResult.filename || '');
+  };
+
   const uploadRegistrationDocuments = async (): Promise<Record<string, string | boolean>> => {
     const keys = [
       'nationalIdFront',
@@ -999,18 +1026,7 @@ export default function StudentFormModal({
     for (const key of keys) {
       const file = formData.documents[key];
       if (file && file.size > 0) {
-        const prepared = await prepareDocumentForUpload(key, file);
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', prepared);
-        const uploadResponse = await fetch('/api/students/upload', {
-          method: 'POST',
-          body: uploadFormData,
-        });
-        const uploadResult = await uploadResponse.json();
-        if (!uploadResult.success) {
-          throw new Error(uploadResult.error || `فشل رفع المستمسك: ${key}`);
-        }
-        result[key] = uploadResult.filename as string;
+        result[key] = await uploadNamedDocument(file, key);
       } else if (existingDocNames[key]) {
         result[key] = existingDocNames[key];
       } else if (file && file.name && file.size === 0 && file.name !== 'مرفق') {
@@ -1070,8 +1086,12 @@ export default function StudentFormModal({
       onSuccess();
       alert(
         isEdit
-          ? 'تم تحديث طلب التسجيل بنجاح (بما يشمل المستمسكات)'
-          : `تم حفظ طلب التسجيل الجديد بنجاح\nرمز الطلب: ${result.data?.code || ''}`
+          ? result.archive
+            ? `تم تحديث الطلب وأرشفة الاستمارة باسم الطالب\n${result.archive.folderRelative}`
+            : 'تم تحديث طلب التسجيل بنجاح (بما يشمل المستمسكات)'
+          : result.archive
+            ? `تم حفظ طلب التسجيل بنجاح\nرمز الطلب: ${result.data?.code || ''}\nمجلد الأرشفة: ${result.archive.folderRelative}`
+            : `تم حفظ طلب التسجيل الجديد بنجاح\nرمز الطلب: ${result.data?.code || ''}`
       );
       return true;
     } catch (err) {
@@ -1135,155 +1155,41 @@ export default function StudentFormModal({
         return false;
       }
 
-      // رفع جميع الملفات
+      // رفع جميع الملفات (باسم الطالب الرباعي داخل مجلد خاص)
       let photoFilename = '';
       let nationalIdFrontFilename = '';
       let nationalIdBackFilename = '';
       let residenceCardFrontFilename = '';
       let residenceCardBackFilename = '';
       let secondaryCertificateFilename = '';
-
-      // رفع الصورة الشخصية
-      if (formData.documents.personalPhoto && formData.documents.personalPhoto.size > 0) {
-
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.personalPhoto);
-        
-        const uploadResponse = await fetch('/api/students/upload', {
-          method: 'POST',
-          body: uploadFormData,
-        });
-        
-        const uploadResult = await uploadResponse.json();
-        
-        if (uploadResult.success) {
-          photoFilename = uploadResult.filename;
-
-        } else {
-          console.error('❌ فشل رفع الصورة الشخصية:', uploadResult.error);
-          alert('خطأ في رفع الصورة الشخصية: ' + uploadResult.error);
-        }
-      }
-
-      // رفع صورة البطاقة الوطنية الوجه الأول
-      if (formData.documents.nationalIdFront && formData.documents.nationalIdFront.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.nationalIdFront);
-        
-        const uploadResponse = await fetch('/api/students/upload', {
-          method: 'POST',
-          body: uploadFormData,
-        });
-        
-        const uploadResult = await uploadResponse.json();
-        
-        if (uploadResult.success) {
-          nationalIdFrontFilename = uploadResult.filename;
-
-        } else {
-          console.error('❌ فشل رفع صورة البطاقة الوطنية الوجه الأول:', uploadResult.error);
-        }
-      }
-
-      // رفع صورة البطاقة الوطنية الوجه الثاني
-      if (formData.documents.nationalIdBack && formData.documents.nationalIdBack.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.nationalIdBack);
-        
-        const uploadResponse = await fetch('/api/students/upload', {
-          method: 'POST',
-          body: uploadFormData,
-        });
-        
-        const uploadResult = await uploadResponse.json();
-        
-        if (uploadResult.success) {
-          nationalIdBackFilename = uploadResult.filename;
-
-        } else {
-          console.error('❌ فشل رفع صورة البطاقة الوطنية الوجه الثاني:', uploadResult.error);
-        }
-      }
-
-      // رفع صورة بطاقة السكن الوجه الأول
-      if (formData.documents.residenceCardFront && formData.documents.residenceCardFront.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.residenceCardFront);
-        
-        const uploadResponse = await fetch('/api/students/upload', {
-          method: 'POST',
-          body: uploadFormData,
-        });
-        
-        const uploadResult = await uploadResponse.json();
-        
-        if (uploadResult.success) {
-          residenceCardFrontFilename = uploadResult.filename;
-
-        } else {
-          console.error('❌ فشل رفع صورة بطاقة السكن الوجه الأول:', uploadResult.error);
-        }
-      }
-
-      // رفع صورة بطاقة السكن الوجه الثاني
-      if (formData.documents.residenceCardBack && formData.documents.residenceCardBack.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.residenceCardBack);
-        
-        const uploadResponse = await fetch('/api/students/upload', {
-          method: 'POST',
-          body: uploadFormData,
-        });
-        
-        const uploadResult = await uploadResponse.json();
-        
-        if (uploadResult.success) {
-          residenceCardBackFilename = uploadResult.filename;
-
-        } else {
-          console.error('❌ فشل رفع صورة بطاقة السكن الوجه الثاني:', uploadResult.error);
-        }
-      }
-
-      // رفع وثيقة الإعدادية
-      if (formData.documents.secondaryCertificate && formData.documents.secondaryCertificate.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.secondaryCertificate);
-        
-        const uploadResponse = await fetch('/api/students/upload', {
-          method: 'POST',
-          body: uploadFormData,
-        });
-        
-        const uploadResult = await uploadResponse.json();
-        
-        if (uploadResult.success) {
-          secondaryCertificateFilename = uploadResult.filename;
-
-        } else {
-          console.error('❌ فشل رفع وثيقة الإعدادية:', uploadResult.error);
-        }
-      }
-
-      // رفع الفحص الطبي
       let medicalExaminationFilename = '';
-      if (formData.documents.medicalExamination && formData.documents.medicalExamination.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.medicalExamination);
-        
-        const uploadResponse = await fetch('/api/students/upload', {
-          method: 'POST',
-          body: uploadFormData,
-        });
-        
-        const uploadResult = await uploadResponse.json();
-        
-        if (uploadResult.success) {
-          medicalExaminationFilename = uploadResult.filename;
 
-        } else {
-          console.error('❌ فشل رفع الفحص الطبي:', uploadResult.error);
+      try {
+        if (formData.documents.personalPhoto && formData.documents.personalPhoto.size > 0) {
+          photoFilename = await uploadNamedDocument(formData.documents.personalPhoto, 'personalPhoto');
         }
+        if (formData.documents.nationalIdFront && formData.documents.nationalIdFront.size > 0) {
+          nationalIdFrontFilename = await uploadNamedDocument(formData.documents.nationalIdFront, 'nationalIdFront');
+        }
+        if (formData.documents.nationalIdBack && formData.documents.nationalIdBack.size > 0) {
+          nationalIdBackFilename = await uploadNamedDocument(formData.documents.nationalIdBack, 'nationalIdBack');
+        }
+        if (formData.documents.residenceCardFront && formData.documents.residenceCardFront.size > 0) {
+          residenceCardFrontFilename = await uploadNamedDocument(formData.documents.residenceCardFront, 'residenceCardFront');
+        }
+        if (formData.documents.residenceCardBack && formData.documents.residenceCardBack.size > 0) {
+          residenceCardBackFilename = await uploadNamedDocument(formData.documents.residenceCardBack, 'residenceCardBack');
+        }
+        if (formData.documents.secondaryCertificate && formData.documents.secondaryCertificate.size > 0) {
+          secondaryCertificateFilename = await uploadNamedDocument(formData.documents.secondaryCertificate, 'secondaryCertificate');
+        }
+        if (formData.documents.medicalExamination && formData.documents.medicalExamination.size > 0) {
+          medicalExaminationFilename = await uploadNamedDocument(formData.documents.medicalExamination, 'medicalExamination');
+        }
+      } catch (uploadErr) {
+        console.error(uploadErr);
+        alert(uploadErr instanceof Error ? uploadErr.message : 'خطأ في رفع المستمسكات');
+        return false;
       }
       
       // تحضير البيانات للحفظ
@@ -1515,7 +1421,6 @@ export default function StudentFormModal({
       }
 
       // نفس منطق confirmSave ولكن مع payment_status = 'registration_pending'
-      // رفع جميع الملفات (نفس الكود)
       let photoFilename = '';
       let nationalIdFrontFilename = '';
       let nationalIdBackFilename = '';
@@ -1524,67 +1429,32 @@ export default function StudentFormModal({
       let secondaryCertificateFilename = '';
       let medicalExaminationFilename = '';
 
-      // رفع الصورة الشخصية
-      if (formData.documents.personalPhoto && formData.documents.personalPhoto.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.personalPhoto);
-        const uploadResponse = await fetch('/api/students/upload', {
-          method: 'POST',
-          body: uploadFormData,
-        });
-        const uploadResult = await uploadResponse.json();
-        if (uploadResult.success) {
-          photoFilename = uploadResult.filename;
+      try {
+        if (formData.documents.personalPhoto && formData.documents.personalPhoto.size > 0) {
+          photoFilename = await uploadNamedDocument(formData.documents.personalPhoto, 'personalPhoto');
         }
-      }
-
-      // رفع بقية الملفات (نفس الكود من confirmSave)
-      if (formData.documents.nationalIdFront && formData.documents.nationalIdFront.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.nationalIdFront);
-        const uploadResponse = await fetch('/api/students/upload', { method: 'POST', body: uploadFormData });
-        const uploadResult = await uploadResponse.json();
-        if (uploadResult.success) nationalIdFrontFilename = uploadResult.filename;
-      }
-
-      if (formData.documents.nationalIdBack && formData.documents.nationalIdBack.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.nationalIdBack);
-        const uploadResponse = await fetch('/api/students/upload', { method: 'POST', body: uploadFormData });
-        const uploadResult = await uploadResponse.json();
-        if (uploadResult.success) nationalIdBackFilename = uploadResult.filename;
-      }
-
-      if (formData.documents.residenceCardFront && formData.documents.residenceCardFront.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.residenceCardFront);
-        const uploadResponse = await fetch('/api/students/upload', { method: 'POST', body: uploadFormData });
-        const uploadResult = await uploadResponse.json();
-        if (uploadResult.success) residenceCardFrontFilename = uploadResult.filename;
-      }
-
-      if (formData.documents.residenceCardBack && formData.documents.residenceCardBack.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.residenceCardBack);
-        const uploadResponse = await fetch('/api/students/upload', { method: 'POST', body: uploadFormData });
-        const uploadResult = await uploadResponse.json();
-        if (uploadResult.success) residenceCardBackFilename = uploadResult.filename;
-      }
-
-      if (formData.documents.secondaryCertificate && formData.documents.secondaryCertificate.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.secondaryCertificate);
-        const uploadResponse = await fetch('/api/students/upload', { method: 'POST', body: uploadFormData });
-        const uploadResult = await uploadResponse.json();
-        if (uploadResult.success) secondaryCertificateFilename = uploadResult.filename;
-      }
-
-      if (formData.documents.medicalExamination && formData.documents.medicalExamination.size > 0) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', formData.documents.medicalExamination);
-        const uploadResponse = await fetch('/api/students/upload', { method: 'POST', body: uploadFormData });
-        const uploadResult = await uploadResponse.json();
-        if (uploadResult.success) medicalExaminationFilename = uploadResult.filename;
+        if (formData.documents.nationalIdFront && formData.documents.nationalIdFront.size > 0) {
+          nationalIdFrontFilename = await uploadNamedDocument(formData.documents.nationalIdFront, 'nationalIdFront');
+        }
+        if (formData.documents.nationalIdBack && formData.documents.nationalIdBack.size > 0) {
+          nationalIdBackFilename = await uploadNamedDocument(formData.documents.nationalIdBack, 'nationalIdBack');
+        }
+        if (formData.documents.residenceCardFront && formData.documents.residenceCardFront.size > 0) {
+          residenceCardFrontFilename = await uploadNamedDocument(formData.documents.residenceCardFront, 'residenceCardFront');
+        }
+        if (formData.documents.residenceCardBack && formData.documents.residenceCardBack.size > 0) {
+          residenceCardBackFilename = await uploadNamedDocument(formData.documents.residenceCardBack, 'residenceCardBack');
+        }
+        if (formData.documents.secondaryCertificate && formData.documents.secondaryCertificate.size > 0) {
+          secondaryCertificateFilename = await uploadNamedDocument(formData.documents.secondaryCertificate, 'secondaryCertificate');
+        }
+        if (formData.documents.medicalExamination && formData.documents.medicalExamination.size > 0) {
+          medicalExaminationFilename = await uploadNamedDocument(formData.documents.medicalExamination, 'medicalExamination');
+        }
+      } catch (uploadErr) {
+        console.error(uploadErr);
+        alert(uploadErr instanceof Error ? uploadErr.message : 'خطأ في رفع المستمسكات');
+        return false;
       }
 
       // تحضير البيانات (نفس confirmSave)
@@ -2886,7 +2756,7 @@ export default function StudentFormModal({
                       type="button"
                       disabled={isPreparingPrint}
                       onClick={() => void openApplicationPrint('full')}
-                      className="inline-flex items-center justify-center rounded-md border border-[#072147] bg-white px-3 py-1.5 text-sm font-medium text-[#072147] hover:bg-slate-100 disabled:opacity-60"
+                      className="inline-flex items-center justify-center rounded-md border border-[#0E3D6E] bg-white px-3 py-1.5 text-sm font-medium text-[#0E3D6E] hover:bg-slate-100 disabled:opacity-60"
                     >
                       {isPreparingPrint ? 'جاري التجهيز...' : 'طباعة استمارة الطالب'}
                     </button>
@@ -2894,7 +2764,7 @@ export default function StudentFormModal({
                       type="button"
                       disabled={isPreparingPrint}
                       onClick={() => void openApplicationPrint('codes')}
-                      className="inline-flex items-center justify-center rounded-md border border-[#1F4A7A] bg-white px-3 py-1.5 text-sm font-medium text-[#1F4A7A] hover:bg-slate-50 disabled:opacity-60"
+                      className="inline-flex items-center justify-center rounded-md border border-[#3A6FA0] bg-white px-3 py-1.5 text-sm font-medium text-[#3A6FA0] hover:bg-slate-50 disabled:opacity-60"
                     >
                       طباعة باركود
                     </button>

@@ -9,6 +9,10 @@ import {
   type PrintMode,
 } from '@/src/lib/student-application-print';
 import { buildBrowserPublicApplicationUrl } from '@/src/lib/site-url';
+import {
+  exportNewRegistrationsExcel,
+  exportNewRegistrationsPdfLandscape,
+} from '@/src/lib/new-registrations-export';
 
 const DEPARTMENTS = [
   'تقنيات التخدير',
@@ -78,6 +82,7 @@ export default function NewRegistrationsPage() {
   const [confirmRow, setConfirmRow] = useState<RegistrationRow | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null);
 
   const closeActionMenu = () => {
     setOpenMenuId(null);
@@ -333,6 +338,56 @@ export default function NewRegistrationsPage() {
     }
   };
 
+  const fetchExportRows = async () => {
+    const params = new URLSearchParams({
+      page: '1',
+      limit: '5000',
+    });
+    if (debouncedSearch) params.set('search', debouncedSearch);
+    if (department) params.set('department', department);
+    if (studyType) params.set('study_type', studyType);
+    const res = await fetch(`/api/new-registrations?${params}`);
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || 'تعذر جلب بيانات التصدير');
+    }
+    return (data.rows || []) as RegistrationRow[];
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      setExporting('excel');
+      const exportRows = await fetchExportRows();
+      if (!exportRows.length) {
+        alert('لا توجد بيانات للتصدير');
+        return;
+      }
+      await exportNewRegistrationsExcel(exportRows);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'تعذر تصدير Excel');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    try {
+      setExporting('pdf');
+      const exportRows = await fetchExportRows();
+      if (!exportRows.length) {
+        alert('لا توجد بيانات للتصدير');
+        return;
+      }
+      exportNewRegistrationsPdfLandscape(exportRows);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'تعذر تصدير PDF');
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const statusLabel = (status: string) => {
     if (status === 'confirmed') return 'مثبت';
     return 'قيد الانتظار';
@@ -346,16 +401,34 @@ export default function NewRegistrationsPage() {
           <h1 className="text-2xl font-bold text-slate-800">التسجيل الجديد</h1>
           <p className="mt-1 text-sm text-slate-600">طلبات التسجيل برغبات ثلاثية قبل الاعتماد الرسمي</p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setEditRegistrationId(null);
-            setShowForm(true);
-          }}
-          className="rounded-lg bg-[#E8913A] px-4 py-2 text-sm font-semibold text-white hover:bg-[#d17c28]"
-        >
-          تسجيل طالب جديد
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={Boolean(exporting) || loading}
+            onClick={() => void handleExportExcel()}
+            className="rounded-lg border border-[#0E3D6E] bg-white px-3 py-2 text-sm font-semibold text-[#0E3D6E] hover:bg-slate-50 disabled:opacity-50"
+          >
+            {exporting === 'excel' ? 'جاري Excel...' : 'تصدير Excel'}
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(exporting) || loading}
+            onClick={() => void handleExportPdf()}
+            className="rounded-lg border border-[#3A6FA0] bg-white px-3 py-2 text-sm font-semibold text-[#3A6FA0] hover:bg-slate-50 disabled:opacity-50"
+          >
+            {exporting === 'pdf' ? 'جاري PDF...' : 'تصدير PDF أفقي'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEditRegistrationId(null);
+              setShowForm(true);
+            }}
+            className="rounded-lg bg-[#E8913A] px-4 py-2 text-sm font-semibold text-white hover:bg-[#d17c28]"
+          >
+            تسجيل طالب جديد
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -379,7 +452,10 @@ export default function NewRegistrationsPage() {
 
       {topDepartments.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-sm font-bold text-slate-800">أكثر الأقسام اختياراً في الرغبات</h2>
+          <h2 className="mb-1 text-sm font-bold text-slate-800">أكثر الأقسام اختياراً في الرغبات</h2>
+          <p className="mb-3 text-[11px] text-slate-500">
+            قبل التثبيت تُحسب الرغبات الثلاث · بعد التثبيت يُحسب القسم المثبت فقط
+          </p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {topDepartments.map((item) => (
               <div

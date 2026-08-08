@@ -33,12 +33,12 @@
   },
   "include": [
     "next-env.d.ts",
+    "css-modules.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts",
-    ".next\\dev/types/**/*.ts",
     ".next\\dev/types/**/*.ts"
   ],
   "exclude": [

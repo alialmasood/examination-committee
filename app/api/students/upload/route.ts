@@ -2,13 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { existsSync } from 'fs';
+import {
+  DOC_FILE_LABELS,
+  sanitizeFilePart,
+  sanitizePersonFolderName,
+} from '@/src/lib/application-archive';
 
 // POST /api/students/upload - رفع ملف صورة
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get('file') as File;
-    const studentId = formData.get('studentId') as string;
+    const studentFullName = String(formData.get('studentFullName') || '').trim();
+    const docKey = String(formData.get('docKey') || '').trim();
+    const archiveMode = String(formData.get('archiveMode') || '').trim(); // application | ''
 
     if (!file) {
       return NextResponse.json(
@@ -17,45 +24,72 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // التحقق من نوع الملف
-    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+    const validTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'application/pdf',
+    ];
     if (!validTypes.includes(file.type)) {
-      console.log('❌ نوع الملف غير مدعوم:', file.type);
-      console.log('📁 معلومات الملف:', {
-        name: file.name,
-        type: file.type,
-        size: file.size
-      });
       return NextResponse.json(
-        { success: false, error: `نوع الملف غير مدعوم: ${file.type}. الأنواع المدعومة: ${validTypes.join(', ')}` },
+        {
+          success: false,
+          error: `نوع الملف غير مدعوم: ${file.type}. الأنواع المدعومة: ${validTypes.join(', ')}`,
+        },
         { status: 400 }
       );
     }
 
-    // إنشاء المجلد إذا لم يكن موجوداً
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'students');
+    const fileExtension =
+      path.extname(file.name) || (file.type === 'application/pdf' ? '.pdf' : '.jpg');
+    const label =
+      DOC_FILE_LABELS[docKey] || sanitizeFilePart(docKey) || 'مستمسك';
+
+    let uploadDir: string;
+    let fileName: string;
+    let publicPath: string;
+    let storedName: string;
+
+    if (studentFullName && archiveMode === 'application') {
+      // طلب تسجيل جديد: مجلد باسم الطالب الرباعي
+      const folderName = sanitizePersonFolderName(studentFullName);
+      uploadDir = path.join(
+        process.cwd(),
+        'public',
+        'uploads',
+        'applications',
+        folderName
+      );
+      fileName = `${sanitizeFilePart(studentFullName)}_${label}${fileExtension}`;
+      storedName = `applications/${folderName}/${fileName}`;
+      publicPath = `/uploads/${storedName}`;
+    } else if (studentFullName) {
+      // طالب رسمي: مجلد students لكن باسم الطالب وليس photo_رقم
+      uploadDir = path.join(process.cwd(), 'public', 'uploads', 'students');
+      fileName = `${sanitizeFilePart(studentFullName)}_${label}_${Date.now()}${fileExtension}`;
+      storedName = fileName;
+      publicPath = `/uploads/students/${fileName}`;
+    } else {
+      uploadDir = path.join(process.cwd(), 'public', 'uploads', 'students');
+      fileName = `photo_${Date.now()}${fileExtension}`;
+      storedName = fileName;
+      publicPath = `/uploads/students/${fileName}`;
+    }
+
     if (!existsSync(uploadDir)) {
       await mkdir(uploadDir, { recursive: true });
     }
 
-    // إنشاء اسم فريد للملف
-    const fileExtension = path.extname(file.name);
-    // إنشاء اسم فريد للملف باستخدام timestamp
-    const fileName = `photo_${Date.now()}${fileExtension}`;
-    
     const filePath = path.join(uploadDir, fileName);
-
-    // تحويل الملف إلى buffer وحفظه
     const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    await writeFile(filePath, buffer);
-
-    console.log('✅ تم حفظ الملف:', filePath);
+    await writeFile(filePath, Buffer.from(bytes));
 
     return NextResponse.json({
       success: true,
-      filename: fileName,
-      path: `/uploads/students/${fileName}`
+      filename: storedName,
+      path: publicPath,
     });
   } catch (error) {
     console.error('خطأ في رفع الملف:', error);

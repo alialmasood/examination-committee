@@ -1,0 +1,17 @@
+/* TEAM */
+Founder: علي حسين مزهر المسعود
+Founder (EN): Ali Hussein Mezher Almasood
+Role: Founder & System Architect / مؤسس ومصمم النظام
+Project: SHAU — نظام كلية الشرق للعلوم التقنية التخصصية
+Systems: Student Affairs, Accounts, Examination Committee, and related modules
+Site: /humans.txt
+
+/* SITE */
+Standards: Next.js, TypeScript, PostgreSQL
+Last update: 2026
+Language: ar, en
+
+/* NOTE */
+This project (SHAU / systimit) was founded and established by
+علي حسين مزهر المسعود (Ali Hussein Mezher Almasood).
+He is the founder of the system and its related platforms.

@@ -415,6 +415,7 @@ export function buildApplicationPrintHtml(opts: {
     </div>
   `;
 
+  const documentTitleName = String(p.fullName || '').trim() || normalizedCode;
   const body =
     mode === 'codes' ? codesHtml : `${detailsHtml}${codesHtml}`;
 
@@ -422,7 +423,7 @@ export function buildApplicationPrintHtml(opts: {
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <title>استمارة تسجيل · ${normalizedCode}</title>
+  <title>${documentTitleName} · استمارة تسجيل</title>
   <style>
     @page { size: A4; margin: 12mm; }
     * { box-sizing: border-box; }
@@ -456,7 +457,7 @@ export function buildApplicationPrintHtml(opts: {
       break-before: page;
     }
     .hdr {
-      border-bottom: 3px solid #072147;
+      border-bottom: 3px solid #0E3D6E;
       padding-bottom: 8px;
       margin-bottom: 10px;
     }
@@ -476,7 +477,7 @@ export function buildApplicationPrintHtml(opts: {
       content: "";
       display: block;
       height: 5px;
-      background: linear-gradient(90deg, #072147 0%, #1F4A7A 50%, #072147 100%);
+      background: linear-gradient(90deg, #0E3D6E 0%, #3A6FA0 50%, #0E3D6E 100%);
       margin: 0 0 10px;
       border-radius: 2px;
     }
@@ -509,12 +510,12 @@ export function buildApplicationPrintHtml(opts: {
       text-align: left;
     }
     .college-name {
-      color: #072147;
+      color: #0E3D6E;
       font-weight: 800;
       font-size: 13px;
     }
     .college-unit {
-      color: #1F4A7A;
+      color: #3A6FA0;
       font-weight: 700;
       font-size: 12px;
       margin-top: 2px;
@@ -524,17 +525,17 @@ export function buildApplicationPrintHtml(opts: {
       font-size: 11.5px;
     }
     .meta-line strong {
-      color: #072147;
+      color: #0E3D6E;
     }
     .form-title {
       margin: 8px 0 0;
       text-align: center;
       font-size: 18px;
-      color: #1F4A7A;
+      color: #3A6FA0;
       font-weight: 800;
     }
     .brand {
-      color: #072147;
+      color: #0E3D6E;
       font-weight: 700;
       font-size: 13px;
       letter-spacing: 0.02em;
@@ -563,10 +564,10 @@ export function buildApplicationPrintHtml(opts: {
     .sec h2 {
       margin: 0;
       padding: 7px 10px;
-      background: #072147;
+      background: #0E3D6E;
       color: #fff;
       font-size: 13px;
-      border-bottom: 3px solid #1F4A7A;
+      border-bottom: 3px solid #3A6FA0;
     }
     .grid {
       display: grid;
@@ -586,7 +587,7 @@ export function buildApplicationPrintHtml(opts: {
     }
     .field:nth-child(2n) { border-left: none; }
     .lbl {
-      color: #072147;
+      color: #0E3D6E;
       font-weight: 700;
       width: 9.2rem;
       min-width: 9.2rem;
@@ -604,7 +605,7 @@ export function buildApplicationPrintHtml(opts: {
     .ftr {
       margin-top: 14px;
       padding-top: 8px;
-      border-top: 2px solid #072147;
+      border-top: 2px solid #0E3D6E;
       display: flex;
       justify-content: space-between;
       font-size: 11px;
@@ -612,14 +613,14 @@ export function buildApplicationPrintHtml(opts: {
     }
     .college-ftr {
       margin-top: 18px;
-      background: #072147;
+      background: #0E3D6E;
       color: #fff;
       border-radius: 6px;
       overflow: hidden;
     }
     .college-ftr-accent {
       height: 4px;
-      background: #1F4A7A;
+      background: #3A6FA0;
     }
     .college-ftr-grid {
       display: grid;
@@ -640,7 +641,7 @@ export function buildApplicationPrintHtml(opts: {
       text-align: left;
     }
     .college-ftr-label {
-      color: #1F4A7A;
+      color: #3A6FA0;
       font-size: 11px;
       font-weight: 800;
       margin-bottom: 4px;
@@ -659,7 +660,7 @@ export function buildApplicationPrintHtml(opts: {
       flex-wrap: wrap;
       padding: 7px 14px;
       background: rgba(0, 0, 0, 0.18);
-      border-top: 1px solid rgba(31, 74, 122, 0.45);
+      border-top: 1px solid rgba(58, 111, 160, 0.45);
       font-size: 10px;
       color: #dbe7e3;
     }
@@ -690,7 +691,7 @@ export function buildApplicationPrintHtml(opts: {
     }
     .code-block h2 {
       margin: 0 0 8px;
-      color: #072147;
+      color: #0E3D6E;
       font-size: 13px;
       font-weight: 800;
       letter-spacing: 0.02em;
@@ -701,12 +702,12 @@ export function buildApplicationPrintHtml(opts: {
     .code-id {
       display: inline-block;
       padding: 6px 14px;
-      border: 2px solid #1F4A7A;
+      border: 2px solid #3A6FA0;
       border-radius: 6px;
       font-size: 16px;
       font-weight: 800;
       letter-spacing: 0.06em;
-      color: #072147;
+      color: #0E3D6E;
       background: #eef2f9;
     }
     .barcode { height: 48px; max-width: 95%; }
@@ -735,7 +736,7 @@ export function buildApplicationPrintHtml(opts: {
       margin: 0;
       font-size: 12.5px;
       font-weight: 800;
-      color: #072147;
+      color: #0E3D6E;
     }
     .prefs-panel-head p {
       margin: 0;
@@ -743,7 +744,7 @@ export function buildApplicationPrintHtml(opts: {
       color: #475569;
     }
     .prefs-panel-head strong {
-      color: #072147;
+      color: #0E3D6E;
     }
     .prefs-grid {
       display: grid;
@@ -769,10 +770,10 @@ export function buildApplicationPrintHtml(opts: {
       font-size: 15px;
       font-weight: 800;
       color: #fff;
-      background: #072147;
+      background: #0E3D6E;
     }
-    .pref-2 .pref-rank { background: #12345F; }
-    .pref-3 .pref-rank { background: #1F4A7A; }
+    .pref-2 .pref-rank { background: #1A4A75; }
+    .pref-3 .pref-rank { background: #3A6FA0; }
     .pref-body {
       flex: 1;
       display: flex;
@@ -785,7 +786,7 @@ export function buildApplicationPrintHtml(opts: {
     .pref-label {
       font-size: 10px;
       font-weight: 700;
-      color: #1F4A7A;
+      color: #3A6FA0;
       letter-spacing: 0.02em;
     }
     .pref-value {
@@ -797,7 +798,7 @@ export function buildApplicationPrintHtml(opts: {
 
     .depts-panel {
       flex: 1 1 auto;
-      margin-top: 0;
+      margin-top: 64px;
       border: 1px solid #c9d4e8;
       border-radius: 8px;
       overflow: hidden;
@@ -807,7 +808,7 @@ export function buildApplicationPrintHtml(opts: {
       min-height: 0;
     }
     .depts-panel-head {
-      background: linear-gradient(90deg, #072147 0%, #1F4A7A 100%);
+      background: linear-gradient(90deg, #0E3D6E 0%, #3A6FA0 100%);
       color: #fff;
       padding: 9px 14px;
       text-align: center;
@@ -830,11 +831,11 @@ export function buildApplicationPrintHtml(opts: {
     }
     .depts-table thead th {
       background: #e8eef8;
-      color: #072147;
+      color: #0E3D6E;
       font-weight: 800;
       font-size: 11.5px;
       padding: 7px 10px;
-      border-bottom: 2px solid #072147;
+      border-bottom: 2px solid #0E3D6E;
       text-align: right;
     }
     .depts-table th.dept-num-h,
@@ -857,7 +858,7 @@ export function buildApplicationPrintHtml(opts: {
     }
     .depts-table td.dept-num {
       font-weight: 800;
-      color: #072147;
+      color: #0E3D6E;
       background: #eef2f9;
       border-left: 1px solid #d7e0ec;
     }

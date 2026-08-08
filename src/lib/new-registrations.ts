@@ -126,7 +126,7 @@ export async function listNewRegistrations(filters: {
 }) {
   await ensureNewRegistrationsTable();
   const page = Math.max(1, filters.page || 1);
-  const limit = Math.min(100, Math.max(1, filters.limit || 40));
+  const limit = Math.min(5000, Math.max(1, filters.limit || 40));
   const offset = (page - 1) * limit;
 
   const where: string[] = [];
@@ -185,11 +185,25 @@ export async function listNewRegistrations(filters: {
 
   const prefsRes = await query(`
     SELECT dept, COUNT(*)::int AS count FROM (
-      SELECT preference_1 AS dept FROM student_affairs.new_registrations WHERE preference_1 <> ''
+      -- قبل التثبيت: تُحسب الرغبات الثلاث
+      SELECT preference_1 AS dept
+      FROM student_affairs.new_registrations
+      WHERE COALESCE(status, '') <> 'confirmed' AND preference_1 <> ''
       UNION ALL
-      SELECT preference_2 FROM student_affairs.new_registrations WHERE preference_2 <> ''
+      SELECT preference_2
+      FROM student_affairs.new_registrations
+      WHERE COALESCE(status, '') <> 'confirmed' AND preference_2 <> ''
       UNION ALL
-      SELECT preference_3 FROM student_affairs.new_registrations WHERE preference_3 <> ''
+      SELECT preference_3
+      FROM student_affairs.new_registrations
+      WHERE COALESCE(status, '') <> 'confirmed' AND preference_3 <> ''
+      UNION ALL
+      -- بعد التثبيت: يُحسب القسم المختار فقط
+      SELECT confirmed_department AS dept
+      FROM student_affairs.new_registrations
+      WHERE status = 'confirmed'
+        AND confirmed_department IS NOT NULL
+        AND TRIM(confirmed_department) <> ''
     ) t
     GROUP BY dept
     ORDER BY count DESC

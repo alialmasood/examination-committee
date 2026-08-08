@@ -2,6 +2,11 @@
   "name": "systimit",
   "version": "0.1.0",
   "private": true,
+  "author": {
+    "name": "علي حسين مزهر المسعود / Ali Hussein Mezher Almasood",
+    "url": "https://eastera.basrasearch.org"
+  },
+  "description": "SHAU — نظام كلية الشرق للعلوم التقنية التخصصية. مؤسس المشروع: علي حسين مزهر المسعود (Ali Hussein Mezher Almasood).",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

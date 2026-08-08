@@ -6,6 +6,34 @@ import {
 } from '@/src/lib/new-registrations';
 import type { ApplicationSnapshot } from '@/src/lib/student-application-print';
 import { createPublicApplication } from '@/src/lib/public-applications';
+import { archiveApplicationPackage } from '@/src/lib/application-archive';
+import { buildPublicApplicationUrl, getRequestSiteOrigin } from '@/src/lib/site-url';
+import { query } from '@/src/lib/db';
+
+async function persistArchiveMeta(
+  rowId: string,
+  archive: {
+    folderRelative: string;
+    formRelative: string;
+    attachments: string[];
+  }
+) {
+  await query(
+    `UPDATE student_affairs.new_registrations
+     SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1::uuid`,
+    [
+      rowId,
+      JSON.stringify({
+        archiveFolder: archive.folderRelative,
+        archiveForm: archive.formRelative,
+        archiveAttachments: archive.attachments,
+        archivedAt: new Date().toISOString(),
+      }),
+    ]
+  );
+}
 
 export async function GET(
   _request: NextRequest,
@@ -68,16 +96,36 @@ export async function PUT(
       return NextResponse.json({ success: false, error: 'الطلب غير موجود' }, { status: 404 });
     }
 
+    const fullPayload = { ...payload, departmentPreferences: prefs } as ApplicationSnapshot;
+    let publicUrl = '';
     try {
-      await createPublicApplication(
-        { ...payload, departmentPreferences: prefs } as ApplicationSnapshot,
-        row.code
-      );
+      await createPublicApplication(fullPayload, row.code);
+      publicUrl = buildPublicApplicationUrl(getRequestSiteOrigin(request), row.code);
     } catch (e) {
       console.warn('تعذر مزامنة النسخة العامة بعد التحديث:', e);
     }
 
-    return NextResponse.json({ success: true, data: row, message: 'تم تحديث الطلب بنجاح' });
+    let archive: Awaited<ReturnType<typeof archiveApplicationPackage>> | null = null;
+    try {
+      archive = await archiveApplicationPackage({
+        fullName: row.full_name || payload.personalData.fullName,
+        code: row.code,
+        payload: fullPayload,
+        publicUrl: publicUrl || undefined,
+      });
+      await persistArchiveMeta(row.id, archive);
+    } catch (e) {
+      console.warn('تعذر أرشفة الاستمارة بعد التحديث:', e);
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: row,
+      archive,
+      message: archive
+        ? `تم تحديث الطلب وأرشفة الاستمارة في ${archive.folderRelative}`
+        : 'تم تحديث الطلب بنجاح',
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'تعذر تحديث الطلب';
     console.error('new-registrations PUT:', error);
