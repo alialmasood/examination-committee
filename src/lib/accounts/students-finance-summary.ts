@@ -1,6 +1,7 @@
 import {
   STUDENT_DEPARTMENTS,
   getAnnualTuitionFee,
+  getTuitionFeesByYear,
   normalizeDeptKey,
 } from '@/app/accounts/students/lib/tuitionFees';
 import {
@@ -269,11 +270,12 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
     else morning += 1;
 
     const major = row.major || '';
-    const annualBase = getAnnualTuitionFee(
-      major,
-      isEvening ? 'evening' : 'morning',
-      feeMap
-    );
+    const studyKey = isEvening ? 'evening' : 'morning';
+    const feesByYear = getTuitionFeesByYear(major, studyKey, feeMap);
+    const stageKey = normalizeStage(row.admission_type);
+    const academicFeeYear = stageToFeeYear(stageKey);
+    const annualBase =
+      feesByYear[academicFeeYear] ?? feesByYear[1] ?? getAnnualTuitionFee(major, studyKey, feeMap);
 
     const receipts = receiptsByStudent.get(row.id) || [];
     const paid = receipts.reduce(
@@ -282,9 +284,7 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
     );
 
     // سنة القسط = العام الدراسي الجاري حسب مرحلة الطالب (وليس اكتمال 4 سنوات)
-    const stageKey = normalizeStage(row.admission_type);
-    const academicFeeYear = stageToFeeYear(stageKey);
-    const ledger = buildYearLedger(receipts, annualBase);
+    const ledger = buildYearLedger(receipts, feesByYear);
     const yearVisual = getYearVisualEntries(ledger);
     const category = paymentCategoryFromYearStatus(
       {

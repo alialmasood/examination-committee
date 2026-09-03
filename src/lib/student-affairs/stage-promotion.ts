@@ -10,7 +10,10 @@ import {
   type FeeYear,
   type SettlementHistoryRow,
 } from '@/app/accounts/students/lib/settlementYearLedger';
-import { expectedAnnualFee } from '@/app/accounts/students/lib/tuitionFees';
+import {
+  expectedAnnualFee,
+  getTuitionFeesByYear,
+} from '@/app/accounts/students/lib/tuitionFees';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 
 export type StageCode = 'first' | 'second' | 'third' | 'fourth';
@@ -111,6 +114,11 @@ export async function getStudentFeeCompletion(
   const feeYear = stageToFeeYear(stage);
   const next = nextStage(stage);
   const feeMap = await loadTuitionFeeMap();
+  const feesByYear = getTuitionFeesByYear(
+    student.major || '',
+    student.study_type,
+    feeMap
+  );
   const annual = expectedAnnualFee(
     {
       major: student.major || '',
@@ -119,11 +127,12 @@ export async function getStudentFeeCompletion(
       discount_percentage: student.discount_percentage,
       final_fee_after_discount: student.final_fee_after_discount,
     },
-    feeMap
+    feeMap,
+    feeYear
   );
 
   const receipts = await loadReceipts(student.id);
-  const ledger = buildYearLedger(receipts, annual);
+  const ledger = buildYearLedger(receipts, feesByYear);
   const entry = ledger.years.find((y) => y.year === feeYear);
   const target = entry?.target ?? annual;
   const paid = entry?.paid ?? 0;

@@ -3,10 +3,12 @@ import { query } from '@/src/lib/db';
 import {
   expectedAnnualFee,
   getAnnualTuitionFee,
+  getTuitionFeesByYear,
   type TuitionFeeLookupMap,
 } from '@/app/accounts/students/lib/tuitionFees';
 import {
   getOpenYearState,
+  type FeeYear,
   type SettlementHistoryRow,
 } from '@/app/accounts/students/lib/settlementYearLedger';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
@@ -101,6 +103,13 @@ function normalizeStage(raw: unknown): string {
   return 'unknown';
 }
 
+function stageToFeeYear(stage: string): FeeYear {
+  if (stage === 'second') return 2;
+  if (stage === 'third') return 3;
+  if (stage === 'fourth') return 4;
+  return 1;
+}
+
 function receiptTime(row: ReceiptRow): number {
   const a = Date.parse(String(row.created_at || ''));
   if (Number.isFinite(a)) return a;
@@ -138,9 +147,10 @@ function channelDiscountAmount(
     discount_amount: number | null;
     final_fee_after_discount: number | null;
   },
-  feeMap: TuitionFeeLookupMap
+  feeMap: TuitionFeeLookupMap,
+  feeYear: FeeYear = 1
 ): number {
-  const annual = getAnnualTuitionFee(row.major, row.study_type, feeMap);
+  const annual = getAnnualTuitionFee(row.major, row.study_type, feeMap, feeYear);
   if (Number(row.discount_amount || 0) > 0) {
     return Number(row.discount_amount);
   }
@@ -152,7 +162,8 @@ function channelDiscountAmount(
       discount_percentage: row.discount_percentage,
       final_fee_after_discount: row.final_fee_after_discount,
     },
-    feeMap
+    feeMap,
+    feeYear
   );
   return Math.max(0, annual - expected);
 }
@@ -271,8 +282,9 @@ export async function GET(
       const isMarkedPaid = status === 'paid';
       const major = row.major || dept.name;
       const receipts = receiptsByStudent.get(String(row.id)) || [];
-
-      const annualBase = getAnnualTuitionFee(major, row.study_type, feeMap);
+      const feeYear = stageToFeeYear(stage);
+      const feesByYear = getTuitionFeesByYear(major, row.study_type, feeMap);
+      const annualBase = feesByYear[feeYear] ?? getAnnualTuitionFee(major, row.study_type, feeMap);
       const channelDiscount = channelDiscountAmount(
         {
           major,
@@ -282,13 +294,14 @@ export async function GET(
           discount_amount: row.discount_amount,
           final_fee_after_discount: row.final_fee_after_discount,
         },
-        feeMap
+        feeMap,
+        feeYear
       );
       const settlementDiscount = settlementDiscountForStudent(receipts);
       // التخفيض ليس ديناً — يُعرض منفصلاً
       const discountTotal = channelDiscount + settlementDiscount;
 
-      // المطلوب بعد التخفيض (قناة)
+      // المطلوب بعد التخفيض (قناة) لمرحلة الطالب
       const expectedNet = expectedAnnualFee(
         {
           major,
@@ -297,7 +310,8 @@ export async function GET(
           discount_percentage: row.discount_percentage,
           final_fee_after_discount: row.final_fee_after_discount,
         },
-        feeMap
+        feeMap,
+        feeYear
       );
 
       const paidAmount = receipts.reduce(
@@ -305,10 +319,8 @@ export async function GET(
         0
       );
 
-      // الدين من دفتر السنوات: المستهدف بعد الخصم − المدفوع (لا يدخل مبلغ التخفيض في الدين)
-      const annualForLedger =
-        expectedNet > 0 ? expectedNet : annualBase > 0 ? annualBase : 0;
-      const openState = getOpenYearState(receipts, annualForLedger);
+      // الدين من دفتر السنوات حسب قسط كل مرحلة
+      const openState = getOpenYearState(receipts, feesByYear);
       const debt = Math.max(0, openState.outstandingBefore);
       const isFullyPaid = debt <= 0.01;
 

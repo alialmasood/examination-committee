@@ -15,7 +15,7 @@ import {
   perPeriodFromRemaining,
   type FeeYear,
 } from '../../../lib/settlementYearLedger';
-import { getAnnualTuitionFee, type TuitionFeeLookupMap } from '../../../lib/tuitionFees';
+import { getAnnualTuitionFee, getTuitionFeesByYear, type TuitionFeeLookupMap } from '../../../lib/tuitionFees';
 import { fetchTuitionFeeMap } from '../../../lib/clientTuitionFees';
 
 type PaidStudentRow = {
@@ -404,15 +404,19 @@ export default function StudentAccountsStudentPage() {
   const view = useMemo(() => {
     const department = student?.department?.trim() || 'غير محدد';
     const studyType = student?.study_type || null;
-    // القسط الأصلي من أقساط الأقسام فقط — لا final_fee (قد يكون مخفّضاً مسبقاً فيضاعف الخصم)
-    const catalogAnnual = getAnnualTuitionFee(department, studyType, feeMap);
+    // القسط الأصلي من أقساط الأقسام حسب المرحلة — لا final_fee
+    const feesByYear = getTuitionFeesByYear(department, studyType, feeMap);
     const settlementsPaid = receipts.reduce(
       (sum, r) => sum + toNumber(r.pay_amount),
       0
     );
     const paidAmount =
       settlementsPaid > 0 ? settlementsPaid : toNumber(student?.payment_amount, 0);
-    const ledger = buildYearLedger(receipts, catalogAnnual);
+    const ledger = buildYearLedger(receipts, feesByYear);
+    const catalogAnnual =
+      (ledger.currentYear != null
+        ? feesByYear[ledger.currentYear]
+        : feesByYear[1]) ?? getAnnualTuitionFee(department, studyType, feeMap);
     const current = ledger.years.find((y) => y.year === ledger.currentYear);
     const remaining = current
       ? current.remaining

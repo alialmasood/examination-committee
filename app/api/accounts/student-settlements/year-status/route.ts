@@ -11,7 +11,7 @@ import {
   type YearVisualEntry,
 } from '@/app/accounts/students/lib/settlementYearLedger';
 import {
-  getAnnualTuitionFee,
+  getTuitionFeesByYear,
 } from '@/app/accounts/students/lib/tuitionFees';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 
@@ -107,11 +107,11 @@ export async function GET(request: NextRequest) {
 
     for (const student of students) {
       const dept = student.department || '';
-      // القسط الأصلي فقط — الخصم يأتي من وصولات المودال عبر buildYearLedger
-      const annual = getAnnualTuitionFee(dept, student.study_type, feeMap);
+      // القسط الأصلي لكل مرحلة — الخصم يأتي من وصولات المودال عبر buildYearLedger
+      const feesByYear = getTuitionFeesByYear(dept, student.study_type, feeMap);
 
       const receipts = receiptsByStudent.get(student.id) || [];
-      const ledger = buildYearLedger(receipts, annual);
+      const ledger = buildYearLedger(receipts, feesByYear);
       byStudent[student.id] = {
         current_year: ledger.currentYear,
         all_completed: ledger.allYearsCompleted,

@@ -6,6 +6,7 @@ import { query } from '@/src/lib/db';
 import {
   STUDENT_DEPARTMENTS,
   getAnnualTuitionFee,
+  getTuitionFeesByYear,
   normalizeDeptKey,
 } from '@/app/accounts/students/lib/tuitionFees';
 import { formatAdmissionChannelLabel } from '@/app/accounts/students/lib/admissionChannels';
@@ -333,7 +334,8 @@ export async function buildStudentsAggregateData(): Promise<StudentsAggregateDat
     else morning += 1;
 
     const major = row.major || '';
-    const annualBase = getAnnualTuitionFee(major, studyKey, feeMap);
+    const feesByYear = getTuitionFeesByYear(major, studyKey, feeMap);
+    const annualBase = feesByYear[1] ?? getAnnualTuitionFee(major, studyKey, feeMap);
 
     const receipts = receiptsByStudent.get(row.id) || [];
     const paid = receipts.reduce(
@@ -345,7 +347,7 @@ export async function buildStudentsAggregateData(): Promise<StudentsAggregateDat
     ).length;
 
     // الخصم والدين من وصولات المودال فقط
-    const ledger = buildYearLedger(receipts, annualBase);
+    const ledger = buildYearLedger(receipts, feesByYear);
     const settlementDiscount = sumSettlementDiscountsByYear(receipts);
     const studentDiscount = settlementDiscount;
     const debt = ledger.years.reduce((sum, e) => sum + Math.max(0, e.remaining), 0);

@@ -18,7 +18,9 @@ import {
   type AdmissionChannelKey,
 } from '../lib/admissionChannels';
 import {
-  getAnnualTuitionFee,
+  getTuitionFeesByYear,
+  normalizeFeeYear,
+  type TuitionFeeByYear,
   type TuitionFeeLookupMap,
 } from '../lib/tuitionFees';
 import { fetchTuitionFeeMap } from '../lib/clientTuitionFees';
@@ -180,27 +182,30 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const activeChannelDef = getAdmissionChannelDef(activeChannelKey);
   const extraChannelDef = getAdmissionChannelDef(extraChannel);
 
-  /** القسط الأصلي من أقساط الأقسام — قبل أي تخفيض */
-  const catalogAnnual = useMemo(() => {
-    if (!student) return 0;
+  /** أقساط المراحل الأربع من أقساط الأقسام — قبل أي تخفيض */
+  const feesByYear: TuitionFeeByYear = useMemo(() => {
+    if (!student) return { 1: 0, 2: 0, 3: 0, 4: 0 };
     const dept = student.department?.trim() || '';
-    return getAnnualTuitionFee(dept, student.study_type, feeMap);
+    return getTuitionFeesByYear(dept, student.study_type, feeMap);
   }, [student, feeMap]);
 
-  /** أساس احتساب السنوات = القسط الأصلي (لا يُدمج خصم الملف هنا) */
-  const baseTotal = catalogAnnual;
-
   const ledger: YearLedger = useMemo(
-    () => buildYearLedger(historyRows, baseTotal),
-    [historyRows, baseTotal]
+    () => buildYearLedger(historyRows, feesByYear),
+    [historyRows, feesByYear]
   );
 
   const openState = useMemo(
-    () => getOpenYearState(historyRows, baseTotal),
-    [historyRows, baseTotal]
+    () => getOpenYearState(historyRows, feesByYear),
+    [historyRows, feesByYear]
   );
 
   const currentYear: FeeYear | null = openState.feeYear;
+
+  /** قسط السنة الجارية للتسديد (يظهر في خانة القسط الأصلي) */
+  const baseTotal = useMemo(() => {
+    const y = (currentYear || 1) as FeeYear;
+    return Math.max(0, feesByYear[y] ?? 0);
+  }, [feesByYear, currentYear]);
 
   useEffect(() => {
     if (!open) return;
@@ -284,13 +289,13 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
         setHistoryRows(rows);
         setHistoryReady(true);
 
-        const annual = getAnnualTuitionFee(
+        const byYear = getTuitionFeesByYear(
           student!.department?.trim() || '',
           student!.study_type,
           feeMap
         );
 
-        const state = getOpenYearState(rows, annual);
+        const state = getOpenYearState(rows, byYear);
         const openYear = state.feeYear || 1;
         // مبدأياً: الخصم لسنة واحدة فقط (السنة الأولى) — توسيع السنوات يدوياً من الخانة
         setDiscountFeeYears([1]);
@@ -373,8 +378,10 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   }, [open, student, feeMap]);
 
   const resolvedDiscount = useMemo(() => {
-    const annual = Math.max(0, baseTotal);
+    const feeFor = (year: number) =>
+      Math.max(0, feesByYear[normalizeFeeYear(year)] ?? 0);
     const currentYearNum = currentYear || 1;
+    const annual = feeFor(currentYearNum);
 
     const primary = primaryCountsInCalc
       ? resolveChannelDiscount(
@@ -407,22 +414,40 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
     const amount = Math.max(0, Math.min(annual, primaryAmount + extraAmount));
 
     const planAmountForYear = (year: number) => {
+      const yearAnnual = feeFor(year);
+      const primaryY = primaryCountsInCalc
+        ? resolveChannelDiscount(
+            activeChannelDef,
+            yearAnnual,
+            discountValue,
+            deanValueMode
+          )
+        : { amount: 0 };
+      const extraY =
+        extraDiscountEnabled && extraChannelDef
+          ? resolveChannelDiscount(
+              extraChannelDef,
+              yearAnnual,
+              extraDiscountValue,
+              extraDeanValueMode
+            )
+          : { amount: 0 };
       let d = 0;
       if (
         primaryCountsInCalc &&
-        primary.amount > 0 &&
+        primaryY.amount > 0 &&
         discountFeeYears.includes(year)
       ) {
-        d += primary.amount;
+        d += primaryY.amount;
       }
       if (
         extraDiscountEnabled &&
-        extra.amount > 0 &&
+        extraY.amount > 0 &&
         extraDiscountFeeYears.includes(year)
       ) {
-        d += extra.amount;
+        d += extraY.amount;
       }
-      return Math.max(0, Math.min(annual, d));
+      return Math.max(0, Math.min(yearAnnual, d));
     };
 
     const channelActive =
@@ -466,7 +491,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       extraApplies,
     };
   }, [
-    baseTotal,
+    feesByYear,
     currentYear,
     discountFeeYears,
     activeChannelDef,
@@ -482,23 +507,21 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
 
   /** إجمالي 4 سنوات بعد تطبيق التخفيضات على السنوات المحددة */
   const fourYearsTotal = useMemo(() => {
-    const annual = Math.max(0, baseTotal);
-
     return ([1, 2, 3, 4] as FeeYear[]).reduce((sum, year) => {
       const entry = ledger.years.find((y) => y.year === year);
       if (entry && entry.receiptsCount > 0) {
         return sum + entry.target;
       }
+      const annual = Math.max(0, feesByYear[year] ?? 0);
       return sum + Math.max(0, annual - resolvedDiscount.planAmountForYear(year));
     }, 0);
-  }, [baseTotal, ledger.years, resolvedDiscount]);
+  }, [feesByYear, ledger.years, resolvedDiscount]);
 
   /** أهداف السنوات للعرض: السنوات غير المبدوءة تعكس خطة الخصم الحالية */
   const yearTargetsPreview = useMemo(() => {
-    const annual = Math.max(0, baseTotal);
-
     return ledger.years.map((entry) => {
       if (entry.receiptsCount > 0) return entry;
+      const annual = Math.max(0, feesByYear[entry.year] ?? 0);
       return {
         ...entry,
         target: Math.max(
@@ -507,7 +530,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
         ),
       };
     });
-  }, [ledger.years, baseTotal, resolvedDiscount]);
+  }, [ledger.years, feesByYear, resolvedDiscount]);
 
   const calc = useMemo(() => {
     const annual = Math.max(0, baseTotal);

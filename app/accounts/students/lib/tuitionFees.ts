@@ -1,5 +1,5 @@
 /**
- * جدول الأقساط السنوية حسب القسم ونوع الدراسة.
+ * جدول الأقساط السنوية حسب القسم ونوع الدراسة والمرحلة (1–4).
  * القيم الافتراضية للتلقيم الأولي؛ المصدر التشغيلي: accounts.department_tuition_fees
  * عبر /accounts/students/department-installments
  */
@@ -28,10 +28,20 @@ export const STUDENT_DEPARTMENTS = [
   { id: 'law', name: 'القانون' },
 ] as const;
 
-export type TuitionFeeLookupMap = Record<
-  string,
-  { morning: number; evening: number }
->;
+export type FeeYearKey = 1 | 2 | 3 | 4;
+
+export type TuitionFeeByYear = Record<FeeYearKey, number>;
+
+/** صباحي/مسائي + تفصيل المراحل الأربع */
+export type TuitionFeeEntry = {
+  /** توافق خلفي = قسط المرحلة الأولى */
+  morning: number;
+  evening: number;
+  morningByYear: TuitionFeeByYear;
+  eveningByYear: TuitionFeeByYear;
+};
+
+export type TuitionFeeLookupMap = Record<string, TuitionFeeEntry>;
 
 export function normalizeDeptKey(value?: string | null): string {
   return String(value || '')
@@ -46,7 +56,21 @@ function isEveningStudy(studyType?: string | null): boolean {
   return st === 'evening' || st === 'مسائي';
 }
 
-/** القيم الافتراضية (تلقيم أولي + احتياط) */
+export function normalizeFeeYear(value?: number | string | null): FeeYearKey {
+  const n = Math.max(1, Math.min(4, Math.round(Number(value) || 1)));
+  return n as FeeYearKey;
+}
+
+export function emptyFeesByYear(fallback = 0): TuitionFeeByYear {
+  const v = Math.max(0, fallback);
+  return { 1: v, 2: v, 3: v, 4: v };
+}
+
+export function feesByYearFromFlat(morningOrEvening: number): TuitionFeeByYear {
+  return emptyFeesByYear(Math.max(0, morningOrEvening));
+}
+
+/** القيم الافتراضية (تلقيم أولي + احتياط) — نفس المبلغ لكل المراحل */
 export function getDefaultAnnualTuitionFee(
   department: string,
   studyType?: string | null
@@ -75,21 +99,44 @@ export function getDefaultAnnualTuitionFee(
 }
 
 /**
- * القسط السنوي.
- * مرّر feesMap من قاعدة البيانات ليصبح هو المصدر؛ وإلا تُستخدم القيم الافتراضية.
+ * القسط السنوي لقسم + نوع دراسة (+ مرحلة اختيارية).
+ * بدون feeYear يُرجع قسط المرحلة الأولى (توافق خلفي).
  */
 export function getAnnualTuitionFee(
   department: string,
   studyType?: string | null,
-  feesMap?: TuitionFeeLookupMap | null
+  feesMap?: TuitionFeeLookupMap | null,
+  feeYear?: number | string | null
 ): number {
+  const year = feeYear != null ? normalizeFeeYear(feeYear) : 1;
   if (feesMap) {
     const entry = feesMap[normalizeDeptKey(department)];
     if (entry) {
+      const byYear = isEveningStudy(studyType)
+        ? entry.eveningByYear
+        : entry.morningByYear;
+      const staged = byYear?.[year];
+      if (staged != null && Number.isFinite(staged)) {
+        return Math.max(0, staged);
+      }
       return isEveningStudy(studyType) ? entry.evening : entry.morning;
     }
   }
   return getDefaultAnnualTuitionFee(department, studyType);
+}
+
+/** أقساط المراحل الأربع لقسم ونوع دراسة */
+export function getTuitionFeesByYear(
+  department: string,
+  studyType?: string | null,
+  feesMap?: TuitionFeeLookupMap | null
+): TuitionFeeByYear {
+  return {
+    1: getAnnualTuitionFee(department, studyType, feesMap, 1),
+    2: getAnnualTuitionFee(department, studyType, feesMap, 2),
+    3: getAnnualTuitionFee(department, studyType, feesMap, 3),
+    4: getAnnualTuitionFee(department, studyType, feesMap, 4),
+  };
 }
 
 export function expectedAnnualFee(
@@ -101,9 +148,15 @@ export function expectedAnnualFee(
     discount_amount?: number | null;
     final_fee_after_discount?: number | null;
   },
-  feesMap?: TuitionFeeLookupMap | null
+  feesMap?: TuitionFeeLookupMap | null,
+  feeYear?: number | string | null
 ): number {
-  const annual = getAnnualTuitionFee(row.major, row.study_type, feesMap);
+  const annual = getAnnualTuitionFee(
+    row.major,
+    row.study_type,
+    feesMap,
+    feeYear
+  );
   const channel = String(row.admission_channel || 'general').trim() || 'general';
   const discountPct =
     row.discount_percentage != null && Number(row.discount_percentage) >= 0

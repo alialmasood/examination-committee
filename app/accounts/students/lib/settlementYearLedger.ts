@@ -173,6 +173,29 @@ function clampYearTarget(raw: number, annual: number): number {
 }
 
 /**
+ * قسط سنوي ثابت (توافق خلفي) أو خريطة قسط لكل مرحلة 1–4.
+ */
+export type AnnualFeeInput = number | Partial<Record<FeeYear, number>>;
+
+export function resolveAnnualForYear(
+  annualFee: AnnualFeeInput,
+  year: FeeYear
+): number {
+  if (typeof annualFee === 'number') {
+    return Math.max(0, annualFee);
+  }
+  const direct = annualFee[year];
+  if (direct != null && Number.isFinite(Number(direct))) {
+    return Math.max(0, Number(direct));
+  }
+  const y1 = annualFee[1];
+  if (y1 != null && Number.isFinite(Number(y1))) {
+    return Math.max(0, Number(y1));
+  }
+  return 0;
+}
+
+/**
  * هدف السنة من آخر وصل، مع إعادة الاحتساب من القسط الأصلي الحالي.
  * الخصم يُؤخذ من حقول الوصل فقط (مودال التسديد) — لا يُدمج final_fee.
  */
@@ -210,14 +233,13 @@ export function resolveYearTargetFromReceipt(
 }
 
 /**
- * بناء دفتر السنوات: كل سنة مستقلة وسقفها القسط السنوي.
+ * بناء دفتر السنوات: كل سنة مستقلة وسقفها قسط تلك المرحلة.
  * المتبقي = مستحق السنة − مجموع المدفوع لهذه السنة فقط.
  */
 export function buildYearLedger(
   receipts: SettlementHistoryRow[],
-  annualFee: number
+  annualFee: AnnualFeeInput
 ): YearLedger {
-  const annual = Math.max(0, annualFee);
   const paidByYear: Record<FeeYear, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
   const targetByYear: Record<FeeYear, number | null> = {
     1: null,
@@ -234,6 +256,7 @@ export function buildYearLedger(
     if (pay <= 0) continue;
 
     const year = resolveFeeYear(row);
+    const annual = resolveAnnualForYear(annualFee, year);
 
     // آخر وصل للسنة يحدد مستحقها (يسمح بإلغاء/تعديل الخصم لاحقاً من المودال)
     targetByYear[year] = resolveYearTargetFromReceipt(row, annual);
@@ -245,6 +268,7 @@ export function buildYearLedger(
   let currentYear: FeeYear | null = null;
   for (let y = 1; y <= 4; y++) {
     const fy = y as FeeYear;
+    const annual = resolveAnnualForYear(annualFee, fy);
     const target = targetByYear[fy] ?? annual;
     if (paidByYear[fy] < target - 0.01) {
       currentYear = fy;
@@ -253,6 +277,7 @@ export function buildYearLedger(
   }
 
   const years: YearLedgerEntry[] = ([1, 2, 3, 4] as FeeYear[]).map((year) => {
+    const annual = resolveAnnualForYear(annualFee, year);
     const target = targetByYear[year] ?? annual;
     const paid = paidByYear[year];
     const remaining = Math.max(0, target - paid);
@@ -282,17 +307,21 @@ export function buildYearLedger(
     return { ...entry, status: 'pending' as const };
   });
 
+  const anyAnnual = ([1, 2, 3, 4] as FeeYear[]).some(
+    (y) => resolveAnnualForYear(annualFee, y) > 0
+  );
+
   return {
     years: refined,
     currentYear,
-    allYearsCompleted: currentYear == null && annual > 0,
+    allYearsCompleted: currentYear == null && anyAnnual,
   };
 }
 
 /** حالة السنة الجارية قبل دفعة جديدة */
 export function getOpenYearState(
   receipts: SettlementHistoryRow[],
-  annualFee: number
+  annualFee: AnnualFeeInput
 ): {
   feeYear: FeeYear | null;
   yearTarget: number;
@@ -334,9 +363,8 @@ export function getOpenYearState(
  */
 export function recalculateRemainingByReceipt(
   receipts: SettlementHistoryRow[],
-  annualFee: number
+  annualFee: AnnualFeeInput
 ): Array<{ id: string; remaining_amount: number; fee_year: FeeYear }> {
-  const annual = Math.max(0, annualFee);
   const sorted = [...receipts]
     .filter((r) => r.id && toNumber(r.pay_amount, 0) > 0)
     .sort((a, b) => receiptTime(a) - receiptTime(b));
@@ -354,6 +382,7 @@ export function recalculateRemainingByReceipt(
 
   for (const row of sorted) {
     const year = resolveFeeYear(row);
+    const annual = resolveAnnualForYear(annualFee, year);
     const pay = Math.max(0, toNumber(row.pay_amount, 0));
     // آخر وصل يحدد مستحق السنة
     targetByYear[year] = resolveYearTargetFromReceipt(row, annual);

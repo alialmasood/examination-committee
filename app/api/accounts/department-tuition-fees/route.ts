@@ -11,6 +11,12 @@ import {
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+function parseNonNeg(value: unknown): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
 /** GET /api/accounts/department-tuition-fees — قائمة أقساط الأقسام */
 export async function GET(request: NextRequest) {
   const auth = await requireAccountsAccess(request);
@@ -31,7 +37,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** PATCH /api/accounts/department-tuition-fees — تعديل قسط قسم */
+/** PATCH /api/accounts/department-tuition-fees — تعديل قسط قسم (حسب المرحلة) */
 export async function PATCH(request: NextRequest) {
   const auth = await requireAccountsAccess(request);
   if (isAuthFailure(auth)) return auth.response;
@@ -46,25 +52,70 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const morning = Number(body?.morning_fee);
-    const evening = Number(body?.evening_fee);
-    if (!Number.isFinite(morning) || morning < 0) {
-      return NextResponse.json(
-        { success: false, error: 'قسط الصباحي غير صالح' },
-        { status: 400 }
-      );
-    }
-    if (!Number.isFinite(evening) || evening < 0) {
-      return NextResponse.json(
-        { success: false, error: 'قسط المسائي غير صالح' },
-        { status: 400 }
-      );
+    const stageKeys = [
+      'morning_fee_y1',
+      'morning_fee_y2',
+      'morning_fee_y3',
+      'morning_fee_y4',
+      'evening_fee_y1',
+      'evening_fee_y2',
+      'evening_fee_y3',
+      'evening_fee_y4',
+    ] as const;
+
+    const hasStagePayload = stageKeys.some((k) => body?.[k] != null);
+    const payload: Record<string, number> = {};
+
+    if (hasStagePayload) {
+      for (const key of stageKeys) {
+        if (body?.[key] == null) continue;
+        const n = parseNonNeg(body[key]);
+        if (n == null) {
+          return NextResponse.json(
+            { success: false, error: `قيمة غير صالحة: ${key}` },
+            { status: 400 }
+          );
+        }
+        payload[key] = n;
+      }
+      // مزامنة الحقول القديمة مع المرحلة الأولى إن وُجدت
+      if (payload.morning_fee_y1 != null) {
+        payload.morning_fee = payload.morning_fee_y1;
+      }
+      if (payload.evening_fee_y1 != null) {
+        payload.evening_fee = payload.evening_fee_y1;
+      }
+    } else {
+      const morning = parseNonNeg(body?.morning_fee);
+      const evening = parseNonNeg(body?.evening_fee);
+      if (morning == null) {
+        return NextResponse.json(
+          { success: false, error: 'قسط الصباحي غير صالح' },
+          { status: 400 }
+        );
+      }
+      if (evening == null) {
+        return NextResponse.json(
+          { success: false, error: 'قسط المسائي غير صالح' },
+          { status: 400 }
+        );
+      }
+      // توافق خلفي: قسط واحد يُطبَّق على كل المراحل
+      payload.morning_fee = morning;
+      payload.evening_fee = evening;
+      payload.morning_fee_y1 = morning;
+      payload.morning_fee_y2 = morning;
+      payload.morning_fee_y3 = morning;
+      payload.morning_fee_y4 = morning;
+      payload.evening_fee_y1 = evening;
+      payload.evening_fee_y2 = evening;
+      payload.evening_fee_y3 = evening;
+      payload.evening_fee_y4 = evening;
     }
 
     const updated = await updateDepartmentTuitionFee({
       id,
-      morning_fee: morning,
-      evening_fee: evening,
+      ...payload,
       updated_by: auth.user.id,
     });
 

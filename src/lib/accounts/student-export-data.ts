@@ -12,6 +12,7 @@ import {
 import {
   expectedAnnualFee,
   getAnnualTuitionFee,
+  getTuitionFeesByYear,
 } from '@/app/accounts/students/lib/tuitionFees';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 
@@ -323,10 +324,20 @@ export async function getStudentExportData(
     const studyType = String(s.study_type || '').toLowerCase();
     const isEvening = studyType === 'evening' || studyType === 'مسائي';
 
+    const studyKey = isEvening ? 'evening' : 'morning';
+    const feesByYear = getTuitionFeesByYear(department, studyKey, feeMap);
+    const exportFeeYear =
+      filters?.feeYear === 1 ||
+      filters?.feeYear === 2 ||
+      filters?.feeYear === 3 ||
+      filters?.feeYear === 4
+        ? filters.feeYear
+        : 1;
     const annualFee = getAnnualTuitionFee(
       department,
-      isEvening ? 'evening' : 'morning',
-      feeMap
+      studyKey,
+      feeMap,
+      exportFeeYear
     );
     const netFeeFromStudent =
       s.final_fee != null && Number(s.final_fee) > 0
@@ -339,7 +350,8 @@ export async function getStudentExportData(
               discount_percentage: s.discount_percentage,
               final_fee_after_discount: s.final_fee,
             },
-            feeMap
+            feeMap,
+            exportFeeYear
           );
 
     const channelDiscountAmount =
@@ -357,7 +369,7 @@ export async function getStudentExportData(
           : CHANNEL_LABELS[channel] || 'تخفيض مبلغ';
 
     const receipts = receiptsByStudent.get(s.id) || [];
-    const ledger = buildYearLedger(receipts, netFeeFromStudent);
+    const ledger = buildYearLedger(receipts, feesByYear);
     const yearVisual = getYearVisualEntries(ledger);
     const yearStatus = {
       current_year: ledger.currentYear,

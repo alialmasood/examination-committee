@@ -9,8 +9,23 @@ type FeeRow = {
   name_aliases: string[];
   morning_fee: number;
   evening_fee: number;
+  morning_fee_y1?: number;
+  morning_fee_y2?: number;
+  morning_fee_y3?: number;
+  morning_fee_y4?: number;
+  evening_fee_y1?: number;
+  evening_fee_y2?: number;
+  evening_fee_y3?: number;
+  evening_fee_y4?: number;
   updated_at: string | null;
 };
+
+const STAGE_LABELS = [
+  { year: 1 as const, label: 'المرحلة الأولى' },
+  { year: 2 as const, label: 'المرحلة الثانية' },
+  { year: 3 as const, label: 'المرحلة الثالثة' },
+  { year: 4 as const, label: 'المرحلة الرابعة' },
+];
 
 const money = (n: number) =>
   new Intl.NumberFormat('en-US').format(Math.round(n || 0));
@@ -24,13 +39,51 @@ function formatUpdatedAt(iso: string | null): string {
   }
 }
 
+function stageFee(
+  row: FeeRow,
+  study: 'morning' | 'evening',
+  year: 1 | 2 | 3 | 4
+): number {
+  const key = `${study}_fee_y${year}` as keyof FeeRow;
+  const staged = row[key];
+  if (typeof staged === 'number' && Number.isFinite(staged)) return staged;
+  return study === 'morning' ? row.morning_fee : row.evening_fee;
+}
+
+/** عرض أقساط المراحل الأربع عمودياً داخل عمود الصباحي/المسائي */
+function StageFeesStack({
+  row,
+  study,
+}: {
+  row: FeeRow;
+  study: 'morning' | 'evening';
+}) {
+  return (
+    <div className="space-y-1 min-w-[9.5rem]">
+      {STAGE_LABELS.map((stage) => (
+        <div
+          key={`${study}-${stage.year}`}
+          className="flex items-baseline justify-between gap-2 text-[12px] leading-snug"
+        >
+          <span className="text-gray-500 font-medium shrink-0">
+            {stage.label}
+          </span>
+          <span className="tabular-nums font-semibold text-gray-800 whitespace-nowrap" dir="ltr">
+            {money(stageFee(row, study, stage.year))}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function StudentDepartmentInstallmentsPage() {
   const [rows, setRows] = useState<FeeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<FeeRow | null>(null);
-  const [morning, setMorning] = useState('');
-  const [evening, setEvening] = useState('');
+  const [morningY, setMorningY] = useState(['', '', '', '']);
+  const [eveningY, setEveningY] = useState(['', '', '', '']);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -63,8 +116,18 @@ export default function StudentDepartmentInstallmentsPage() {
 
   function openEdit(row: FeeRow) {
     setEditing(row);
-    setMorning(String(Math.round(row.morning_fee || 0)));
-    setEvening(String(Math.round(row.evening_fee || 0)));
+    setMorningY([
+      String(Math.round(stageFee(row, 'morning', 1))),
+      String(Math.round(stageFee(row, 'morning', 2))),
+      String(Math.round(stageFee(row, 'morning', 3))),
+      String(Math.round(stageFee(row, 'morning', 4))),
+    ]);
+    setEveningY([
+      String(Math.round(stageFee(row, 'evening', 1))),
+      String(Math.round(stageFee(row, 'evening', 2))),
+      String(Math.round(stageFee(row, 'evening', 3))),
+      String(Math.round(stageFee(row, 'evening', 4))),
+    ]);
     setFormError('');
   }
 
@@ -76,14 +139,14 @@ export default function StudentDepartmentInstallmentsPage() {
 
   async function saveEdit() {
     if (!editing) return;
-    const morningFee = Number(morning);
-    const eveningFee = Number(evening);
-    if (!Number.isFinite(morningFee) || morningFee < 0) {
-      setFormError('أدخل مبلغ القسط الصباحي بشكل صحيح');
+    const morningFees = morningY.map((v) => Number(v));
+    const eveningFees = eveningY.map((v) => Number(v));
+    if (morningFees.some((n) => !Number.isFinite(n) || n < 0)) {
+      setFormError('أدخل مبالغ القسط الصباحي لكل مرحلة بشكل صحيح');
       return;
     }
-    if (!Number.isFinite(eveningFee) || eveningFee < 0) {
-      setFormError('أدخل مبلغ القسط المسائي بشكل صحيح');
+    if (eveningFees.some((n) => !Number.isFinite(n) || n < 0)) {
+      setFormError('أدخل مبالغ القسط المسائي لكل مرحلة بشكل صحيح');
       return;
     }
 
@@ -96,8 +159,16 @@ export default function StudentDepartmentInstallmentsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: editing.id,
-          morning_fee: morningFee,
-          evening_fee: eveningFee,
+          morning_fee_y1: morningFees[0],
+          morning_fee_y2: morningFees[1],
+          morning_fee_y3: morningFees[2],
+          morning_fee_y4: morningFees[3],
+          evening_fee_y1: eveningFees[0],
+          evening_fee_y2: eveningFees[1],
+          evening_fee_y3: eveningFees[2],
+          evening_fee_y4: eveningFees[3],
+          morning_fee: morningFees[0],
+          evening_fee: eveningFees[0],
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -119,8 +190,8 @@ export default function StudentDepartmentInstallmentsPage() {
       <div className="mb-4">
         <h1 className="text-xl font-semibold text-gray-900">أقساط الأقسام</h1>
         <p className="text-sm text-gray-600 mt-1">
-          مصدر مبلغ القسط السنوي لكل قسم (صباحي / مسائي) — يُعتمد في صفحات الحسابات
-          والتسديد
+          مصدر مبلغ القسط السنوي لكل قسم ومرحلة (صباحي / مسائي) — يُعتمد في صفحات
+          الحسابات والتسديد
         </p>
       </div>
 
@@ -189,11 +260,11 @@ export default function StudentDepartmentInstallmentsPage() {
                         </p>
                       ) : null}
                     </td>
-                    <td className="px-4 py-2.5 tabular-nums font-semibold text-gray-800">
-                      {money(row.morning_fee)} IQD
+                    <td className="px-4 py-2.5 align-top">
+                      <StageFeesStack row={row} study="morning" />
                     </td>
-                    <td className="px-4 py-2.5 tabular-nums font-semibold text-gray-800">
-                      {money(row.evening_fee)} IQD
+                    <td className="px-4 py-2.5 align-top">
+                      <StageFeesStack row={row} study="evening" />
                     </td>
                     <td className="px-4 py-2.5 text-xs text-gray-500">
                       {formatUpdatedAt(row.updated_at)}
@@ -223,7 +294,7 @@ export default function StudentDepartmentInstallmentsPage() {
           onClick={closeEdit}
         >
           <div
-            className="w-full max-w-md rounded-xl bg-white shadow-xl border border-gray-200"
+            className="w-full max-w-lg rounded-xl bg-white shadow-xl border border-gray-200 max-h-[90vh] overflow-y-auto"
             dir="rtl"
             onClick={(e) => e.stopPropagation()}
           >
@@ -232,34 +303,54 @@ export default function StudentDepartmentInstallmentsPage() {
               <p className="text-sm text-gray-600 mt-1">{editing.department_name}</p>
             </div>
             <div className="px-5 py-4 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  القسط السنوي — صباحي (IQD)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1000}
-                  value={morning}
-                  onChange={(e) => setMorning(e.target.value)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800"
-                  dir="ltr"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  القسط السنوي — مسائي (IQD)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1000}
-                  value={evening}
-                  onChange={(e) => setEvening(e.target.value)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800"
-                  dir="ltr"
-                />
-              </div>
+              {STAGE_LABELS.map((stage, idx) => (
+                <div
+                  key={stage.year}
+                  className="rounded-lg border border-gray-100 bg-gray-50/60 px-3 py-3 space-y-3"
+                >
+                  <p className="text-xs font-semibold text-gray-800">
+                    {stage.label}
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        القسط السنوي — صباحي (IQD)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1000}
+                        value={morningY[idx]}
+                        onChange={(e) => {
+                          const next = [...morningY];
+                          next[idx] = e.target.value;
+                          setMorningY(next);
+                        }}
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800"
+                        dir="ltr"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        القسط السنوي — مسائي (IQD)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1000}
+                        value={eveningY[idx]}
+                        onChange={(e) => {
+                          const next = [...eveningY];
+                          next[idx] = e.target.value;
+                          setEveningY(next);
+                        }}
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800"
+                        dir="ltr"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
               {formError ? (
                 <p className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-md px-3 py-2">
                   {formError}

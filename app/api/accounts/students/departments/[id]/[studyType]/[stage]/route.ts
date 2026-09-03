@@ -6,7 +6,7 @@ import {
 } from '@/src/lib/accounts/auth';
 import {
   STUDENT_DEPARTMENTS,
-  getAnnualTuitionFee,
+  getTuitionFeesByYear,
 } from '@/app/accounts/students/lib/tuitionFees';
 import {
   formatAdmissionChannelLabel,
@@ -261,13 +261,14 @@ export async function GET(
 
     for (const row of filtered) {
       const major = row.major || dept.name;
-      const annualBase = getAnnualTuitionFee(major, studyType, feeMap);
+      const feesByYear = getTuitionFeesByYear(major, studyType, feeMap);
+      const stageFeeYear = STAGE_TO_FEE_YEAR[stage] ?? 1;
+      const annualBase = feesByYear[stageFeeYear] ?? feesByYear[1] ?? 0;
       const receipts = receiptsByStudent.get(String(row.id)) || [];
 
       // الخصم والدين من وصولات المودال فقط — لا يُدمج خصم ملف الطالب
-      const ledger = buildYearLedger(receipts, annualBase);
+      const ledger = buildYearLedger(receipts, feesByYear);
       const yearVisual = getYearVisualEntries(ledger);
-      const stageFeeYear = STAGE_TO_FEE_YEAR[stage] ?? 1;
       const category = paymentCategoryFromYearStatus(
         {
           current_year: ledger.currentYear,

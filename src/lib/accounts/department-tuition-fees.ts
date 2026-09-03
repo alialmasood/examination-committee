@@ -1,13 +1,19 @@
 /**
- * مصدر أقساط الأقسام السنوية (صباحي/مسائي) — مخزّن في قاعدة البيانات.
+ * مصدر أقساط الأقسام حسب المرحلة (1–4) وصباحي/مسائي — مخزّن في قاعدة البيانات.
  * الصفحة: /accounts/students/department-installments
  */
 import { query } from '@/src/lib/db';
 import {
   STUDENT_DEPARTMENTS,
+  emptyFeesByYear,
+  feesByYearFromFlat,
   getAnnualTuitionFee,
   getDefaultAnnualTuitionFee,
   normalizeDeptKey,
+  normalizeFeeYear,
+  type FeeYearKey,
+  type TuitionFeeByYear,
+  type TuitionFeeEntry,
   type TuitionFeeLookupMap,
 } from '@/app/accounts/students/lib/tuitionFees';
 
@@ -15,8 +21,18 @@ export type DepartmentTuitionFeeRow = {
   id: string;
   department_name: string;
   name_aliases: string[];
+  /** توافق خلفي = قسط المرحلة الأولى صباحي */
   morning_fee: number;
+  /** توافق خلفي = قسط المرحلة الأولى مسائي */
   evening_fee: number;
+  morning_fee_y1: number;
+  morning_fee_y2: number;
+  morning_fee_y3: number;
+  morning_fee_y4: number;
+  evening_fee_y1: number;
+  evening_fee_y2: number;
+  evening_fee_y3: number;
+  evening_fee_y4: number;
   updated_at: string | null;
 };
 
@@ -50,6 +66,17 @@ const DENTAL_CANONICAL = 'تقنيات صناعة الاسنان';
 const CONSTRUCTION_CANONICAL = 'هندسة تقنيات البناء والانشاءات';
 
 const RADIOLOGY_CANONICAL = 'تقنيات الاشعة';
+
+const STAGE_FEE_COLUMNS = [
+  'morning_fee_y1',
+  'morning_fee_y2',
+  'morning_fee_y3',
+  'morning_fee_y4',
+  'evening_fee_y1',
+  'evening_fee_y2',
+  'evening_fee_y3',
+  'evening_fee_y4',
+] as const;
 
 export function invalidateTuitionFeeCache(): void {
   feeCache = null;
@@ -116,6 +143,24 @@ async function unifyCanonicalDepartmentNames(): Promise<void> {
   );
 }
 
+function numFee(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : Math.max(0, fallback);
+}
+
+function byYearFromRow(
+  row: Record<string, unknown>,
+  prefix: 'morning' | 'evening'
+): TuitionFeeByYear {
+  const flat = numFee(row[`${prefix}_fee`], 0);
+  return {
+    1: numFee(row[`${prefix}_fee_y1`], flat),
+    2: numFee(row[`${prefix}_fee_y2`], flat),
+    3: numFee(row[`${prefix}_fee_y3`], flat),
+    4: numFee(row[`${prefix}_fee_y4`], flat),
+  };
+}
+
 export async function ensureDepartmentTuitionFeesTable(): Promise<void> {
   await query(`
     CREATE TABLE IF NOT EXISTS accounts.department_tuition_fees (
@@ -129,14 +174,58 @@ export async function ensureDepartmentTuitionFeesTable(): Promise<void> {
     )
   `);
 
+  for (const col of STAGE_FEE_COLUMNS) {
+    await query(
+      `ALTER TABLE accounts.department_tuition_fees
+       ADD COLUMN IF NOT EXISTS ${col} NUMERIC(14,2) NOT NULL DEFAULT 0`
+    ).catch(() => undefined);
+  }
+
+  // تعبئة أولية لمرة واحدة فقط: كل أعمدة المراحل صفر والقسط القديم موجود
+  await query(`
+    UPDATE accounts.department_tuition_fees
+    SET
+      morning_fee_y1 = morning_fee,
+      morning_fee_y2 = morning_fee,
+      morning_fee_y3 = morning_fee,
+      morning_fee_y4 = morning_fee
+    WHERE COALESCE(morning_fee_y1, 0) = 0
+      AND COALESCE(morning_fee_y2, 0) = 0
+      AND COALESCE(morning_fee_y3, 0) = 0
+      AND COALESCE(morning_fee_y4, 0) = 0
+      AND COALESCE(morning_fee, 0) > 0
+  `).catch(() => undefined);
+
+  await query(`
+    UPDATE accounts.department_tuition_fees
+    SET
+      evening_fee_y1 = evening_fee,
+      evening_fee_y2 = evening_fee,
+      evening_fee_y3 = evening_fee,
+      evening_fee_y4 = evening_fee
+    WHERE COALESCE(evening_fee_y1, 0) = 0
+      AND COALESCE(evening_fee_y2, 0) = 0
+      AND COALESCE(evening_fee_y3, 0) = 0
+      AND COALESCE(evening_fee_y4, 0) = 0
+      AND COALESCE(evening_fee, 0) > 0
+  `).catch(() => undefined);
+
   for (const dept of STUDENT_DEPARTMENTS) {
     const morning = getDefaultAnnualTuitionFee(dept.name, 'morning');
     const evening = getDefaultAnnualTuitionFee(dept.name, 'evening');
     const aliases = DEPARTMENT_ALIASES[dept.id] || [];
     await query(
       `INSERT INTO accounts.department_tuition_fees
-         (id, department_name, name_aliases, morning_fee, evening_fee, updated_at)
-       VALUES ($1, $2, $3::text[], $4, $5, NOW())
+         (id, department_name, name_aliases,
+          morning_fee, evening_fee,
+          morning_fee_y1, morning_fee_y2, morning_fee_y3, morning_fee_y4,
+          evening_fee_y1, evening_fee_y2, evening_fee_y3, evening_fee_y4,
+          updated_at)
+       VALUES ($1, $2, $3::text[],
+               $4, $5,
+               $4, $4, $4, $4,
+               $5, $5, $5, $5,
+               NOW())
        ON CONFLICT (id) DO NOTHING`,
       [dept.id, dept.name, aliases, morning, evening]
     ).catch(() => undefined);
@@ -150,23 +239,51 @@ function rowToFee(row: Record<string, unknown>): DepartmentTuitionFeeRow {
   const aliases = Array.isArray(aliasesRaw)
     ? aliasesRaw.map((a) => String(a))
     : [];
+  const morningByYear = byYearFromRow(row, 'morning');
+  const eveningByYear = byYearFromRow(row, 'evening');
   return {
     id: String(row.id),
     department_name: String(row.department_name || ''),
     name_aliases: aliases,
-    morning_fee: Math.max(0, Number(row.morning_fee || 0)),
-    evening_fee: Math.max(0, Number(row.evening_fee || 0)),
+    morning_fee: morningByYear[1],
+    evening_fee: eveningByYear[1],
+    morning_fee_y1: morningByYear[1],
+    morning_fee_y2: morningByYear[2],
+    morning_fee_y3: morningByYear[3],
+    morning_fee_y4: morningByYear[4],
+    evening_fee_y1: eveningByYear[1],
+    evening_fee_y2: eveningByYear[2],
+    evening_fee_y3: eveningByYear[3],
+    evening_fee_y4: eveningByYear[4],
     updated_at: row.updated_at ? String(row.updated_at) : null,
+  };
+}
+
+function entryFromRow(row: DepartmentTuitionFeeRow): TuitionFeeEntry {
+  const morningByYear: TuitionFeeByYear = {
+    1: row.morning_fee_y1,
+    2: row.morning_fee_y2,
+    3: row.morning_fee_y3,
+    4: row.morning_fee_y4,
+  };
+  const eveningByYear: TuitionFeeByYear = {
+    1: row.evening_fee_y1,
+    2: row.evening_fee_y2,
+    3: row.evening_fee_y3,
+    4: row.evening_fee_y4,
+  };
+  return {
+    morning: morningByYear[1],
+    evening: eveningByYear[1],
+    morningByYear,
+    eveningByYear,
   };
 }
 
 function buildMap(rows: DepartmentTuitionFeeRow[]): TuitionFeeLookupMap {
   const map: TuitionFeeLookupMap = {};
   for (const row of rows) {
-    const entry = {
-      morning: row.morning_fee,
-      evening: row.evening_fee,
-    };
+    const entry = entryFromRow(row);
     map[normalizeDeptKey(row.department_name)] = entry;
     for (const alias of row.name_aliases) {
       map[normalizeDeptKey(alias)] = entry;
@@ -179,12 +296,20 @@ function buildMap(rows: DepartmentTuitionFeeRow[]): TuitionFeeLookupMap {
   return map;
 }
 
+const SELECT_FEE_COLUMNS = `
+  id, department_name, name_aliases,
+  morning_fee, evening_fee,
+  morning_fee_y1, morning_fee_y2, morning_fee_y3, morning_fee_y4,
+  evening_fee_y1, evening_fee_y2, evening_fee_y3, evening_fee_y4,
+  updated_at
+`;
+
 export async function listDepartmentTuitionFees(): Promise<
   DepartmentTuitionFeeRow[]
 > {
   await ensureDepartmentTuitionFeesTable();
   const result = await query(
-    `SELECT id, department_name, name_aliases, morning_fee, evening_fee, updated_at
+    `SELECT ${SELECT_FEE_COLUMNS}
      FROM accounts.department_tuition_fees
      ORDER BY department_name ASC`
   );
@@ -203,24 +328,75 @@ export async function loadTuitionFeeMap(
   return map;
 }
 
-/** القسط من DB مع احتياطي افتراضي */
+/** القسط من DB مع احتياطي افتراضي (مرحلة اختيارية) */
 export async function resolveAnnualTuitionFee(
   department: string,
-  studyType?: string | null
+  studyType?: string | null,
+  feeYear?: number | string | null
 ): Promise<number> {
   const map = await loadTuitionFeeMap();
-  return getAnnualTuitionFee(department, studyType, map);
+  return getAnnualTuitionFee(department, studyType, map, feeYear);
+}
+
+function parseStageFees(
+  input: Record<string, unknown>,
+  prefix: 'morning' | 'evening',
+  legacyFlat?: number
+): TuitionFeeByYear {
+  const hasStage = ([1, 2, 3, 4] as FeeYearKey[]).some((y) => {
+    const key = `${prefix}_fee_y${y}`;
+    return input[key] != null && Number.isFinite(Number(input[key]));
+  });
+
+  if (hasStage) {
+    const base =
+      legacyFlat != null && Number.isFinite(legacyFlat)
+        ? Math.max(0, Math.round(legacyFlat))
+        : 0;
+    const out = emptyFeesByYear(base);
+    for (const y of [1, 2, 3, 4] as FeeYearKey[]) {
+      const key = `${prefix}_fee_y${y}`;
+      if (input[key] != null && Number.isFinite(Number(input[key]))) {
+        out[y] = Math.max(0, Math.round(Number(input[key])));
+      }
+    }
+    return out;
+  }
+
+  if (legacyFlat != null && Number.isFinite(legacyFlat)) {
+    return feesByYearFromFlat(Math.max(0, Math.round(legacyFlat)));
+  }
+
+  return emptyFeesByYear(0);
 }
 
 export async function updateDepartmentTuitionFee(input: {
   id: string;
-  morning_fee: number;
-  evening_fee: number;
+  morning_fee?: number;
+  evening_fee?: number;
+  morning_fee_y1?: number;
+  morning_fee_y2?: number;
+  morning_fee_y3?: number;
+  morning_fee_y4?: number;
+  evening_fee_y1?: number;
+  evening_fee_y2?: number;
+  evening_fee_y3?: number;
+  evening_fee_y4?: number;
   updated_by?: string | null;
 }): Promise<DepartmentTuitionFeeRow | null> {
   await ensureDepartmentTuitionFeesTable();
-  const morning = Math.max(0, Math.round(Number(input.morning_fee) || 0));
-  const evening = Math.max(0, Math.round(Number(input.evening_fee) || 0));
+
+  const morningByYear = parseStageFees(
+    input as Record<string, unknown>,
+    'morning',
+    input.morning_fee
+  );
+  const eveningByYear = parseStageFees(
+    input as Record<string, unknown>,
+    'evening',
+    input.evening_fee
+  );
+
   const updatedBy =
     input.updated_by &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -233,14 +409,38 @@ export async function updateDepartmentTuitionFee(input: {
     `UPDATE accounts.department_tuition_fees
      SET morning_fee = $2,
          evening_fee = $3,
+         morning_fee_y1 = $4,
+         morning_fee_y2 = $5,
+         morning_fee_y3 = $6,
+         morning_fee_y4 = $7,
+         evening_fee_y1 = $8,
+         evening_fee_y2 = $9,
+         evening_fee_y3 = $10,
+         evening_fee_y4 = $11,
          updated_at = NOW(),
-         updated_by = $4::uuid
+         updated_by = $12::uuid
      WHERE id = $1
-     RETURNING id, department_name, name_aliases, morning_fee, evening_fee, updated_at`,
-    [input.id, morning, evening, updatedBy]
+     RETURNING ${SELECT_FEE_COLUMNS}`,
+    [
+      input.id,
+      morningByYear[1],
+      eveningByYear[1],
+      morningByYear[1],
+      morningByYear[2],
+      morningByYear[3],
+      morningByYear[4],
+      eveningByYear[1],
+      eveningByYear[2],
+      eveningByYear[3],
+      eveningByYear[4],
+      updatedBy,
+    ]
   );
 
   invalidateTuitionFeeCache();
   if (!result.rows[0]) return null;
   return rowToFee(result.rows[0] as Record<string, unknown>);
 }
+
+/** للتوافق إن وُجد استيراد قديم */
+export { normalizeFeeYear };
