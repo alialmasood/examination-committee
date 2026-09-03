@@ -16,6 +16,19 @@ import {
   formatFileSize,
   isImageFile,
 } from '@/src/lib/compress-document-file';
+import {
+  getAvailableDepartmentsForBranch,
+  requiredPreferenceCount,
+  validateDepartmentPreferences,
+} from '@/src/lib/student-affairs/branch-departments';
+
+function todayDateInputValue(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 interface PersonalData {
   fullName: string; // الاسم الرباعي
@@ -585,11 +598,14 @@ export default function StudentFormModal({
         [section]: updatedSection
       };
 
-      // إذا تم تغيير الفرع، أعد تعيين القسم
+      // إذا تم تغيير الفرع، أعد تعيين القسم والرغبات
       if (section === 'secondaryEducation' && field === 'branch') {
         newFormData.universityAdmission = {
           ...newFormData.universityAdmission,
-          department: ''
+          department: '',
+          preference1: '',
+          preference2: '',
+          preference3: '',
         };
       }
 
@@ -712,121 +728,14 @@ export default function StudentFormModal({
     return `ملف: ${file.name}`;
   };
 
-  // دالة لتحديد الأقسام المتاحة بناءً على الفرع
-  const getAvailableDepartments = (branch: string) => {
-    if (branch === 'علمي') {
-      return [
-        { value: 'تقنيات التخدير', label: 'قسم تقنيات التخدير' },
-        { value: 'تقنيات الاشعة', label: 'قسم تقنيات الاشعة' },
-        { value: 'تقنيات صناعة الاسنان', label: 'قسم تقنيات صناعة الاسنان' },
-        { value: 'تقنيات البصريات', label: 'قسم تقنيات البصريات' },
-        { value: 'تقنيات طب الطوارئ', label: 'قسم تقنيات طب الطوارئ' },
-        { value: 'تقنيات صحة المجتمع', label: 'قسم تقنيات صحة المجتمع' },
-        { value: 'تقنيات العلاج الطبيعي', label: 'قسم تقنيات العلاج الطبيعي' },
-        { value: 'هندسة تقنيات البناء والانشاءات', label: 'قسم هندسة تقنيات البناء والانشاءات' },
-        { value: 'تقنيات هندسة النفط والغاز', label: 'قسم تقنيات هندسة النفط والغاز' },
-        { value: 'تقنيات الفيزياء الصحية', label: 'قسم تقنيات الفيزياء الصحية والعلاج الاشعاعي' },
-        { value: 'هندسة تقنيات الامن السيبراني والحوسبة السحابية', label: 'قسم هندسة تقنيات الامن السيبراني والحوسبة السحابية' }
-      ];
-    }
-    
-    if (branch === 'احيائي') {
-      return [
-        { value: 'تقنيات التخدير', label: 'قسم تقنيات التخدير' },
-        { value: 'تقنيات الاشعة', label: 'قسم تقنيات الاشعة' },
-        { value: 'تقنيات صناعة الاسنان', label: 'قسم تقنيات صناعة الاسنان' },
-        { value: 'تقنيات البصريات', label: 'قسم تقنيات البصريات' },
-        { value: 'تقنيات طب الطوارئ', label: 'قسم تقنيات طب الطوارئ' },
-        { value: 'تقنيات صحة المجتمع', label: 'قسم تقنيات صحة المجتمع' },
-        { value: 'تقنيات العلاج الطبيعي', label: 'قسم تقنيات العلاج الطبيعي' },
-        { value: 'تقنيات هندسة النفط والغاز', label: 'قسم تقنيات هندسة النفط والغاز' },
-        { value: 'تقنيات الفيزياء الصحية', label: 'قسم تقنيات الفيزياء الصحية والعلاج الاشعاعي' },
-        { value: 'هندسة تقنيات الامن السيبراني والحوسبة السحابية', label: 'قسم هندسة تقنيات الامن السيبراني والحوسبة السحابية' }
-      ];
-    }
-    
-    if (branch === 'تطبيقي') {
-      return [
-        { value: 'هندسة تقنيات البناء والانشاءات', label: 'قسم هندسة تقنيات البناء والانشاءات' },
-        { value: 'تقنيات هندسة النفط والغاز', label: 'قسم تقنيات هندسة النفط والغاز' },
-        { value: 'تقنيات الفيزياء الصحية', label: 'قسم تقنيات الفيزياء الصحية والعلاج الاشعاعي' },
-        { value: 'هندسة تقنيات الامن السيبراني والحوسبة السحابية', label: 'قسم هندسة تقنيات الامن السيبراني والحوسبة السحابية' }
-      ];
-    }
-    
-    if (branch === 'صناعي ( بناء)') {
-      return [
-        { value: 'هندسة تقنيات البناء والانشاءات', label: 'قسم هندسة تقنيات البناء والانشاءات' }
-      ];
-    }
-    
-    if (branch === 'صناعي ( رسم هندسي)') {
-      return [
-        { value: 'هندسة تقنيات البناء والانشاءات', label: 'قسم هندسة تقنيات البناء والانشاءات' }
-      ];
-    }
-    
-    if (branch === 'صناعي ( مساحة )') {
-      return [
-        { value: 'هندسة تقنيات البناء والانشاءات', label: 'قسم هندسة تقنيات البناء والانشاءات' }
-      ];
-    }
-    
-    if (branch === 'خريجي مركز التدريب المهني / معهد السكك الذي تكون مدة الدراسة فيها ثلاثة سنوات والذين ادوا الامتحان الوزاري في الاختصاص المناظر') {
-      return [
-        { value: 'هندسة تقنيات البناء والانشاءات', label: 'قسم هندسة تقنيات البناء والانشاءات' }
-      ];
-    }
-    
-    if (branch === 'صناعي ( تكرير النفط ومعالجة الغاز)' || branch === 'صناعي ( صناعات بتروكيمياوية)') {
-      return [
-        { value: 'تقنيات هندسة النفط والغاز', label: 'قسم تقنيات هندسة النفط والغاز' }
-      ];
-    }
-    
-    if (branch === 'صناعي ( اجهزة طبية )' || 
-        branch === 'صناعي ( صيانة منظومات الليزر )' || 
-        branch === 'صناعي ( اتصالات )' || 
-        branch === 'صناعي ( كهرباء )') {
-      return [
-        { value: 'تقنيات الفيزياء الصحية', label: 'قسم تقنيات الفيزياء الصحية' }
-      ];
-    }
-    
-    if (branch === 'صناعي ( الكترونيك وسيطرة - الكترون )') {
-      return [
-        { value: 'تقنيات الفيزياء الصحية', label: 'قسم تقنيات الفيزياء الصحية والعلاج الاشعاعي' },
-        { value: 'هندسة تقنيات الامن السيبراني والحوسبة السحابية', label: 'قسم هندسة تقنيات الامن السيبراني والحوسبة السحابية' }
-      ];
-    }
-    
-    if (branch === 'صناعي ( حاسبات )' || 
-        branch === 'صناعي ( شبكات الحاسوب )' || 
-        branch === 'صناعي ( تكنولوجيا اعلام )' || 
-        branch === 'الحاسوب وتقنيات المعلومات ( تجميع وصيانة الحاسوب )' || 
-        branch === 'الحاسوب وتقنيات المعلومات ( شبكات الحاسوب )' || 
-        branch === 'الحاسوب وتقنيات المعلومات ( الحاسوب والهاتف النقال )') {
-      return [
-        { value: 'هندسة تقنيات الامن السيبراني والحوسبة السحابية', label: 'قسم هندسة تقنيات الامن السيبراني والحوسبة السحابية' }
-      ];
-    }
-    
-    // الأقسام الافتراضية لجميع الفروع الأخرى
-    return [
-      { value: 'تقنيات التخدير', label: 'قسم تقنيات التخدير' },
-      { value: 'تقنيات الاشعة', label: 'قسم تقنيات الاشعة' },
-      { value: 'تقنيات صناعة الاسنان', label: 'قسم تقنيات صناعة الاسنان' },
-      { value: 'هندسة تقنيات البناء والانشاءات', label: 'قسم هندسة تقنيات البناء والانشاءات' },
-      { value: 'تقنيات هندسة النفط والغاز', label: 'قسم تقنيات هندسة النفط والغاز' },
-      { value: 'تقنيات الفيزياء الصحية', label: 'قسم تقنيات الفيزياء الصحية والعلاج الاشعاعي' },
-      { value: 'تقنيات البصريات', label: 'قسم تقنيات البصريات' },
-      { value: 'تقنيات صحة المجتمع', label: 'قسم تقنيات صحة المجتمع' },
-      { value: 'تقنيات طب الطوارئ', label: 'قسم تقنيات طب الطوارئ' },
-      { value: 'تقنيات العلاج الطبيعي', label: 'قسم تقنيات العلاج الطبيعي' },
-      { value: 'هندسة تقنيات الامن السيبراني والحوسبة السحابية', label: 'قسم هندسة تقنيات الامن السيبراني والحوسبة السحابية' },
-      { value: 'القانون', label: 'قسم القانون' }
-    ];
-  };
+  // الأقسام المتاحة بناءً على الفرع (مصدر موحّد)
+  const getAvailableDepartments = (branch: string) =>
+    getAvailableDepartmentsForBranch(branch);
+
+  const preferenceSlots = Math.max(
+    1,
+    requiredPreferenceCount(formData.secondaryEducation.branch) || 1
+  );
 
 
   const nextStep = () => {
@@ -1040,15 +949,22 @@ export default function StudentFormModal({
   };
 
   const saveNewApplication = async () => {
-    const prefs = getDepartmentPreferences();
-    if (!prefs.first || !prefs.second || !prefs.third) {
-      alert('يجب اختيار ثلاث رغبات أقسام');
+    const birthDate = String(formData.personalData.birthDate || '').trim();
+    if (birthDate && birthDate > todayDateInputValue()) {
+      alert('تاريخ الميلاد لا يمكن أن يكون في المستقبل');
       return false;
     }
-    if (new Set([prefs.first, prefs.second, prefs.third]).size < 3) {
-      alert('يجب أن تكون الرغبات الثلاث أقساماً مختلفة');
+
+    const prefsCheck = validateDepartmentPreferences(
+      getDepartmentPreferences(),
+      formData.secondaryEducation.branch
+    );
+    if (!prefsCheck.ok) {
+      alert(prefsCheck.error);
       return false;
     }
+    const prefs = prefsCheck.prefs;
+
     if (!formData.personalData.phone || formData.personalData.phone.length !== 10) {
       alert('⚠️ رقم الهاتف يجب أن يتكون من 10 أرقام بالضبط');
       return false;
@@ -1752,7 +1668,15 @@ export default function StudentFormModal({
                       <input
                         type="date"
                         value={formData.personalData.birthDate}
-                        onChange={(e) => handleInputChange('personalData', 'birthDate', e.target.value)}
+                        max={todayDateInputValue()}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value && value > todayDateInputValue()) {
+                            handleInputChange('personalData', 'birthDate', '');
+                            return;
+                          }
+                          handleInputChange('personalData', 'birthDate', value);
+                        }}
                         onKeyDown={(e) => e.preventDefault()}
                         onPaste={(e) => e.preventDefault()}
                         onDrop={(e) => e.preventDefault()}
@@ -2274,14 +2198,24 @@ export default function StudentFormModal({
 
                     <div className={isNewApplication ? 'md:col-span-3' : ''}>
                       {isNewApplication ? (
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <div
+                          className={`grid grid-cols-1 gap-3 ${
+                            preferenceSlots >= 3
+                              ? 'md:grid-cols-3'
+                              : preferenceSlots === 2
+                                ? 'md:grid-cols-2'
+                                : 'md:grid-cols-1'
+                          }`}
+                        >
                           {(
                             [
-                              { key: 'preference1', label: 'الرغبة الأولى (القسم) *' },
-                              { key: 'preference2', label: 'الرغبة الثانية (القسم) *' },
-                              { key: 'preference3', label: 'الرغبة الثالثة (القسم) *' },
+                              { key: 'preference1' as const, label: 'الرغبة الأولى (القسم) *', slot: 1 },
+                              { key: 'preference2' as const, label: 'الرغبة الثانية (القسم) *', slot: 2 },
+                              { key: 'preference3' as const, label: 'الرغبة الثالثة (القسم) *', slot: 3 },
                             ] as const
-                          ).map((item) => (
+                          )
+                            .filter((item) => item.slot <= preferenceSlots)
+                            .map((item) => (
                             <div key={item.key}>
                               <label className="mb-1 block text-xs font-semibold text-slate-600">
                                 {item.label}
@@ -2304,7 +2238,9 @@ export default function StudentFormModal({
                                         formData.universityAdmission.preference1,
                                         formData.universityAdmission.preference2,
                                         formData.universityAdmission.preference3,
-                                      ].includes(dept.value) &&
+                                      ]
+                                        .slice(0, preferenceSlots)
+                                        .includes(dept.value) &&
                                       formData.universityAdmission[item.key] !== dept.value
                                     }
                                   >
@@ -2713,8 +2649,12 @@ export default function StudentFormModal({
                     {isNewApplication ? (
                       <>
                         <div><strong>الرغبة الأولى:</strong> {formData.universityAdmission.preference1 || '—'}</div>
-                        <div><strong>الرغبة الثانية:</strong> {formData.universityAdmission.preference2 || '—'}</div>
-                        <div><strong>الرغبة الثالثة:</strong> {formData.universityAdmission.preference3 || '—'}</div>
+                        {preferenceSlots >= 2 ? (
+                          <div><strong>الرغبة الثانية:</strong> {formData.universityAdmission.preference2 || '—'}</div>
+                        ) : null}
+                        {preferenceSlots >= 3 ? (
+                          <div><strong>الرغبة الثالثة:</strong> {formData.universityAdmission.preference3 || '—'}</div>
+                        ) : null}
                       </>
                     ) : (
                       <div><strong>القسم:</strong> {formData.universityAdmission.department}</div>

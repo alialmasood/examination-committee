@@ -8,6 +8,7 @@ import type { ApplicationSnapshot } from '@/src/lib/student-application-print';
 import { createPublicApplication } from '@/src/lib/public-applications';
 import { archiveApplicationPackage } from '@/src/lib/application-archive';
 import { buildPublicApplicationUrl, getRequestSiteOrigin } from '@/src/lib/site-url';
+import { validateDepartmentPreferences } from '@/src/lib/student-affairs/branch-departments';
 import { query } from '@/src/lib/db';
 
 async function persistArchiveMeta(
@@ -70,23 +71,28 @@ export async function PUT(
         { status: 400 }
       );
     }
-    if (!preferences?.first || !preferences?.second || !preferences?.third) {
+
+    const birthDate = String(payload?.personalData?.birthDate || '').trim();
+    if (birthDate) {
+      const today = new Date();
+      const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      if (birthDate > todayIso) {
+        return NextResponse.json(
+          { success: false, error: 'تاريخ الميلاد لا يمكن أن يكون في المستقبل' },
+          { status: 400 }
+        );
+      }
+    }
+
+    const branch = String(payload?.secondaryEducation?.branch || '').trim();
+    const prefsCheck = validateDepartmentPreferences(preferences, branch);
+    if (!prefsCheck.ok) {
       return NextResponse.json(
-        { success: false, error: 'يجب اختيار ثلاث رغبات أقسام' },
+        { success: false, error: prefsCheck.error },
         { status: 400 }
       );
     }
-    const prefs = {
-      first: preferences.first,
-      second: preferences.second,
-      third: preferences.third,
-    };
-    if (new Set([prefs.first, prefs.second, prefs.third]).size < 3) {
-      return NextResponse.json(
-        { success: false, error: 'يجب أن تكون الرغبات الثلاث أقساماً مختلفة' },
-        { status: 400 }
-      );
-    }
+    const prefs = prefsCheck.prefs;
 
     const row = await updateNewRegistration(id, {
       payload: { ...payload, departmentPreferences: prefs },
