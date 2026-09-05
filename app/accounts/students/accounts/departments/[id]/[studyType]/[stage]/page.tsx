@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import StudentsNav from '../../../../../components/StudentsNav';
+import { useSilentStudentsRefresh } from '@/src/lib/students-live-sync';
 
 type DiscountType = {
   key: string;
@@ -155,9 +156,9 @@ export default function StudentAccountsDepartmentStagePage() {
     [departmentId]
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!departmentId || !studyType || !stage) return;
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     setError('');
     try {
       const res = await fetch(
@@ -175,13 +176,15 @@ export default function StudentAccountsDepartmentStagePage() {
       setError('تعذر الاتصال بالخادم');
       setData(null);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [departmentId, studyType, stage]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useSilentStudentsRefresh(load);
 
   const filteredStudents = useMemo(() => {
     if (!data) return [];

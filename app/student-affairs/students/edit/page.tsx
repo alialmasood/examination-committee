@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Student } from '@/src/lib/types';
+import { notifyStudentsLiveUpdate } from '@/src/lib/students-live-sync';
 
 type EditableStudent = Student & {
   admission_channel?: string;
@@ -444,6 +445,11 @@ export default function EditStudentsPage() {
         return next;
       });
       setSavedFlash((prev) => new Set(prev).add(id));
+      notifyStudentsLiveUpdate({
+        type: 'student-updated',
+        studentIds: [id],
+        source: 'student-affairs/students/edit',
+      });
       setTimeout(() => {
         setSavedFlash((prev) => {
           const next = new Set(prev);
@@ -467,6 +473,13 @@ export default function EditStudentsPage() {
     const ids = Array.from(dirtyIds);
     for (const id of ids) {
       await saveStudent(id);
+    }
+    if (ids.length > 1) {
+      notifyStudentsLiveUpdate({
+        type: 'students-bulk-updated',
+        studentIds: ids,
+        source: 'student-affairs/students/edit',
+      });
     }
   };
 

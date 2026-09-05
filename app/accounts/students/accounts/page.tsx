@@ -17,6 +17,7 @@ import {
   paymentCategoryFromYearStatus,
   type YearVisualEntry,
 } from '../lib/settlementYearLedger';
+import { useSilentStudentsRefresh } from '@/src/lib/students-live-sync';
 
 type PaidStudentRow = SettlementStudent;
 
@@ -200,6 +201,8 @@ export default function StudentAccountsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useSilentStudentsRefresh(load);
 
   const paidCountByDepartment = useMemo(() => {
     const map = new Map<string, number>();

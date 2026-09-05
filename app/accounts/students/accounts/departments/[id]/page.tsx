@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
+import { useSilentStudentsRefresh } from '@/src/lib/students-live-sync';
 
 type StageCounts = {
   first: number;
@@ -107,9 +108,9 @@ export default function StudentAccountsDepartmentPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!id) return;
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     setError('');
     try {
       const res = await fetch('/api/departments/stats?academic_year=all', {
@@ -132,13 +133,15 @@ export default function StudentAccountsDepartmentPage() {
     } catch {
       setError('تعذر الاتصال بالخادم');
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useSilentStudentsRefresh(load);
 
   return (
     <div className="p-6 max-w-7xl mx-auto" dir="rtl">

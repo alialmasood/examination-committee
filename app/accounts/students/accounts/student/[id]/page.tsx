@@ -17,6 +17,7 @@ import {
 } from '../../../lib/settlementYearLedger';
 import { getAnnualTuitionFee, getTuitionFeesByYear, type TuitionFeeLookupMap } from '../../../lib/tuitionFees';
 import { fetchTuitionFeeMap } from '../../../lib/clientTuitionFees';
+import { useSilentStudentsRefresh } from '@/src/lib/students-live-sync';
 
 type PaidStudentRow = {
   id: string;
@@ -347,9 +348,9 @@ export default function StudentAccountsStudentPage() {
   const [deletingReceiptId, setDeletingReceiptId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState('');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!id) return;
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     setError('');
     setReceiptsError('');
     try {
@@ -393,13 +394,15 @@ export default function StudentAccountsStudentPage() {
       setStudent(null);
       setReceipts([]);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useSilentStudentsRefresh(load);
 
   const view = useMemo(() => {
     const department = student?.department?.trim() || 'غير محدد';
