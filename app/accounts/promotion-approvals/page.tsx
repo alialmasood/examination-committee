@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { notifyStudentsLiveUpdate } from '@/src/lib/students-live-sync';
 
 type ApprovalRow = {
   id: string;
@@ -136,6 +137,15 @@ export default function PromotionApprovalsPage() {
         ch.close();
       } catch {
         // ignore
+      }
+      if (action === 'approve') {
+        notifyStudentsLiveUpdate({
+          type: 'student-updated',
+          studentIds: [rows.find((r) => r.id === requestId)?.studentId].filter(
+            Boolean
+          ) as string[],
+          source: 'accounts/promotion-approvals',
+        });
       }
       await load({ silent: true });
     } catch {

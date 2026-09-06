@@ -14,6 +14,7 @@ import {
   getTuitionFeesByYear,
 } from '@/app/accounts/students/lib/tuitionFees';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
+import { loadClearedFeeYearsByStudents } from '@/src/lib/accounts/promotion-cleared-years';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -94,6 +95,7 @@ export async function GET(request: NextRequest) {
     }
 
     const feeMap = await loadTuitionFeeMap();
+    const clearedByStudent = await loadClearedFeeYearsByStudents(studentIds);
 
     const byStudent: Record<
       string,
@@ -102,6 +104,7 @@ export async function GET(request: NextRequest) {
         all_completed: boolean;
         years: YearVisualEntry[];
         receipts_count: number;
+        cleared_fee_years: number[];
       }
     > = {};
 
@@ -109,9 +112,10 @@ export async function GET(request: NextRequest) {
       const dept = student.department || '';
       // القسط الأصلي لكل مرحلة — الخصم يأتي من وصولات المودال عبر buildYearLedger
       const feesByYear = getTuitionFeesByYear(dept, student.study_type, feeMap);
+      const clearedFeeYears = clearedByStudent.get(student.id) || [];
 
       const receipts = receiptsByStudent.get(student.id) || [];
-      const ledger = buildYearLedger(receipts, feesByYear);
+      const ledger = buildYearLedger(receipts, feesByYear, { clearedFeeYears });
       byStudent[student.id] = {
         current_year: ledger.currentYear,
         all_completed: ledger.allYearsCompleted,
@@ -119,6 +123,7 @@ export async function GET(request: NextRequest) {
         receipts_count: receipts.filter(
           (r) => Math.max(0, Number(r.pay_amount || 0)) > 0
         ).length,
+        cleared_fee_years: clearedFeeYears,
       };
     }
 

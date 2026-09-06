@@ -161,6 +161,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   const [historyReady, setHistoryReady] = useState(false);
   const [historyRows, setHistoryRows] = useState<SettlementHistoryRow[]>([]);
   const [feeMap, setFeeMap] = useState<TuitionFeeLookupMap | null>(null);
+  const [clearedFeeYears, setClearedFeeYears] = useState<FeeYear[]>([]);
 
   const registeredChannel = String(student?.admission_channel || '').trim();
   const registeredChannelDef = getAdmissionChannelDef(registeredChannel);
@@ -190,13 +191,13 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
   }, [student, feeMap]);
 
   const ledger: YearLedger = useMemo(
-    () => buildYearLedger(historyRows, feesByYear),
-    [historyRows, feesByYear]
+    () => buildYearLedger(historyRows, feesByYear, { clearedFeeYears }),
+    [historyRows, feesByYear, clearedFeeYears]
   );
 
   const openState = useMemo(
-    () => getOpenYearState(historyRows, feesByYear),
-    [historyRows, feesByYear]
+    () => getOpenYearState(historyRows, feesByYear, { clearedFeeYears }),
+    [historyRows, feesByYear, clearedFeeYears]
   );
 
   const currentYear: FeeYear | null = openState.feeYear;
@@ -246,6 +247,7 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       setFormError('');
       setSaving(false);
       setHistoryRows([]);
+      setClearedFeeYears([]);
       setHistoryReady(false);
       setDiscountFeeYears([1]);
       setLoadingHistory(true);
@@ -287,6 +289,12 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
 
         const rows = body.data as SettlementHistoryRow[];
         setHistoryRows(rows);
+        const clearedRaw = Array.isArray(body.cleared_fee_years)
+          ? (body.cleared_fee_years as unknown[])
+              .map((y) => Math.round(Number(y)))
+              .filter((y): y is FeeYear => y === 1 || y === 2 || y === 3 || y === 4)
+          : [];
+        setClearedFeeYears(clearedRaw);
         setHistoryReady(true);
 
         const byYear = getTuitionFeesByYear(
@@ -295,7 +303,9 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
           feeMap
         );
 
-        const state = getOpenYearState(rows, byYear);
+        const state = getOpenYearState(rows, byYear, {
+          clearedFeeYears: clearedRaw,
+        });
         const openYear = state.feeYear || 1;
         // مبدأياً: الخصم لسنة واحدة فقط (السنة الأولى) — توسيع السنوات يدوياً من الخانة
         setDiscountFeeYears([1]);

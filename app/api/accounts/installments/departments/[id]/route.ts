@@ -12,6 +12,7 @@ import {
   type SettlementHistoryRow,
 } from '@/app/accounts/students/lib/settlementYearLedger';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
+import { loadClearedFeeYearsByStudents } from '@/src/lib/accounts/promotion-cleared-years';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -213,9 +214,9 @@ export async function GET(
     );
 
     const receiptsByStudent = new Map<string, ReceiptRow[]>();
-    if (result.rows.length > 0) {
+    const studentIds = result.rows.map((row: { id: string }) => String(row.id));
+    if (studentIds.length > 0) {
       try {
-        const studentIds = result.rows.map((row: { id: string }) => row.id);
         const receiptsRes = await query(
           `SELECT
              student_id::text AS student_id,
@@ -245,6 +246,8 @@ export async function GET(
       }
     }
 
+    const feeMap = await loadTuitionFeeMap();
+    const clearedByStudent = await loadClearedFeeYearsByStudents(studentIds);
     const stagesOrder = ['first', 'second', 'third', 'fourth', 'unknown'];
     const byStage: Record<string, StageBucket> = {};
     for (const s of stagesOrder) byStage[s] = emptyStage(s);
@@ -260,7 +263,6 @@ export async function GET(
     let totalDebt = 0;
     let morning = 0;
     let evening = 0;
-    const feeMap = await loadTuitionFeeMap();
 
     const unpaidStudents: Array<{
       university_id: string;
@@ -285,6 +287,7 @@ export async function GET(
       const feeYear = stageToFeeYear(stage);
       const feesByYear = getTuitionFeesByYear(major, row.study_type, feeMap);
       const annualBase = feesByYear[feeYear] ?? getAnnualTuitionFee(major, row.study_type, feeMap);
+      const clearedFeeYears = clearedByStudent.get(String(row.id)) || [];
       const channelDiscount = channelDiscountAmount(
         {
           major,
@@ -319,8 +322,8 @@ export async function GET(
         0
       );
 
-      // الدين من دفتر السنوات حسب قسط كل مرحلة
-      const openState = getOpenYearState(receipts, feesByYear);
+      // الدين من دفتر السنوات حسب قسط كل مرحلة (+ سنوات مكتملة بترحيل معتمد)
+      const openState = getOpenYearState(receipts, feesByYear, { clearedFeeYears });
       const debt = Math.max(0, openState.outstandingBefore);
       const isFullyPaid = debt <= 0.01;
 

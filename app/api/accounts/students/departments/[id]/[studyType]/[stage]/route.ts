@@ -21,6 +21,7 @@ import {
 } from '@/app/accounts/students/lib/settlementYearLedger';
 import { settlementDiscountForFeeYear } from '@/app/accounts/students/lib/studentFeeDiscount';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
+import { loadClearedFeeYearsByStudents } from '@/src/lib/accounts/promotion-cleared-years';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -230,6 +231,7 @@ export async function GET(
     }
 
     const feeMap = await loadTuitionFeeMap();
+    const clearedByStudent = await loadClearedFeeYearsByStudents(studentIds);
 
     type DiscountBucket = {
       key: string;
@@ -265,9 +267,10 @@ export async function GET(
       const stageFeeYear = STAGE_TO_FEE_YEAR[stage] ?? 1;
       const annualBase = feesByYear[stageFeeYear] ?? feesByYear[1] ?? 0;
       const receipts = receiptsByStudent.get(String(row.id)) || [];
+      const clearedFeeYears = clearedByStudent.get(String(row.id)) || [];
 
       // الخصم والدين من وصولات المودال فقط — لا يُدمج خصم ملف الطالب
-      const ledger = buildYearLedger(receipts, feesByYear);
+      const ledger = buildYearLedger(receipts, feesByYear, { clearedFeeYears });
       const yearVisual = getYearVisualEntries(ledger);
       const category = paymentCategoryFromYearStatus(
         {

@@ -15,6 +15,7 @@ import {
   sumSettlementDiscountsByYear,
 } from '@/app/accounts/students/lib/studentFeeDiscount';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
+import { loadClearedFeeYearsByStudents } from '@/src/lib/accounts/promotion-cleared-years';
 import { query } from '@/src/lib/db';
 
 type StudentRow = {
@@ -262,6 +263,7 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
   }
 
   const feeMap = await loadTuitionFeeMap();
+  const clearedByStudent = await loadClearedFeeYearsByStudents(studentIds);
 
   for (const row of students) {
     const studyType = String(row.study_type || '').toLowerCase();
@@ -284,7 +286,8 @@ export async function buildStudentsFinanceSummary(): Promise<StudentsFinanceSumm
     );
 
     // سنة القسط = العام الدراسي الجاري حسب مرحلة الطالب (وليس اكتمال 4 سنوات)
-    const ledger = buildYearLedger(receipts, feesByYear);
+    const clearedFeeYears = clearedByStudent.get(row.id) || [];
+    const ledger = buildYearLedger(receipts, feesByYear, { clearedFeeYears });
     const yearVisual = getYearVisualEntries(ledger);
     const category = paymentCategoryFromYearStatus(
       {

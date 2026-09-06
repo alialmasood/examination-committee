@@ -19,6 +19,9 @@ import {
   postStudentSettlementJournalEntry,
   type SettlementJournalResult,
 } from '@/src/lib/accounts/student-settlement-gl';
+import { loadClearedFeeYearsForStudent } from '@/src/lib/accounts/promotion-cleared-years';
+import { getTuitionFeesByYear } from '@/app/accounts/students/lib/tuitionFees';
+import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -213,7 +216,11 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.json(
-      { success: true, data },
+      {
+        success: true,
+        data,
+        cleared_fee_years: await loadClearedFeeYearsForStudent(studentId),
+      },
       { headers: { 'Cache-Control': 'no-store' } }
     );
   } catch (error) {
@@ -304,6 +311,15 @@ export async function POST(request: NextRequest) {
       [studentId]
     );
     const historyRows = historyRes.rows as SettlementHistoryRow[];
+    const clearedFeeYears = await loadClearedFeeYearsForStudent(studentId);
+
+    const feeMap = await loadTuitionFeeMap().catch(() => null);
+    const dept = String(body?.department || '').trim();
+    const studyType = String(body?.study_type || '').trim() || null;
+    const feesByYear =
+      feeMap && dept
+        ? getTuitionFeesByYear(dept, studyType, feeMap)
+        : null;
 
     const annualFee =
       toMoney(body?.annual_fee) ||
@@ -311,6 +327,8 @@ export async function POST(request: NextRequest) {
         const n = toMoney(row.annual_fee);
         return n > max ? n : max;
       }, 0);
+
+    const ledgerFeeInput = feesByYear || annualFee;
 
     if (annualFee > 0 && payAmount > annualFee + 0.0001) {
       return NextResponse.json(
@@ -322,7 +340,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const openState = getOpenYearState(historyRows, annualFee);
+    const openState = getOpenYearState(historyRows, ledgerFeeInput, {
+      clearedFeeYears,
+    });
     if (!openState.feeYear) {
       return NextResponse.json(
         { success: false, error: 'تم استيفاء أقساط السنوات الأربع لهذا الطالب' },

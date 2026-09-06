@@ -339,6 +339,7 @@ export default function StudentAccountsStudentPage() {
   const id = String(params?.id || '');
   const [student, setStudent] = useState<PaidStudentRow | null>(null);
   const [receipts, setReceipts] = useState<SettlementReceipt[]>([]);
+  const [clearedFeeYears, setClearedFeeYears] = useState<FeeYear[]>([]);
   const [feeMap, setFeeMap] = useState<TuitionFeeLookupMap>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -385,14 +386,22 @@ export default function StudentAccountsStudentPage() {
       const settlementsBody = await settlementsRes.json().catch(() => ({}));
       if (!settlementsRes.ok || !settlementsBody.success || !Array.isArray(settlementsBody.data)) {
         setReceipts([]);
+        setClearedFeeYears([]);
         setReceiptsError(settlementsBody.error || 'تعذر تحميل تسديدات الطالب');
       } else {
         setReceipts(settlementsBody.data as SettlementReceipt[]);
+        const clearedRaw = Array.isArray(settlementsBody.cleared_fee_years)
+          ? (settlementsBody.cleared_fee_years as unknown[])
+              .map((y) => Math.round(Number(y)))
+              .filter((y): y is FeeYear => y === 1 || y === 2 || y === 3 || y === 4)
+          : [];
+        setClearedFeeYears(clearedRaw);
       }
     } catch {
       setError('تعذر الاتصال بالخادم');
       setStudent(null);
       setReceipts([]);
+      setClearedFeeYears([]);
     } finally {
       if (!opts?.silent) setLoading(false);
     }
@@ -415,7 +424,7 @@ export default function StudentAccountsStudentPage() {
     );
     const paidAmount =
       settlementsPaid > 0 ? settlementsPaid : toNumber(student?.payment_amount, 0);
-    const ledger = buildYearLedger(receipts, feesByYear);
+    const ledger = buildYearLedger(receipts, feesByYear, { clearedFeeYears });
     const catalogAnnual =
       (ledger.currentYear != null
         ? feesByYear[ledger.currentYear]
@@ -502,7 +511,7 @@ export default function StudentAccountsStudentPage() {
       hasDiscountType,
       discountTypeLabel,
     };
-  }, [student, receipts, feeMap]);
+  }, [student, receipts, feeMap, clearedFeeYears]);
 
   const receiptsByYear = useMemo(() => {
     return ([1, 2, 3, 4] as FeeYear[]).map((year) => {

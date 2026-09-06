@@ -15,6 +15,7 @@ import {
   getTuitionFeesByYear,
 } from '@/app/accounts/students/lib/tuitionFees';
 import { loadTuitionFeeMap } from '@/src/lib/accounts/department-tuition-fees';
+import { loadClearedFeeYearsForStudent } from '@/src/lib/accounts/promotion-cleared-years';
 
 export type StageCode = 'first' | 'second' | 'third' | 'fourth';
 
@@ -132,11 +133,12 @@ export async function getStudentFeeCompletion(
   );
 
   const receipts = await loadReceipts(student.id);
-  const ledger = buildYearLedger(receipts, feesByYear);
+  const clearedFeeYears = await loadClearedFeeYearsForStudent(student.id);
+  const ledger = buildYearLedger(receipts, feesByYear, { clearedFeeYears });
   const entry = ledger.years.find((y) => y.year === feeYear);
   const target = entry?.target ?? annual;
   const paid = entry?.paid ?? 0;
-  const remaining = Math.max(0, target - paid);
+  const remaining = Math.max(0, entry?.remaining ?? Math.max(0, target - paid));
   const isComplete = remaining <= 0.01;
 
   const pending = await query(

@@ -177,6 +177,15 @@ function clampYearTarget(raw: number, annual: number): number {
  */
 export type AnnualFeeInput = number | Partial<Record<FeeYear, number>>;
 
+/** خيارات دفتر السنوات */
+export type LedgerOptions = {
+  /**
+   * سنوات قسط اكتملت بموافقة ترحيل من الحسابات
+   * (تُعامل كمكتملة حتى بدون وصولات تسديد).
+   */
+  clearedFeeYears?: ReadonlySet<number> | readonly number[] | null;
+};
+
 export function resolveAnnualForYear(
   annualFee: AnnualFeeInput,
   year: FeeYear
@@ -193,6 +202,29 @@ export function resolveAnnualForYear(
     return Math.max(0, Number(y1));
   }
   return 0;
+}
+
+function toClearedFeeYearSet(
+  cleared?: LedgerOptions['clearedFeeYears']
+): Set<FeeYear> {
+  const out = new Set<FeeYear>();
+  if (!cleared) return out;
+  const list = cleared instanceof Set ? [...cleared] : cleared;
+  for (const raw of list) {
+    const n = Math.max(1, Math.min(4, Math.round(Number(raw) || 0)));
+    if (n >= 1 && n <= 4) out.add(n as FeeYear);
+  }
+  return out;
+}
+
+function isYearComplete(
+  paid: number,
+  target: number,
+  cleared: boolean
+): boolean {
+  if (cleared) return true;
+  if (target <= 0) return true;
+  return paid >= target - 0.01;
 }
 
 /**
@@ -235,11 +267,14 @@ export function resolveYearTargetFromReceipt(
 /**
  * بناء دفتر السنوات: كل سنة مستقلة وسقفها قسط تلك المرحلة.
  * المتبقي = مستحق السنة − مجموع المدفوع لهذه السنة فقط.
+ * السنوات في clearedFeeYears تُعد مكتملة (ترحيل معتمد).
  */
 export function buildYearLedger(
   receipts: SettlementHistoryRow[],
-  annualFee: AnnualFeeInput
+  annualFee: AnnualFeeInput,
+  options?: LedgerOptions
 ): YearLedger {
+  const cleared = toClearedFeeYearSet(options?.clearedFeeYears);
   const paidByYear: Record<FeeYear, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
   const targetByYear: Record<FeeYear, number | null> = {
     1: null,
@@ -270,7 +305,7 @@ export function buildYearLedger(
     const fy = y as FeeYear;
     const annual = resolveAnnualForYear(annualFee, fy);
     const target = targetByYear[fy] ?? annual;
-    if (paidByYear[fy] < target - 0.01) {
+    if (!isYearComplete(paidByYear[fy], target, cleared.has(fy))) {
       currentYear = fy;
       break;
     }
@@ -280,7 +315,8 @@ export function buildYearLedger(
     const annual = resolveAnnualForYear(annualFee, year);
     const target = targetByYear[year] ?? annual;
     const paid = paidByYear[year];
-    const remaining = Math.max(0, target - paid);
+    const yearCleared = cleared.has(year);
+    const remaining = yearCleared ? 0 : Math.max(0, target - paid);
     return {
       year,
       label: feeYearLabel(year),
@@ -293,17 +329,22 @@ export function buildYearLedger(
   });
 
   const refined = years.map((entry) => {
+    const yearCleared = cleared.has(entry.year);
     if (!currentYear) {
       return {
         ...entry,
         status:
-          entry.target <= 0 || entry.paid >= entry.target - 0.01
+          yearCleared ||
+          entry.target <= 0 ||
+          entry.paid >= entry.target - 0.01
             ? ('completed' as const)
             : ('pending' as const),
       };
     }
     if (entry.year === currentYear) return { ...entry, status: 'current' as const };
-    if (entry.year < currentYear) return { ...entry, status: 'completed' as const };
+    if (entry.year < currentYear || yearCleared) {
+      return { ...entry, status: 'completed' as const, remaining: 0 };
+    }
     return { ...entry, status: 'pending' as const };
   });
 
@@ -321,7 +362,8 @@ export function buildYearLedger(
 /** حالة السنة الجارية قبل دفعة جديدة */
 export function getOpenYearState(
   receipts: SettlementHistoryRow[],
-  annualFee: AnnualFeeInput
+  annualFee: AnnualFeeInput,
+  options?: LedgerOptions
 ): {
   feeYear: FeeYear | null;
   yearTarget: number;
@@ -330,7 +372,7 @@ export function getOpenYearState(
   receiptsCount: number;
   firstReceipt: SettlementHistoryRow | null;
 } {
-  const ledger = buildYearLedger(receipts, annualFee);
+  const ledger = buildYearLedger(receipts, annualFee, options);
   const feeYear = ledger.currentYear;
   if (!feeYear) {
     return {
