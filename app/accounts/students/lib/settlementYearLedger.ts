@@ -165,10 +165,15 @@ function resolveFeeYear(row: SettlementHistoryRow): FeeYear {
   return Math.max(1, Math.min(4, y || 1)) as FeeYear;
 }
 
-function clampYearTarget(raw: number, annual: number): number {
+function clampYearTarget(
+  raw: number,
+  annual: number,
+  allowZero = false
+): number {
   let target = Math.max(0, raw);
   if (annual > 0) target = Math.min(target, annual);
-  if (target <= 0 && annual > 0) target = annual;
+  // السماح بالهدف 0 عند تخفيض كامل (100%)؛ وإلا أعد القسط لتفادي بيانات تالفة
+  if (target <= 0 && annual > 0 && !allowZero) target = annual;
   return target;
 }
 
@@ -243,11 +248,13 @@ export function resolveYearTargetFromReceipt(
   if (mode === 'percent') {
     if (discountInput > 0) {
       const pct = Math.min(100, discountInput);
-      return clampYearTarget(annual - (annual * pct) / 100, annual);
+      const net = annual - (annual * pct) / 100;
+      return clampYearTarget(net, annual, net <= 0.01);
     }
     // نسبة محفوظة كمبلغ ناتج فقط
     if (discountAmount > 0) {
-      return clampYearTarget(annual - Math.min(discountAmount, annual), annual);
+      const net = annual - Math.min(discountAmount, annual);
+      return clampYearTarget(net, annual, net <= 0.01);
     }
     return annual;
   }
@@ -255,13 +262,29 @@ export function resolveYearTargetFromReceipt(
   if (mode === 'amount') {
     if (discountAmount > 0 || discountInput > 0) {
       const amount = discountAmount > 0 ? discountAmount : discountInput;
-      return clampYearTarget(annual - Math.min(amount, annual), annual);
+      const net = annual - Math.min(amount, annual);
+      return clampYearTarget(net, annual, net <= 0.01);
     }
     return annual;
   }
 
   // بدون خصم في الوصل → القسط الأصلي كاملاً (لا نعتمد after_discount القديم)
   return annual;
+}
+
+function receiptDefinesYearTarget(row: SettlementHistoryRow): boolean {
+  const mode = String(row.discount_mode || 'none').trim().toLowerCase();
+  if (mode === 'percent') {
+    return (
+      toNumber(row.discount_input, 0) > 0 || toNumber(row.discount_amount, 0) > 0
+    );
+  }
+  if (mode === 'amount') {
+    return (
+      toNumber(row.discount_amount, 0) > 0 || toNumber(row.discount_input, 0) > 0
+    );
+  }
+  return false;
 }
 
 /**
@@ -288,7 +311,9 @@ export function buildYearLedger(
 
   for (const row of sorted) {
     const pay = Math.max(0, toNumber(row.pay_amount, 0));
-    if (pay <= 0) continue;
+    const hasDiscountPlan = receiptDefinesYearTarget(row);
+    // وصولات الدفع أو وصولات التخفيض الكامل (pay=0) تُحتسب لتحديد هدف السنة
+    if (pay <= 0 && !hasDiscountPlan) continue;
 
     const year = resolveFeeYear(row);
     const annual = resolveAnnualForYear(annualFee, year);
@@ -296,7 +321,7 @@ export function buildYearLedger(
     // آخر وصل للسنة يحدد مستحقها (يسمح بإلغاء/تعديل الخصم لاحقاً من المودال)
     targetByYear[year] = resolveYearTargetFromReceipt(row, annual);
 
-    paidByYear[year] += pay;
+    if (pay > 0) paidByYear[year] += pay;
     countByYear[year] += 1;
   }
 
@@ -426,8 +451,10 @@ export function recalculateRemainingByReceipt(
     const year = resolveFeeYear(row);
     const annual = resolveAnnualForYear(annualFee, year);
     const pay = Math.max(0, toNumber(row.pay_amount, 0));
-    // آخر وصل يحدد مستحق السنة
-    targetByYear[year] = resolveYearTargetFromReceipt(row, annual);
+    // آخر وصل يحدد مستحق السنة (يشمل تخفيض 100% بمبلغ دفع 0)
+    if (pay > 0 || receiptDefinesYearTarget(row)) {
+      targetByYear[year] = resolveYearTargetFromReceipt(row, annual);
+    }
     paidByYear[year] += pay;
     const target = targetByYear[year] ?? annual;
     out.push({

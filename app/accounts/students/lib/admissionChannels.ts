@@ -40,7 +40,11 @@ export const ADMISSION_CHANNEL_DEFS: AdmissionChannelDef[] = [
     allowAmountOrPercent: true,
   },
   { key: 'faculty_children', label: 'تخفيض أبناء الهيئة التدريسية', fixedPercent: null },
-  { key: 'top_students', label: 'تخفيض الأوائل', fixedPercent: 10 },
+  /**
+   * تخفيض الاوائل: نسبة يدوية حتى 100%
+   * (100% = استيفاء سنة القسط والانتقال للسنة التالية بدون دفع).
+   */
+  { key: 'top_students', label: 'تخفيض الاوائل', fixedPercent: null },
   { key: 'health_ministry', label: 'تخفيض موظفي وزارة الصحة', fixedPercent: 20 },
 ];
 

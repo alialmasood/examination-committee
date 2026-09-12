@@ -571,6 +571,17 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
         : Math.min(rawPay, maxPay);
     const perPeriod = perPeriodFromRemaining(outstandingBefore, periodCount);
 
+    const appliesDiscount =
+      resolvedDiscount.appliesToCurrentYear && discountMode !== 'none';
+
+    /** تخفيض 100% على السنة الجارية = استيفاء بلا تحصيل نقدي */
+    const isFullDiscountWaiver =
+      appliesDiscount &&
+      discountAmount > 0 &&
+      yearTarget <= 0.01 &&
+      outstandingBefore <= 0.01 &&
+      yearPaidBefore <= 0.01;
+
     return {
       feeYear: currentYear,
       discountMode,
@@ -581,15 +592,18 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       yearPaidBefore,
       outstandingBefore,
       maxPay,
-      paid: paidAmount,
-      remaining: Math.max(0, outstandingBefore - paidAmount),
+      paid: isFullDiscountWaiver ? 0 : paidAmount,
+      remaining: isFullDiscountWaiver
+        ? 0
+        : Math.max(0, outstandingBefore - paidAmount),
       periodCount,
       perPeriod,
       requiresFullPay,
       fullPayMismatch,
       exceedsMax: !requiresFullPay && rawPay > maxPay + 0.0001,
       historyCount: historyRows.length,
-      appliesDiscount: resolvedDiscount.appliesToCurrentYear && discountMode !== 'none',
+      appliesDiscount,
+      isFullDiscountWaiver,
     };
   }, [
     baseTotal,
@@ -636,21 +650,25 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
       setFormError('يرجى تحديد تاريخ التسديد');
       return;
     }
-    if (calc.outstandingBefore <= 0) {
+
+    /** تخفيض 100% على السنة الجارية = استيفاء السنة بلا دفع والانتقال للتالية */
+    const isFullDiscountWaiver = calc.isFullDiscountWaiver;
+
+    if (calc.outstandingBefore <= 0 && !isFullDiscountWaiver) {
       setFormError('لا يوجد متبقي على السنة الحالية');
       return;
     }
-    if (toNumber(payAmount, 0) <= 0) {
+    if (!isFullDiscountWaiver && toNumber(payAmount, 0) <= 0) {
       setFormError('يرجى إدخال مبلغ الدفع الحالي');
       return;
     }
-    if (calc.requiresFullPay && calc.fullPayMismatch) {
+    if (!isFullDiscountWaiver && calc.requiresFullPay && calc.fullPayMismatch) {
       setFormError(
         `عند اختيار فترة واحدة يجب أن يساوي مبلغ الدفع المتبقي بذمة الطالب تماماً (${money(calc.outstandingBefore)} IQD)`
       );
       return;
     }
-    if (calc.exceedsMax) {
+    if (!isFullDiscountWaiver && calc.exceedsMax) {
       setFormError(
         `مبلغ الدفع أكبر من المسموح لهذه السنة (${money(calc.maxPay)} IQD)`
       );
@@ -727,6 +745,12 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
         ? resolvedDiscount.allPlanYears
         : discountFeeYears;
 
+    // تأكد أن سنة التسديد الجارية ضمن سنوات الخصم عند الاستيفاء بتخفيض كامل
+    const yearsForSave =
+      isFullDiscountWaiver && calc.feeYear && !saveYears.includes(calc.feeYear)
+        ? [...saveYears, calc.feeYear].sort((a, b) => a - b)
+        : saveYears;
+
     setSaving(true);
     try {
       const res = await fetch('/api/accounts/student-settlements', {
@@ -745,8 +769,8 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
           four_years_total: fourYearsTotal,
           fee_year: calc.feeYear,
           discount_mode: saveMode,
-          discount_years: Math.max(1, saveYears.length),
-          discount_fee_years: saveYears,
+          discount_years: Math.max(1, yearsForSave.length),
+          discount_fee_years: yearsForSave,
           discount_channel: saveChannel,
           assign_admission_channel:
             !hasRegisteredChannel && discountEnabled && Boolean(activeChannelDef),
@@ -754,10 +778,11 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
           discount_input: saveInput,
           discount_amount: calc.discountAmount,
           after_discount: calc.yearTarget,
-          pay_amount: calc.paid,
-          remaining_amount: calc.remaining,
-          periods: calc.periodCount,
-          per_period_amount: calc.perPeriod,
+          pay_amount: isFullDiscountWaiver ? 0 : calc.paid,
+          remaining_amount: isFullDiscountWaiver ? 0 : calc.remaining,
+          periods: isFullDiscountWaiver ? 1 : calc.periodCount,
+          per_period_amount: isFullDiscountWaiver ? 0 : calc.perPeriod,
+          full_discount_waiver: isFullDiscountWaiver,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -772,7 +797,9 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
           ? ` (تنبيه: ${body.journal_warning})`
           : '';
       setFormMessage(
-        `تم حفظ وصل ${feeYearLabel(calc.feeYear)} رقم ${body.data?.receipt_number || ''}${journalNote}`
+        isFullDiscountWaiver
+          ? `تم استيفاء ${feeYearLabel(calc.feeYear)} بتخفيض 100% — انتقلت السنة الجارية للتالية`
+          : `تم حفظ وصل ${feeYearLabel(calc.feeYear)} رقم ${body.data?.receipt_number || ''}${journalNote}`
       );
       onSaved?.({
         id: body.data.id,
@@ -947,26 +974,33 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                     min={calc.requiresFullPay ? calc.outstandingBefore : 0}
                     max={calc.maxPay || undefined}
                     step="1000"
-                    value={payAmount}
+                    value={calc.isFullDiscountWaiver ? '0' : payAmount}
                     onChange={(e) => {
-                      if (periods === 1) return;
+                      if (periods === 1 || calc.isFullDiscountWaiver) return;
                       setPayAmount(e.target.value);
                     }}
-                    placeholder="أدخل المبلغ المراد دفعه الآن"
-                    readOnly={periods === 1}
+                    placeholder={
+                      calc.isFullDiscountWaiver
+                        ? 'لا مبلغ — استيفاء بتخفيض 100%'
+                        : 'أدخل المبلغ المراد دفعه الآن'
+                    }
+                    readOnly={periods === 1 || calc.isFullDiscountWaiver}
                     disabled={
                       loadingHistory ||
                       !calc.feeYear ||
-                      calc.maxPay <= 0 ||
+                      calc.isFullDiscountWaiver ||
+                      (calc.maxPay <= 0 && !calc.isFullDiscountWaiver) ||
                       periods === 1
                     }
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-800 focus:border-red-800 disabled:bg-gray-50 disabled:text-gray-400"
                     dir="ltr"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    {periods === 1
-                      ? `فترة واحدة: يجب دفع المتبقي كاملاً (${money(calc.outstandingBefore)} IQD) — لا أقل ولا أكثر`
-                      : `الحد الأعلى لهذه الدفعة: ${money(calc.maxPay)} IQD (لا يتجاوز القسط السنوي ولا متبقي السنة)`}
+                    {calc.isFullDiscountWaiver
+                      ? 'تخفيض 100%: لا يُحصَّل مبلغ من الطالب ولا يُضاف للإيرادات النقدية — يُسجَّل كاستيفاء بالتخفيض فقط'
+                      : periods === 1
+                        ? `فترة واحدة: يجب دفع المتبقي كاملاً (${money(calc.outstandingBefore)} IQD) — لا أقل ولا أكثر`
+                        : `الحد الأعلى لهذه الدفعة: ${money(calc.maxPay)} IQD (لا يتجاوز القسط السنوي ولا متبقي السنة)`}
                   </p>
                   {calc.fullPayMismatch && (
                     <p className="text-xs text-red-700 mt-1">
@@ -1080,7 +1114,9 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                       checked={discountEnabled}
                       onChange={() => {
                         setDiscountEnabled(true);
-                        setDiscountFeeYears([1]);
+                        setDiscountFeeYears(
+                          currentYear ? [currentYear] : [1]
+                        );
                         if (
                           hasRegisteredChannel &&
                           registeredChannelDef &&
@@ -1145,7 +1181,8 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                       السنوات التي يسري عليها التخفيض الرئيسي
                     </p>
                     <p className="text-xs text-gray-500 mb-2">
-                      مبدئياً السنة الأولى فقط. أضف سنوات أخرى إن لزم.
+                      مبدئياً السنة الجارية للتسديد. لـ «تخفيض الاوائل» بنسبة 100%
+                      تُستوفى السنة المحددة وينتقل المودال للسنة التالية.
                     </p>
                     <div className="flex flex-wrap gap-3 text-sm">
                       {([1, 2, 3, 4] as FeeYear[]).map((year) => (
@@ -1461,9 +1498,13 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
             <p>
               {calc.feeYear ? feeYearLabel(calc.feeYear) : '—'} · مستحق{' '}
               {money(calc.yearTarget)} − مدفوع سابقاً لهذه السنة{' '}
-              {money(calc.yearPaidBefore)} = متبقي {money(calc.outstandingBefore)} ·
-              دفع الآن {money(calc.paid)} · المتبقي بعد الدفع {money(calc.remaining)}
-              {calc.remaining <= 0 && calc.feeYear && calc.feeYear < 4
+              {money(calc.yearPaidBefore)} = متبقي {money(calc.outstandingBefore)}
+              {calc.isFullDiscountWaiver
+                ? ' · استيفاء بتخفيض 100% (بدون تحصيل نقدي)'
+                : ` · دفع الآن ${money(calc.paid)} · المتبقي بعد الدفع ${money(calc.remaining)}`}
+              {(calc.remaining <= 0 || calc.isFullDiscountWaiver) &&
+              calc.feeYear &&
+              calc.feeYear < 4
                 ? ' · بعد الإكمال يُفتح تسديد السنة التالية'
                 : ''}
             </p>
@@ -1498,12 +1539,16 @@ export default function SettlementModal({ open, student, onClose, onSaved }: Pro
                 loadingHistory ||
                 !historyReady ||
                 !calc.feeYear ||
-                calc.outstandingBefore <= 0 ||
-                calc.fullPayMismatch
+                (!calc.isFullDiscountWaiver && calc.outstandingBefore <= 0) ||
+                (!calc.isFullDiscountWaiver && calc.fullPayMismatch)
               }
               className="bg-red-900 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-red-800 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {saving ? 'جارٍ الحفظ…' : 'إكمال الدفع'}
+              {saving
+                ? 'جارٍ الحفظ…'
+                : calc.isFullDiscountWaiver
+                  ? 'استيفاء بالتخفيض'
+                  : 'إكمال الدفع'}
             </button>
           </div>
         </div>

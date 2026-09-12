@@ -9,7 +9,7 @@ export const FIXED_CHANNEL_DISCOUNTS: Record<string, number> = {
   martyrs: 50,
   social_care: 50,
   siblings_married: 10,
-  top_students: 10,
+  // top_students: نسبة يدوية في مودال التسديد (قد تصل 100%) — لا تُثبَّت هنا
   health_ministry: 20,
 };
 

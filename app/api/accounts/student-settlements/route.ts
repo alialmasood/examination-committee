@@ -49,7 +49,7 @@ async function ensureSettlementReceiptsTable() {
       discount_input NUMERIC(18, 2) NOT NULL DEFAULT 0,
       discount_amount NUMERIC(18, 2) NOT NULL DEFAULT 0,
       after_discount NUMERIC(18, 2) NOT NULL DEFAULT 0,
-      pay_amount NUMERIC(18, 2) NOT NULL CHECK (pay_amount > 0),
+      pay_amount NUMERIC(18, 2) NOT NULL CHECK (pay_amount >= 0),
       remaining_amount NUMERIC(18, 2) NOT NULL DEFAULT 0,
       periods SMALLINT NOT NULL DEFAULT 1
         CHECK (periods BETWEEN 1 AND 10),
@@ -90,6 +90,56 @@ async function ensureSettlementReceiptsTable() {
   await query(`
     CREATE INDEX IF NOT EXISTS idx_student_settlement_receipts_fee_year
       ON accounts.student_settlement_receipts (student_id, fee_year, settlement_date DESC)
+  `).catch(() => undefined);
+
+  // السماح بوصل استيفاء بتخفيض 100% (مبلغ دفع = 0)
+  await query(`
+    ALTER TABLE accounts.student_settlement_receipts
+      DROP CONSTRAINT IF EXISTS student_settlement_receipts_pay_amount_check
+  `).catch(() => undefined);
+
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_schema = 'accounts'
+          AND table_name = 'student_settlement_receipts'
+          AND constraint_name = 'student_settlement_receipts_pay_amount_check'
+      ) THEN
+        ALTER TABLE accounts.student_settlement_receipts
+          DROP CONSTRAINT student_settlement_receipts_pay_amount_check;
+      END IF;
+    END $$;
+  `).catch(() => undefined);
+
+  // إسقاط أي CHECK قديم على pay_amount ثم إضافة الشرط الجديد
+  await query(`
+    DO $$
+    DECLARE
+      r RECORD;
+    BEGIN
+      FOR r IN
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+        WHERE nsp.nspname = 'accounts'
+          AND rel.relname = 'student_settlement_receipts'
+          AND con.contype = 'c'
+          AND pg_get_constraintdef(con.oid) ILIKE '%pay_amount%'
+      LOOP
+        EXECUTE format(
+          'ALTER TABLE accounts.student_settlement_receipts DROP CONSTRAINT IF EXISTS %I',
+          r.conname
+        );
+      END LOOP;
+      ALTER TABLE accounts.student_settlement_receipts
+        ADD CONSTRAINT student_settlement_receipts_pay_amount_nonneg
+        CHECK (pay_amount >= 0);
+    EXCEPTION WHEN duplicate_object THEN
+      NULL;
+    END $$;
   `).catch(() => undefined);
 }
 
@@ -282,12 +332,7 @@ export async function POST(request: NextRequest) {
     }
 
     const payAmount = toMoney(body?.pay_amount);
-    if (payAmount <= 0) {
-      return NextResponse.json(
-        { success: false, error: 'مبلغ الدفع يجب أن يكون أكبر من صفر' },
-        { status: 400 }
-      );
-    }
+    const fullDiscountWaiver = Boolean(body?.full_discount_waiver);
 
     const historyRes = await query(
       `SELECT
@@ -408,17 +453,34 @@ export async function POST(request: NextRequest) {
       afterDiscount = Math.min(afterDiscount, annualFee);
     }
 
+    const isFullDiscountWaiver =
+      fullDiscountWaiver ||
+      (yearInDiscountPlan &&
+        discountMode !== 'none' &&
+        afterDiscount <= 0.01 &&
+        yearPaidBefore <= 0.01 &&
+        discountAmount >= discountBase - 0.01);
+
+    if (payAmount <= 0 && !isFullDiscountWaiver) {
+      return NextResponse.json(
+        { success: false, error: 'مبلغ الدفع يجب أن يكون أكبر من صفر' },
+        { status: 400 }
+      );
+    }
+
     // المتبقي = مستحق السنة حسب خصم المودال الحالي − المدفوع سابقاً لهذه السنة
     const outstandingBefore = Math.max(0, afterDiscount - yearPaidBefore);
 
-    if (outstandingBefore <= 0.01) {
+    if (outstandingBefore <= 0.01 && !isFullDiscountWaiver) {
       return NextResponse.json(
         { success: false, error: 'لا يوجد متبقي على السنة الحالية' },
         { status: 400 }
       );
     }
 
-    if (payAmount > outstandingBefore + 0.0001) {
+    const effectivePay = isFullDiscountWaiver ? 0 : payAmount;
+
+    if (!isFullDiscountWaiver && effectivePay > outstandingBefore + 0.0001) {
       return NextResponse.json(
         {
           success: false,
@@ -428,8 +490,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const remainingAmount = Math.max(0, outstandingBefore - payAmount);
-    const perPeriodAmount = perPeriodFromRemaining(outstandingBefore, periods);
+    const remainingAmount = isFullDiscountWaiver
+      ? 0
+      : Math.max(0, outstandingBefore - effectivePay);
+    const perPeriodAmount = isFullDiscountWaiver
+      ? 0
+      : perPeriodFromRemaining(outstandingBefore, periods);
 
     const receiptNumber = await nextReceiptNumber(settlementDate);
 
@@ -488,9 +554,9 @@ export async function POST(request: NextRequest) {
         discountInput,
         discountAmount,
         afterDiscount,
-        payAmount,
+        effectivePay,
         remainingAmount,
-        periods,
+        isFullDiscountWaiver ? 1 : periods,
         Math.round(perPeriodAmount * 100) / 100,
         feeYear,
         discountChannel || null,
@@ -572,11 +638,14 @@ export async function POST(request: NextRequest) {
     }
 
     // ترحيل القيد إلى دفتر اليومية: مدين الصندوق / دائن إيرادات الطلبة
+    // (لا قيد محاسبي عند استيفاء السنة بتخفيض 100% بدون تحصيل نقدي)
     const savedReceipt = insert.rows[0];
     let journalEntry: SettlementJournalResult | null = null;
     let journalWarning: string | null = null;
 
-    if (!createdBy) {
+    if (effectivePay <= 0.01) {
+      // تخفيض كامل — لا تحصيل للصندوق
+    } else if (!createdBy) {
       journalWarning =
         'تعذر ترحيل القيد: لا يمكن تحديد المستخدم المرحِّل';
     } else {
@@ -586,7 +655,7 @@ export async function POST(request: NextRequest) {
             receiptId: savedReceipt.id,
             receiptNumber,
             settlementDate,
-            amount: payAmount,
+            amount: effectivePay,
             studentName: student.name || null,
             universityId: student.university_id || null,
             studyType: student.study_type || null,
