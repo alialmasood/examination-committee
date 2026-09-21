@@ -2093,6 +2093,7 @@ export default function StudentFormModal({
                         <option value="علمي">علمي</option>
                         <option value="احيائي">احيائي</option>
                         <option value="تطبيقي">تطبيقي</option>
+                        <option value="اعدادية التمريض">اعدادية التمريض</option>
                         <option value="صناعي ( تكرير النفط ومعالجة الغاز)">صناعي ( تكرير النفط ومعالجة الغاز)</option>
                         <option value="صناعي ( صناعات بتروكيمياوية)">صناعي ( صناعات بتروكيمياوية)</option>
                         <option value="صناعي ( بناء)">صناعي ( بناء)</option>

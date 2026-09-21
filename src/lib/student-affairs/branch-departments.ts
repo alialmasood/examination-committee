@@ -66,6 +66,12 @@ export function getAvailableDepartmentsForBranch(
     ];
   }
 
+  if (branch === 'اعدادية التمريض') {
+    return [
+      { value: 'تقنيات العلاج الطبيعي', label: 'قسم تقنيات العلاج الطبيعي' },
+    ];
+  }
+
   if (branch === 'صناعي ( بناء)') {
     return [
       { value: 'هندسة تقنيات البناء والانشاءات', label: 'قسم هندسة تقنيات البناء والانشاءات' },
