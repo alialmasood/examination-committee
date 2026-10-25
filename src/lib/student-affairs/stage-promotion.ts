@@ -677,6 +677,29 @@ export async function getStudentPromotionHistory(
     feeYear: stageToFeeYear(stage),
   }));
 
+  // إن بقي اجتياز معتمد لملف السنة الحالية (مثلاً أُرجعت المرحلة يدوياً) أتح إزالته
+  try {
+    const currentFeeYear = stageToFeeYear(currentStage);
+    const openClearance = await query(
+      `SELECT 1
+       FROM student_affairs.stage_promotion_requests
+       WHERE student_id = $1
+         AND status = 'approved'
+         AND fee_year >= $2
+       LIMIT 1`,
+      [studentId, currentFeeYear]
+    );
+    if (openClearance.rows[0]) {
+      availableTargets.push({
+        stage: currentStage,
+        label: `${STAGE_LABELS[currentStage]} — إلغاء اجتياز ملف السنة ${currentFeeYear}`,
+        feeYear: currentFeeYear,
+      });
+    }
+  } catch (error) {
+    console.warn('getStudentPromotionHistory clearance check:', error);
+  }
+
   return {
     student: {
       id: String(row.id),
@@ -731,6 +754,23 @@ export async function searchStudentsForPromotionRevert(
   });
 }
 
+function pgErrorCode(error: unknown): string {
+  return String((error as { code?: string })?.code || '');
+}
+
+function pgErrorMessage(error: unknown): string {
+  return String((error as { message?: string })?.message || error || '');
+}
+
+function asUuidOrNull(value: string | null | undefined): string | null {
+  const v = String(value || '').trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v
+  )
+    ? v
+    : null;
+}
+
 export async function revertStudentStage(input: {
   studentId: string;
   targetStage: StageCode;
@@ -756,11 +796,30 @@ export async function revertStudentStage(input: {
   if (!row) return { success: false, error: 'الطالب غير موجود' };
 
   const currentStage = normalizeStage(row.admission_type) || 'first';
-  if (stageRank(input.targetStage) >= stageRank(currentStage)) {
+  if (stageRank(input.targetStage) > stageRank(currentStage)) {
     return {
       success: false,
-      error: 'يجب اختيار مرحلة أقدم من المرحلة الحالية',
+      error: 'لا يمكن الإرجاع إلى مرحلة أحدث من المرحلة الحالية',
     };
+  }
+
+  const sameStageOnly = stageRank(input.targetStage) === stageRank(currentStage);
+  if (sameStageOnly) {
+    const hasClearance = await query(
+      `SELECT 1
+       FROM student_affairs.stage_promotion_requests
+       WHERE student_id = $1
+         AND status = 'approved'
+         AND fee_year >= $2
+       LIMIT 1`,
+      [input.studentId, stageToFeeYear(input.targetStage)]
+    );
+    if (!hasClearance.rows[0]) {
+      return {
+        success: false,
+        error: 'لا يوجد اجتياز معتمد لإلغائه على هذه المرحلة',
+      };
+    }
   }
 
   const receiptWarnings = await loadHigherYearReceiptWarnings(
@@ -768,22 +827,27 @@ export async function revertStudentStage(input: {
     input.targetStage
   );
   const minRevokeYear = stageToFeeYear(input.targetStage);
+  const revokeNote = `أُلغي الاجتياز بإرجاع/تصحيح المرحلة إلى ${STAGE_LABELS[input.targetStage]}`;
+  const actorUuid = asUuidOrNull(input.actor.userId);
 
   try {
     const result = await withTransaction(async (client) => {
-      const updated = await txQuery(
-        client,
-        `UPDATE student_affairs.students
-         SET admission_type = $1, updated_at = NOW()
-         WHERE id = $2
-         RETURNING id, admission_type`,
-        [input.targetStage, input.studentId]
-      );
-      if (!updated.rows[0]) {
-        throw new Error('تعذر تحديث مرحلة الطالب');
+      if (!sameStageOnly) {
+        const updated = await txQuery(
+          client,
+          `UPDATE student_affairs.students
+           SET admission_type = $1, updated_at = NOW()
+           WHERE id = $2
+           RETURNING id, admission_type`,
+          [input.targetStage, input.studentId]
+        );
+        if (!updated.rows[0]) {
+          throw new Error('تعذر تحديث مرحلة الطالب');
+        }
       }
 
-      const revoked = await txQuery<{ fee_year: number; id: string }>(
+      // نفضّل status=reverted؛ إن لم تُطبَّق الهجرة نستخدم cancelled (خارج مصدر cleared)
+      let revoked = await txQuery<{ fee_year: number; id: string }>(
         client,
         `UPDATE student_affairs.stage_promotion_requests
          SET status = 'reverted',
@@ -796,12 +860,25 @@ export async function revertStudentStage(input: {
            AND status = 'approved'
            AND fee_year >= $2
          RETURNING id, fee_year`,
-        [
-          input.studentId,
-          minRevokeYear,
-          `أُلغي الاجتياز بإرجاع المرحلة إلى ${STAGE_LABELS[input.targetStage]}`,
-        ]
-      );
+        [input.studentId, minRevokeYear, revokeNote]
+      ).catch(async (error) => {
+        if (pgErrorCode(error) !== '23514') throw error;
+        return txQuery<{ fee_year: number; id: string }>(
+          client,
+          `UPDATE student_affairs.stage_promotion_requests
+           SET status = 'cancelled',
+               updated_at = NOW(),
+               review_notes = CASE
+                 WHEN review_notes IS NULL OR BTRIM(review_notes) = '' THEN $3
+                 ELSE review_notes || E'\n' || $3
+               END
+           WHERE student_id = $1
+             AND status = 'approved'
+             AND fee_year >= $2
+           RETURNING id, fee_year`,
+          [input.studentId, minRevokeYear, revokeNote]
+        );
+      });
 
       const revokedFeeYears = [
         ...new Set(
@@ -811,7 +888,6 @@ export async function revertStudentStage(input: {
         ),
       ].sort((a, b) => a - b);
 
-      // إلغاء أي طلب معلّق لتجنب تعارض بعد الإرجاع
       await txQuery(
         client,
         `UPDATE student_affairs.stage_promotion_requests
@@ -820,24 +896,32 @@ export async function revertStudentStage(input: {
         [input.studentId]
       );
 
-      await txQuery(
-        client,
-        `INSERT INTO student_affairs.stage_promotion_events (
-           student_id, from_stage, to_stage, fee_year, kind, target_stage,
-           cleared_fee_years_revoked, actor_user_id, actor_username, notes
-         ) VALUES ($1,$2,$3,$4,'revert',$5,$6,$7,$8,$9)`,
-        [
-          input.studentId,
-          currentStage,
-          input.targetStage,
-          minRevokeYear,
-          input.targetStage,
-          revokedFeeYears,
-          input.actor.userId,
-          input.actor.username,
-          input.notes || null,
-        ]
-      );
+      // سجل الأحداث اختياري — لا يفشل الإرجاع إن لم تُنشأ الجدول بعد
+      await txQuery(client, 'SAVEPOINT sp_promo_event');
+      try {
+        await txQuery(
+          client,
+          `INSERT INTO student_affairs.stage_promotion_events (
+             student_id, from_stage, to_stage, fee_year, kind, target_stage,
+             cleared_fee_years_revoked, actor_user_id, actor_username, notes
+           ) VALUES ($1,$2,$3,$4,'revert',$5,$6::smallint[],$7,$8,$9)`,
+          [
+            input.studentId,
+            currentStage,
+            input.targetStage,
+            minRevokeYear,
+            input.targetStage,
+            revokedFeeYears,
+            actorUuid,
+            input.actor.username,
+            input.notes || null,
+          ]
+        );
+        await txQuery(client, 'RELEASE SAVEPOINT sp_promo_event');
+      } catch (eventError) {
+        console.warn('stage_promotion_events insert skipped:', eventError);
+        await txQuery(client, 'ROLLBACK TO SAVEPOINT sp_promo_event');
+      }
 
       return { revokedFeeYears };
     });
@@ -850,7 +934,9 @@ export async function revertStudentStage(input: {
       entity_type: 'student',
       entity_id: input.studentId,
       entity_name: row.full_name_ar || row.full_name || undefined,
-      description: `إرجاع مرحلة الطالب من ${STAGE_LABELS[currentStage]} إلى ${STAGE_LABELS[input.targetStage]}`,
+      description: sameStageOnly
+        ? `إلغاء اجتياز ملف السنة للمرحلة ${STAGE_LABELS[input.targetStage]}`
+        : `إرجاع مرحلة الطالب من ${STAGE_LABELS[currentStage]} إلى ${STAGE_LABELS[input.targetStage]}`,
       old_values: { admission_type: currentStage },
       new_values: {
         admission_type: input.targetStage,
@@ -869,9 +955,13 @@ export async function revertStudentStage(input: {
             .join('، ')}) ولم تُحذف`
         : '';
 
+    const baseMsg = sameStageOnly
+      ? `تم إلغاء اجتياز ملف السنة للمرحلة ${STAGE_LABELS[input.targetStage]}`
+      : `تم إرجاع الطالب إلى المرحلة ${STAGE_LABELS[input.targetStage]}`;
+
     return {
       success: true,
-      message: `تم إرجاع الطالب إلى المرحلة ${STAGE_LABELS[input.targetStage]}${warnNote}`,
+      message: `${baseMsg}${warnNote}`,
       fromStage: currentStage,
       toStage: input.targetStage,
       revokedFeeYears: result.revokedFeeYears,
@@ -879,6 +969,25 @@ export async function revertStudentStage(input: {
     };
   } catch (error) {
     console.error('revertStudentStage:', error);
-    return { success: false, error: 'تعذر إرجاع مرحلة الطالب' };
+    const code = pgErrorCode(error);
+    const detail = pgErrorMessage(error);
+    if (code === '42P01' || detail.includes('stage_promotion_events')) {
+      return {
+        success: false,
+        error:
+          'تعذر إرجاع المرحلة: جدول سجل الترحيلات غير موجود على السيرفر. طبّق الهجرة 111_stage_promotion_events.sql',
+      };
+    }
+    if (code === '23514') {
+      return {
+        success: false,
+        error:
+          'تعذر إرجاع المرحلة: قيد حالة الطلبات قديم. طبّق الهجرة 111 لإضافة حالة reverted',
+      };
+    }
+    return {
+      success: false,
+      error: `تعذر إرجاع مرحلة الطالب${detail ? `: ${detail}` : ''}`,
+    };
   }
 }

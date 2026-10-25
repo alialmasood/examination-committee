@@ -297,7 +297,10 @@ export default function PromotionApprovalsPage() {
     if (!target) return;
 
     const warnings = history.warningsByTarget?.[targetStage] || [];
-    let confirmMsg = `تأكيد إرجاع الطالب إلى المرحلة ${target.label}؟\nسيتم إلغاء اجتياز ملفات السنوات من السنة ${target.feeYear} فما فوق.`;
+    const sameStage = targetStage === history.student.currentStage;
+    let confirmMsg = sameStage
+      ? `تأكيد إلغاء اجتياز ملف السنة ${target.feeYear} للمرحلة ${history.student.currentStageLabel}؟\nسيصبح الملف قابلاً للتسديد مجدداً.`
+      : `تأكيد إرجاع الطالب إلى المرحلة ${target.label}؟\nسيتم إلغاء اجتياز ملفات السنوات من السنة ${target.feeYear} فما فوق.`;
     if (warnings.length > 0) {
       confirmMsg +=
         `\n\nتنبيه: توجد وصولات على سنوات أعلى ولن تُحذف:\n` +
