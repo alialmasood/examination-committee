@@ -6,8 +6,14 @@ import {
 } from '@/src/lib/accounts/auth';
 import {
   countPendingPromotionRequests,
+  getStudentPromotionHistory,
+  loadHigherYearReceiptWarnings,
+  normalizeStage,
   reviewPromotionRequest,
+  revertStudentStage,
+  searchStudentsForPromotionRevert,
   stageLabel,
+  type StageCode,
 } from '@/src/lib/student-affairs/stage-promotion';
 
 export async function GET(request: NextRequest) {
@@ -16,6 +22,48 @@ export async function GET(request: NextRequest) {
 
   try {
     const { searchParams } = new URL(request.url);
+    const view = (searchParams.get('view') || '').trim();
+    const studentId = (searchParams.get('studentId') || '').trim();
+    const q = (searchParams.get('q') || '').trim();
+
+    if (view === 'search') {
+      const students = await searchStudentsForPromotionRevert(q);
+      return NextResponse.json({ success: true, data: students });
+    }
+
+    if (view === 'history' || studentId) {
+      if (!studentId) {
+        return NextResponse.json(
+          { success: false, error: 'studentId مطلوب' },
+          { status: 400 }
+        );
+      }
+      const history = await getStudentPromotionHistory(studentId);
+      if (!history) {
+        return NextResponse.json(
+          { success: false, error: 'الطالب غير موجود' },
+          { status: 404 }
+        );
+      }
+
+      const warningsByTarget: Record<
+        string,
+        Awaited<ReturnType<typeof loadHigherYearReceiptWarnings>>
+      > = {};
+      for (const t of history.availableTargets) {
+        warningsByTarget[t.stage] = await loadHigherYearReceiptWarnings(
+          studentId,
+          t.stage
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        ...history,
+        warningsByTarget,
+      });
+    }
+
     const status = (searchParams.get('status') || 'pending').trim();
 
     const result = await query(
@@ -74,11 +122,55 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
+    const action = String(body.action || '').trim();
+
+    if (action === 'revert') {
+      const studentId = String(body.studentId || '').trim();
+      const targetStage = normalizeStage(body.targetStage) as StageCode | null;
+      const notes = body.notes ? String(body.notes) : null;
+
+      if (!studentId || !targetStage) {
+        return NextResponse.json(
+          { success: false, error: 'studentId و targetStage مطلوبة' },
+          { status: 400 }
+        );
+      }
+
+      const result = await revertStudentStage({
+        studentId,
+        targetStage,
+        notes,
+        actor: {
+          userId: auth.user.id,
+          username: auth.user.username,
+          fullName: auth.user.full_name,
+          ipAddress: auth.ipAddress,
+          userAgent: auth.userAgent,
+        },
+      });
+
+      if (!result.success) {
+        return NextResponse.json(
+          { success: false, error: result.error },
+          { status: 400 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: result.message,
+        fromStage: result.fromStage,
+        toStage: result.toStage,
+        revokedFeeYears: result.revokedFeeYears,
+        receiptWarnings: result.receiptWarnings,
+      });
+    }
+
     const requestId = String(body.requestId || '').trim();
-    const action = String(body.action || '').trim() as 'approve' | 'reject';
+    const reviewAction = action as 'approve' | 'reject';
     const reviewNotes = body.reviewNotes ? String(body.reviewNotes) : null;
 
-    if (!requestId || (action !== 'approve' && action !== 'reject')) {
+    if (!requestId || (reviewAction !== 'approve' && reviewAction !== 'reject')) {
       return NextResponse.json(
         { success: false, error: 'requestId و action مطلوبة' },
         { status: 400 }
@@ -87,7 +179,7 @@ export async function POST(request: NextRequest) {
 
     const result = await reviewPromotionRequest({
       requestId,
-      action,
+      action: reviewAction,
       reviewNotes,
       actor: {
         userId: auth.user.id,
